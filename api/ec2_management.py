@@ -162,9 +162,12 @@ class EmailRelayHandler(BaseHTTPRequestHandler):
                 elif provider in ('outlook','hotmail'): srv,port='smtp-mail.outlook.com',587
                 else: srv,port=smtp_config.get('host','smtp.gmail.com'),int(smtp_config.get('port',587))
                 att=data.get('attachment')
-                msg = MIMEMultipart('mixed')
-                msg['From']="%s <%s>" % (sname,u); msg['To']=to_email
-                msg['Subject']=data.get('subject',''); msg.attach(MIMEText(data.get('html',''),'html'))
+                _body=MIMEText(data.get('html',''),'html','utf-8')
+                if att:
+                    msg=MIMEMultipart('mixed'); _alt=MIMEMultipart('alternative'); _alt.attach(_body); msg.attach(_alt)
+                else:
+                    msg=MIMEMultipart('alternative'); msg.attach(_body)
+                msg['From']="%s <%s>" % (sname,u); msg['To']=to_email; msg['Subject']=data.get('subject','')
                 if att:
                     try:
                         import base64 as _b64; from email.mime.base import MIMEBase; from email import encoders as _enc
@@ -175,7 +178,7 @@ class EmailRelayHandler(BaseHTTPRequestHandler):
                         msg.attach(_ap)
                     except Exception as _ae: logging.warning("Attach err: %s" % _ae)
                 with smtplib.SMTP(srv,port,timeout=30) as s:
-                    s.starttls(); s.login(u,p); s.send_message(msg)
+                    s.ehlo(); s.starttls(); s.ehlo(); s.login(u,p); s.send_message(msg)
                 logging.info("Sent to %s" % to_email)
                 self.send_response(200); self.send_header('Content-type','application/json'); self.end_headers()
                 self.wfile.write(json.dumps({'success':True,'message':'Email sent'}).encode())
@@ -314,9 +317,13 @@ class EmailRelayHandler(BaseHTTPRequestHandler):
                 elif provider in ('outlook','hotmail'): srv,port='smtp-mail.outlook.com',587
                 else: srv,port=smtp_config.get('host','smtp.gmail.com'),int(smtp_config.get('port',587))
                 att=data.get('attachment')
-                msg = MIMEMultipart('mixed')
+                _body=MIMEText(data.get('html',''),'html','utf-8')
+                if att:
+                    msg=MIMEMultipart('mixed'); _alt=MIMEMultipart('alternative'); _alt.attach(_body); msg.attach(_alt)
+                else:
+                    msg=MIMEMultipart('alternative'); msg.attach(_body)
                 msg['From']=f"{sname} <{u}>"; msg['To']=to_email
-                msg['Subject']=data.get('subject',''); msg.attach(MIMEText(data.get('html',''),'html'))
+                msg['Subject']=data.get('subject','')
                 if att:
                     try:
                         import base64 as _b64; from email.mime.base import MIMEBase; from email import encoders as _enc
@@ -327,7 +334,7 @@ class EmailRelayHandler(BaseHTTPRequestHandler):
                         msg.attach(_ap)
                     except Exception as _ae: logging.warning(f'Attach err: {_ae}')
                 with smtplib.SMTP(srv,port,timeout=30) as s:
-                    s.starttls(); s.login(u,p); s.send_message(msg)
+                    s.ehlo(); s.starttls(); s.ehlo(); s.login(u,p); s.send_message(msg)
                 logging.info(f"Sent to {to_email}")
                 self.send_response(200); self.send_header('Content-type','application/json'); self.end_headers()
                 self.wfile.write(json.dumps({'success':True,'message':'Email sent'}).encode())
@@ -551,9 +558,12 @@ class EmailRelayHandler(BaseHTTPRequestHandler):
                 elif provider in ('outlook','hotmail'): srv,port='smtp-mail.outlook.com',587
                 else: srv,port=smtp_config.get('host','smtp.gmail.com'),int(smtp_config.get('port',587))
                 att=data.get('attachment')
-                msg = MIMEMultipart('mixed')
-                msg['From']="%s <%s>" % (sname,u); msg['To']=to_email
-                msg['Subject']=data.get('subject',''); msg.attach(MIMEText(data.get('html',''),'html'))
+                _body=MIMEText(data.get('html',''),'html','utf-8')
+                if att:
+                    msg=MIMEMultipart('mixed'); _alt=MIMEMultipart('alternative'); _alt.attach(_body); msg.attach(_alt)
+                else:
+                    msg=MIMEMultipart('alternative'); msg.attach(_body)
+                msg['From']="%s <%s>" % (sname,u); msg['To']=to_email; msg['Subject']=data.get('subject','')
                 if att:
                     try:
                         import base64 as _b64; from email.mime.base import MIMEBase; from email import encoders as _enc
@@ -564,7 +574,7 @@ class EmailRelayHandler(BaseHTTPRequestHandler):
                         msg.attach(_ap)
                     except Exception as _ae: logging.warning("Attach err: %s" % _ae)
                 with smtplib.SMTP(srv,port,timeout=30) as s:
-                    s.starttls(); s.login(u,p); s.send_message(msg)
+                    s.ehlo(); s.starttls(); s.ehlo(); s.login(u,p); s.send_message(msg)
                 logging.info("Sent to %s" % to_email)
                 self.send_response(200); self.send_header('Content-type','application/json'); self.end_headers()
                 self.wfile.write(json.dumps({'success':True,'message':'Email sent'}).encode())

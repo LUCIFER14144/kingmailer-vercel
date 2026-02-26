@@ -9,6 +9,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email import encoders
+from email.utils import formatdate, make_msgid
 import boto3
 from botocore.exceptions import ClientError
 import json
@@ -126,29 +127,49 @@ def send_via_smtp(smtp_config, from_name, to_email, subject, html_body, attachme
         smtp_user = smtp_config.get('user')
         smtp_pass = smtp_config.get('pass')
         from_email = smtp_user
-        
-        # Use sender_name from config or fallback to from_name parameter
         sender_name = smtp_config.get('sender_name') or from_name
-        
-        msg = MIMEMultipart('mixed')
-        msg['From'] = f"{sender_name} <{from_email}>" if sender_name else from_email
-        msg['To'] = to_email
-        msg['Subject'] = subject
-        
-        msg.attach(MIMEText(html_body, 'html'))
-        att_ok, att_err = add_attachment_to_message(msg, attachment)
-        if not att_ok:
-            return {'success': False, 'error': f'Attachment error: {att_err}'}
-        
+
+        from_header = f"{sender_name} <{from_email}>" if sender_name else from_email
+
+        if attachment:
+            # multipart/mixed  →  multipart/alternative  +  file
+            msg = MIMEMultipart('mixed')
+            msg['From'] = from_header
+            msg['To'] = to_email
+            msg['Subject'] = subject
+            msg['Date'] = formatdate(localtime=True)
+            msg['Message-ID'] = make_msgid()
+
+            alt = MIMEMultipart('alternative')
+            alt.attach(MIMEText(html_body, 'html', 'utf-8'))
+            msg.attach(alt)
+
+            att_ok, att_err = add_attachment_to_message(msg, attachment)
+            if not att_ok:
+                return {'success': False, 'error': f'Attachment error: {att_err}'}
+        else:
+            # Plain HTML email — multipart/alternative is the correct MIME type
+            msg = MIMEMultipart('alternative')
+            msg['From'] = from_header
+            msg['To'] = to_email
+            msg['Subject'] = subject
+            msg['Date'] = formatdate(localtime=True)
+            msg['Message-ID'] = make_msgid()
+            msg.attach(MIMEText(html_body, 'html', 'utf-8'))
+
         with smtplib.SMTP(smtp_server, smtp_port, timeout=30) as server:
+            server.ehlo()
             server.starttls()
+            server.ehlo()
             server.login(smtp_user, smtp_pass)
             server.send_message(msg)
         
         return {'success': True, 'message': f'Email sent via SMTP to {to_email}'}
     
     except smtplib.SMTPAuthenticationError:
-        return {'success': False, 'error': 'SMTP authentication failed'}
+        return {'success': False, 'error': 'SMTP authentication failed — check your Gmail app password'}
+    except smtplib.SMTPRecipientsRefused:
+        return {'success': False, 'error': f'Recipient address rejected by server: {to_email}'}
     except Exception as e:
         return {'success': False, 'error': f'SMTP error: {str(e)}'}
 
@@ -167,12 +188,15 @@ def send_via_ses(aws_config, from_name, to_email, subject, html_body, attachment
         source = f"{from_name} <{from_email}>" if from_name else from_email
         
         if attachment:
-            # Use raw send for attachment support
             msg = MIMEMultipart('mixed')
             msg['From'] = source
             msg['To'] = to_email
             msg['Subject'] = subject
-            msg.attach(MIMEText(html_body, 'html'))
+            msg['Date'] = formatdate(localtime=True)
+            msg['Message-ID'] = make_msgid()
+            alt = MIMEMultipart('alternative')
+            alt.attach(MIMEText(html_body, 'html', 'utf-8'))
+            msg.attach(alt)
             att_ok, att_err = add_attachment_to_message(msg, attachment)
             if not att_ok:
                 return {'success': False, 'error': f'Attachment error: {att_err}'}
@@ -186,8 +210,8 @@ def send_via_ses(aws_config, from_name, to_email, subject, html_body, attachment
                 Source=source,
                 Destination={'ToAddresses': [to_email]},
                 Message={
-                    'Subject': {'Data': subject},
-                    'Body': {'Html': {'Data': html_body}}
+                    'Subject': {'Data': subject, 'Charset': 'UTF-8'},
+                    'Body': {'Html': {'Data': html_body, 'Charset': 'UTF-8'}}
                 }
             )
         
