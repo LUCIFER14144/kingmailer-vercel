@@ -46,7 +46,7 @@ class handler(BaseHTTPRequestHandler):
                     continue
                 
                 # Try to reach health endpoint
-                health_url = f'http://{public_ip}:8080/health'
+                health_url = f'http://{public_ip}:3000/health'
                 try:
                     req = urllib.request.Request(health_url, method='GET')
                     with urllib.request.urlopen(req, timeout=15) as response:
@@ -69,7 +69,7 @@ class handler(BaseHTTPRequestHandler):
                             'public_ip': public_ip,
                             'status': 'healthy_with_warnings' if has_warning else 'healthy',
                             'healthy': True,
-                            'relay_url': f'http://{public_ip}:8080/relay',
+                            'relay_url': f'http://{public_ip}:3000/relay',
                             'method': health_data.get('method', 'Authenticated SMTP'),
                             'port_587_outbound': port587_status,
                             'port_465_outbound': port465_status,
@@ -83,7 +83,7 @@ class handler(BaseHTTPRequestHandler):
                         results.append(result_data)
                 except urllib.error.URLError as e:
                     error_msg = str(e)
-                    help_text = 'Check: 1) Wait 10-15 min after creation for setup to complete, 2) Verify security group allows port 8080, 3) SSH and check: systemctl status email-relay, netstat -tlnp | grep 8080'
+                    help_text = 'Check: 1) Wait 5-10 min after creation for setup to complete, 2) Verify security group allows port 3000, 3) SSH and check: systemctl status email-relay, netstat -tlnp | grep 3000'
                     
                     results.append({
                         'instance_id': instance_id,

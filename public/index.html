@@ -155,7 +155,7 @@
             <div id="sendMethodInfo" class="info-box" style="margin-top: 10px; padding: 12px; font-size: 13px; background: #2d2d2d; border-radius: 6px;">
                 <strong>ℹ️ Send Method Guide:</strong><br>
                 <strong style="color: #00ff9d;">Gmail SMTP:</strong> Sends directly through Gmail servers. Emails appear from Gmail IP. No EC2 needed.<br>
-                <strong style="color: #667eea;">EC2 Relay:</strong> Routes through your EC2 IP. Requires port <strong>8080</strong> open for relay server (NOT your app port). Needs SMTP accounts configured.<br>
+                <strong style="color: #667eea;">EC2 Relay:</strong> Routes through your EC2 IP. Requires port <strong>3000</strong> open (relay server port). Auto-uses your SMTP accounts.<br>
                 <strong style="color: #f59e0b;">AWS SES:</strong> Amazon's email service. Requires verified domain.
             </div>
 

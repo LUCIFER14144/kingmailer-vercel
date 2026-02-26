@@ -858,7 +858,7 @@ async function sendBulkEmails() {
         config.aws_config = sesAccounts[0];
     } else if (method === 'ec2') {
         if (ec2Instances.length === 0) {
-            showResult('bulkResult', 'Please create at least one EC2 instance first', 'error');
+            showResult('bulkResult', '❌ Please create at least one EC2 instance first (EC2 Management tab)', 'error');
             return;
         }
         
@@ -871,21 +871,22 @@ async function sendBulkEmails() {
         
         if (runningInstances.length === 0) {
             if (pendingInstances.length > 0) {
-                showResult('bulkResult', `⏳ EC2 instances are still initializing (${pendingInstances.length} pending). Please wait 2-3 minutes and try again.`, 'error');
+                showResult('bulkResult', `⏳ EC2 instances still initializing (${pendingInstances.length} pending). Wait 3-5 minutes then try again.`, 'error');
             } else {
-                showResult('bulkResult', `❌ No running EC2 instances available. ${ec2Instances.length} instances in state: ${ec2Instances.map(i => i.state).join(', ')}`, 'error');
+                showResult('bulkResult', `❌ No running EC2 instances. States: ${ec2Instances.map(i => i.state).join(', ')}`, 'error');
             }
             return;
         }
         
         config.ec2_instances = runningInstances;
         
-        // Ensure SMTP accounts are available for EC2 relay (JetMailer style requires SMTP auth)
-        if (smtpAccounts.length === 0) {
-            showResult('bulkResult', '❌ EC2 Relay requires SMTP accounts for authentication (JetMailer style). Add Gmail SMTP accounts first.', 'error');
-            return;
+        // Auto-include SMTP accounts if available (EC2 relay uses them to authenticate from EC2 IP)
+        if (smtpAccounts.length > 0) {
+            config.smtp_configs = smtpAccounts;
+            console.log('EC2 Relay: Auto-using', smtpAccounts.length, 'SMTP accounts - emails will send FROM EC2 IP');
+        } else {
+            console.log('EC2 Relay: No SMTP accounts configured - will attempt direct send from EC2');
         }
-        config.smtp_configs = smtpAccounts;
     }
     
     // Update stats before sending

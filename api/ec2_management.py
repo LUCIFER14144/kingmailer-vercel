@@ -74,14 +74,14 @@ def create_ec2_instance(access_key, secret_key, region, keypair_name, security_g
                 )
                 security_group = sg_response['GroupId']
                 
-                # Add inbound rules for SMTP ports and relay HTTP server
+                # Add inbound rules matching user's existing security group setup
                 ec2_client.authorize_security_group_ingress(
                     GroupId=security_group,
                     IpPermissions=[
                         {'IpProtocol': 'tcp', 'FromPort': 25, 'ToPort': 25, 'IpRanges': [{'CidrIp': '0.0.0.0/0'}]},
                         {'IpProtocol': 'tcp', 'FromPort': 587, 'ToPort': 587, 'IpRanges': [{'CidrIp': '0.0.0.0/0'}]},
                         {'IpProtocol': 'tcp', 'FromPort': 465, 'ToPort': 465, 'IpRanges': [{'CidrIp': '0.0.0.0/0'}]},
-                        {'IpProtocol': 'tcp', 'FromPort': 8080, 'ToPort': 8080, 'IpRanges': [{'CidrIp': '0.0.0.0/0'}]},
+                        {'IpProtocol': 'tcp', 'FromPort': 3000, 'ToPort': 3000, 'IpRanges': [{'CidrIp': '0.0.0.0/0'}]},
                         {'IpProtocol': 'tcp', 'FromPort': 22, 'ToPort': 22, 'IpRanges': [{'CidrIp': '0.0.0.0/0'}]}
                     ]
                 )
@@ -89,12 +89,12 @@ def create_ec2_instance(access_key, secret_key, region, keypair_name, security_g
                 if 'InvalidGroup.Duplicate' not in str(e):
                     raise
         else:
-            # If custom security group provided, ensure port 8080 is open
+            # If custom security group provided, try to add port 3000 (relay server port)
             try:
                 ec2_client.authorize_security_group_ingress(
                     GroupId=security_group,
                     IpPermissions=[
-                        {'IpProtocol': 'tcp', 'FromPort': 8080, 'ToPort': 8080, 'IpRanges': [{'CidrIp': '0.0.0.0/0'}]},
+                        {'IpProtocol': 'tcp', 'FromPort': 3000, 'ToPort': 3000, 'IpRanges': [{'CidrIp': '0.0.0.0/0'}]},
                         {'IpProtocol': 'tcp', 'FromPort': 25, 'ToPort': 25, 'IpRanges': [{'CidrIp': '0.0.0.0/0'}]},
                         {'IpProtocol': 'tcp', 'FromPort': 587, 'ToPort': 587, 'IpRanges': [{'CidrIp': '0.0.0.0/0'}]},
                         {'IpProtocol': 'tcp', 'FromPort': 22, 'ToPort': 22, 'IpRanges': [{'CidrIp': '0.0.0.0/0'}]}
@@ -281,10 +281,10 @@ class EmailRelayHandler(BaseHTTPRequestHandler):
             return 'unknown'
 
 if __name__ == '__main__':
-    server = HTTPServer(('0.0.0.0', 8080), EmailRelayHandler)
-    logging.info('Email Relay Server started on port 8080')
-    logging.info('Health check: http://<ip>:8080/health')
-    logging.info('Relay endpoint: http://<ip>:8080/relay')
+    server = HTTPServer(('0.0.0.0', 3000), EmailRelayHandler)
+    logging.info('Email Relay Server started on port 3000')
+    logging.info('Health check: http://<ip>:3000/health')
+    logging.info('Relay endpoint: http://<ip>:3000/relay')
     server.serve_forever()
 RELAY_EOF
 
@@ -320,13 +320,13 @@ if systemctl is-active --quiet firewalld; then
     echo "Step 7: Configuring firewall..."
     firewall-cmd --permanent --add-port=587/tcp
     firewall-cmd --permanent --add-port=465/tcp
-    firewall-cmd --permanent --add-port=8080/tcp
+    firewall-cmd --permanent --add-port=3000/tcp
     firewall-cmd --reload
 fi
 
 echo "=== KINGMAILER EC2 Email Relay Setup Complete (JetMailer Style) ==="
 echo \"No port 25 needed - uses authenticated SMTP on ports 587/465\"
-echo "Health Check: curl http://$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4):8080/health"
+echo "Health Check: curl http://$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4):3000/health"
 date
             ''',
             TagSpecifications=[{

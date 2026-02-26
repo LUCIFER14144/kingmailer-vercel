@@ -298,27 +298,26 @@ class handler(BaseHTTPRequestHandler):
                     result = send_email_ses(ses_config, from_name, recipient, subject, html_body)
                 
                 elif method == 'ec2' and ec2_pool:
-                    # EC2 Relay (JetMailer Style) - Route SMTP through EC2 IP
-                    # Requires SMTP accounts to authenticate through Gmail/Outlook
+                    # EC2 Relay - Route email through EC2 IP
+                    # EC2 instance runs relay server on port 3000
                     ec2_instance = ec2_pool.get_next()  # type: ignore
                     smtp_config = smtp_pool.get_next() if smtp_pool else None
                     
-                    print(f'\\n[EMAIL {index+1}] Method: EC2 RELAY → {recipient}')
+                    print(f'\n[EMAIL {index+1}] Method: EC2 RELAY → {recipient}')
                     
-                    if not smtp_config:
-                        result = {'success': False, 'error': 'EC2 relay requires SMTP accounts (like JetMailer)'}
-                    elif ec2_instance:
+                    if ec2_instance:
                         ec2_ip = ec2_instance.get('public_ip')  # type: ignore
-                        if ec2_ip and ec2_ip != 'N/A':
-                            # Send via EC2 relay with SMTP auth (JetMailer approach)
-                            relay_url = f'http://{ec2_ip}:8080/relay'
+                        if ec2_ip and ec2_ip != 'N/A' and ec2_ip != 'Pending...':
+                            # Send via EC2 relay on port 3000 (user's open port)
+                            relay_url = f'http://{ec2_ip}:3000/relay'
+                            print(f'[EC2 RELAY] Connecting to {relay_url}')
                             result = send_email_ec2(relay_url, smtp_config, from_name, recipient, subject, html_body)
                             if result['success']:
                                 result['via_ec2_ip'] = ec2_ip
                             else:
-                                result['error'] = f"EC2 relay failed ({ec2_ip}): {result.get('error', 'Unknown error')}"
+                                result['error'] = f"EC2 relay failed ({ec2_ip}:3000): {result.get('error', 'Unknown error')}"
                         else:
-                            result = {'success': False, 'error': f'EC2 instance {ec2_instance.get("instance_id")} has no public IP'}
+                            result = {'success': False, 'error': f'EC2 instance has no public IP yet'}
                     else:
                         result = {'success': False, 'error': 'No EC2 instances available'}
                 
