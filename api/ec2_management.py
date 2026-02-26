@@ -15,6 +15,43 @@ EC2_INSTANCES = []
 AWS_CREDENTIALS = None
 
 
+def get_latest_amazon_linux_ami(ec2_client):
+    """Get the latest Amazon Linux 2 AMI ID for the region"""
+    try:
+        response = ec2_client.describe_images(
+            Owners=['amazon'],
+            Filters=[
+                {'Name': 'name', 'Values': ['amzn2-ami-hvm-*-x86_64-gp2']},
+                {'Name': 'state', 'Values': ['available']}
+            ]
+        )
+        
+        if not response['Images']:
+            # Fallback to region-specific AMI map (as of Feb 2026)
+            ami_map = {
+                'us-east-1': 'ami-0277155c3f0ab2930',
+                'us-west-2': 'ami-0a7d051a1c4b54f65',
+                'eu-west-1': 'ami-00385a401487aefa4',
+                'ap-southeast-1': 'ami-04677bdaa3c2b6e24',
+                'ap-south-1': 'ami-0f58b397bc5c1f2e8'
+            }
+            return ami_map.get(ec2_client.meta.region_name, ami_map['us-east-1'])
+        
+        # Sort by creation date and get the latest
+        images = sorted(response['Images'], key=lambda x: x['CreationDate'], reverse=True)
+        return images[0]['ImageId']
+    except Exception:
+        # Fallback AMI map
+        ami_map = {
+            'us-east-1': 'ami-0277155c3f0ab2930',
+            'us-west-2': 'ami-0a7d051a1c4b54f65',
+            'eu-west-1': 'ami-00385a401487aefa4',
+            'ap-southeast-1': 'ami-04677bdaa3c2b6e24',
+            'ap-south-1': 'ami-0f58b397bc5c1f2e8'
+        }
+        return ami_map.get(ec2_client.meta.region_name, ami_map['us-east-1'])
+
+
 def create_ec2_instance(access_key, secret_key, region, keypair_name, security_group=None):
     """Create a new EC2 instance for email sending"""
     try:
@@ -24,6 +61,9 @@ def create_ec2_instance(access_key, secret_key, region, keypair_name, security_g
             aws_access_key_id=access_key,
             aws_secret_access_key=secret_key
         )
+        
+        # Get the latest Amazon Linux 2 AMI for the region
+        ami_id = get_latest_amazon_linux_ami(ec2_client)
         
         # Create default security group if not provided
         if not security_group:
@@ -50,7 +90,7 @@ def create_ec2_instance(access_key, secret_key, region, keypair_name, security_g
         
         # Launch instance (t2.micro for cost-effectiveness)
         response = ec2_client.run_instances(
-            ImageId='ami-0c55b159cbfafe1f0',  # Amazon Linux 2 AMI (update based on region)
+            ImageId=ami_id,
             InstanceType='t2.micro',
             KeyName=keypair_name,
             MinCount=1,
