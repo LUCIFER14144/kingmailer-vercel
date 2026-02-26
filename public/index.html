@@ -88,10 +88,49 @@
         <div class="tab-content" id="bulk">
             <h2>📊 Bulk Email Sending</h2>
             
+            <div class="info-box" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; margin-bottom: 20px;">
+                <strong>📧 How Email Sending Works:</strong><br><br>
+                • <strong>Gmail SMTP:</strong> Sends through Gmail servers (Gmail IP). Fast & reliable but may have sending limits.<br>
+                • <strong>EC2 Relay:</strong> Sends from your EC2 instance IP. Better deliverability & inbox placement.<br>
+                • <strong>AWS SES:</strong> Amazon's email service. Best for large volumes (10,000+ emails/day).<br><br>
+                <strong>💡 Recommended:</strong> Use EC2 Relay with your created EC2 instance for best inbox delivery!
+            </div>
+            
             <div class="form-group">
-                <label>CSV Data (must include 'email' column):</label>
-                <textarea id="bulkCsv" rows="8" placeholder="email,name,company&#10;john@example.com,John,ACME Corp&#10;jane@example.com,Jane,Tech Inc"></textarea>
-                <small>Columns can be used in templates: {{email}}, {{name}}, {{company}}, etc.</small>
+                <label>Email List:</label>
+                <div style="display: flex; gap: 10px; margin-bottom: 10px;">
+                    <button class="btn btn-secondary" onclick="document.getElementById('csvFileInput').click()">📂 Upload CSV/TXT</button>
+                    <input type="file" id="csvFileInput" accept=".csv,.txt" style="display: none;" onchange="handleFileUpload(event)">
+                    <button class="btn btn-secondary" onclick="switchInputMode()">🔄 Switch Mode</button>
+                    <span id="inputModeLabel" style="padding: 8px; color: #888;">Mode: CSV Format</span>
+                </div>
+                <textarea id="bulkCsv" rows="8" placeholder="CSV Format:&#10;email,name,company&#10;john@example.com,John,ACME Corp&#10;jane@example.com,Jane,Tech Inc&#10;&#10;OR Simple Format (one email per line):&#10;john@example.com&#10;jane@example.com&#10;bob@example.com"></textarea>
+                <small id="csvHelper">📌 CSV: Use columns in templates {{email}}, {{name}}, {{company}} | 📌 Simple: Just paste emails (one per line)</small>
+            </div>
+            
+            <div id="bulkStats" style="display: none; margin-bottom: 20px; padding: 15px; background: #2d2d2d; border-radius: 8px;">
+                <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-bottom: 15px;">
+                    <div style="text-align: center;">
+                        <div style="font-size: 24px; font-weight: bold; color: #00ff9d;" id="totalEmails">0</div>
+                        <div style="font-size: 12px; color: #888;">Total Emails</div>
+                    </div>
+                    <div style="text-align: center;">
+                        <div style="font-size: 24px; font-weight: bold; color: #667eea;" id="smtpConfigured">0</div>
+                        <div style="font-size: 12px; color: #888;">SMTP Configured</div>
+                    </div>
+                    <div style="text-align: center;">
+                        <div style="font-size: 24px; font-weight: bold; color: #4ade80;" id="sentCount">0</div>
+                        <div style="font-size: 12px; color: #888;">Sent</div>
+                    </div>
+                    <div style="text-align: center;">
+                        <div style="font-size: 24px; font-weight: bold; color: #f87171;" id="failedCount">0</div>
+                        <div style="font-size: 12px; color: #888;">Failed</div>
+                    </div>
+                </div>
+                <div style="background: #1a1a1a; height: 20px; border-radius: 10px; overflow: hidden;">
+                    <div id="progressBar" style="height: 100%; background: linear-gradient(90deg, #667eea 0%, #764ba2 100%); width: 0%; transition: width 0.3s;"></div>
+                </div>
+                <div style="text-align: center; margin-top: 8px; font-size: 12px; color: #888;" id="progressText">0%</div>
             </div>
 
             <div class="form-group">
@@ -106,12 +145,14 @@
 
             <div class="form-group">
                 <label>Send Method:</label>
-                <select id="bulkMethod">
-                    <option value="smtp">Gmail SMTP (With Rotation)</option>
-                    <option value="ses">AWS SES</option>
-                    <option value="ec2">EC2 Relay (Recommended)</option>
+                <select id="bulkMethod" onchange="updateSendMethodInfo()">
+                    <option value="smtp">Gmail SMTP (Gmail IP - With Account Rotation)</option>
+                    <option value="ec2">EC2 Relay (Your EC2 IP - Recommended for Deliverability)</option>
+                    <option value="ses">AWS SES (Amazon IP - For High Volume)</option>
                 </select>
             </div>
+            
+            <div id="sendMethodInfo" class="info-box" style="display: none; margin-top: 10px; font-size: 13px;"></div>
 
             <div class="form-row">
                 <div class="form-group">

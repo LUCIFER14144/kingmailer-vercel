@@ -7,6 +7,8 @@
 let smtpAccounts = [];
 let sesAccounts = [];
 let ec2Instances = [];
+let inputMode = 'csv'; // 'csv' or 'simple'
+let bulkSendingActive = false;
 
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', function() {
@@ -19,6 +21,18 @@ document.addEventListener('DOMContentLoaded', function() {
         const customFields = document.getElementById('customSmtpFields');
         customFields.style.display = this.value === 'custom' ? 'block' : 'none';
     });
+    
+    // Auto-update bulk stats when CSV changes
+    const bulkCsv = document.getElementById('bulkCsv');
+    if (bulkCsv) {
+        bulkCsv.addEventListener('input', updateBulkStats);
+    }
+    
+    // Auto-update bulk stats when method changes
+    const bulkMethod = document.getElementById('bulkMethod');
+    if (bulkMethod) {
+        bulkMethod.addEventListener('change', updateBulkStats);
+    }
 });
 
 // Tab switching
@@ -461,6 +475,107 @@ async function deleteAccount(type, id) {
     }
 }
 
+// File upload handler
+function handleFileUpload(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        const content = e.target.result;
+        document.getElementById('bulkCsv').value = content;
+        updateBulkStats();
+    };
+    reader.readAsText(file);
+}
+
+// Switch between CSV and simple email list mode
+function switchInputMode() {
+    inputMode = inputMode === 'csv' ? 'simple' : 'csv';
+    const label = document.getElementById('inputModeLabel');
+    const textarea = document.getElementById('bulkCsv');
+    
+    if (inputMode === 'simple') {
+        label.textContent = 'Mode: Simple (One Email Per Line)';
+        textarea.placeholder = 'john@example.com\\njane@example.com\\nbob@example.com\\nalice@example.com';
+    } else {
+        label.textContent = 'Mode: CSV Format';
+        textarea.placeholder = 'email,name,company\\njohn@example.com,John,ACME Corp\\njane@example.com,Jane,Tech Inc';
+    }
+}
+
+// Update send method info
+function updateSendMethodInfo() {
+    const method = document.getElementById('bulkMethod').value;
+    const infoBox = document.getElementById('sendMethodInfo');
+    
+    if (method === 'smtp') {
+        infoBox.innerHTML = '<strong>Gmail SMTP Mode:</strong> Rotates between your configured Gmail accounts. Emails are sent from Gmail servers (Gmail IP addresses). Good for moderate volumes but Gmail may limit sending rate.';
+        infoBox.style.display = 'block';
+        infoBox.style.background = '#2d2d2d';
+    } else if (method === 'ec2') {
+        infoBox.innerHTML = '<strong>⭐ EC2 Relay Mode:</strong> Sends emails FROM your EC2 instance IP address. Much better inbox delivery since you control the IP reputation. <span style="color: #00ff9d;">Recommended for best results!</span>';
+        infoBox.style.display = 'block';
+        infoBox.style.background = 'linear-gradient(135deg, #1a472a 0%, #2d5016 100%)';
+    } else if (method === 'ses') {
+        infoBox.innerHTML = '<strong>AWS SES Mode:</strong> Uses Amazon SES servers. Best for high volume (10,000+ emails/day). Requires verified domain or sender email.';
+        infoBox.style.display = 'block';
+        infoBox.style.background = '#2d2d2d';
+    }
+    
+    updateBulkStats();
+}
+
+// Update bulk send statistics
+function updateBulkStats() {
+    const csv = document.getElementById('bulkCsv').value.trim();
+    if (!csv) {
+        document.getElementById('bulkStats').style.display = 'none';
+        return;
+    }
+    
+    // Count emails
+    let emailCount = 0;
+    if (inputMode === 'simple') {
+        const lines = csv.split('\\n').filter(line => line.trim() && line.includes('@'));
+        emailCount = lines.length;
+    } else {
+        const lines = csv.split('\\n').filter(line => line.trim());
+        emailCount = Math.max(0, lines.length - 1); // Exclude header
+    }
+    
+    // Count SMTP accounts
+    const method = document.getElementById('bulkMethod').value;
+    let smtpCount = 0;
+    if (method === 'smtp') {
+        smtpCount = smtpAccounts.length;
+    } else if (method === 'ec2') {
+        smtpCount = ec2Instances.filter(i => i.state === 'running').length;
+    }
+    
+    // Update display
+    document.getElementById('bulkStats').style.display = 'block';
+    document.getElementById('totalEmails').textContent = emailCount;
+    document.getElementById('smtpConfigured').textContent = smtpCount;
+    
+    if (!bulkSendingActive) {
+        document.getElementById('sentCount').textContent = '0';
+        document.getElementById('failedCount').textContent = '0';
+        document.getElementById('progressBar').style.width = '0%';
+        document.getElementById('progressText').textContent = '0%';
+    }
+}
+
+// Update progress during bulk send
+function updateBulkProgress(sent, failed, total) {
+    document.getElementById('sentCount').textContent = sent;
+    document.getElementById('failedCount').textContent = failed;
+    
+    const progress = Math.round(((sent + failed) / total) * 100);
+    document.getElementById('progressBar').style.width = progress + '%';
+    document.getElementById('progressText').textContent = progress + '%';
+}
+
 // Send single email
 async function sendSingleEmail() {
     const to = document.getElementById('singleTo').value;
@@ -531,7 +646,7 @@ async function sendSingleEmail() {
 
 // Send bulk emails
 async function sendBulkEmails() {
-    const csv = document.getElementById('bulkCsv').value;
+    let csv = document.getElementById('bulkCsv').value.trim();
     const subject = document.getElementById('bulkSubject').value;
     const html = document.getElementById('bulkHtml').value;
     const method = document.getElementById('bulkMethod').value;
@@ -541,6 +656,12 @@ async function sendBulkEmails() {
     if (!csv || !subject || !html) {
         showResult('bulkResult', 'Please fill in all fields', 'error');
         return;
+    }
+    
+    // Convert simple format to CSV if needed
+    if (inputMode === 'simple') {
+        const emails = csv.split('\\n').filter(line => line.trim() && line.includes('@'));
+        csv = 'email\\n' + emails.join('\\n');
     }
     
     // Get config based on method
@@ -572,7 +693,17 @@ async function sendBulkEmails() {
         config.ec2_instances = runningInstances;
     }
     
-    showResult('bulkResult', '🔄 Starting bulk send... This may take a while.', 'info');
+    // Update stats before sending
+    updateBulkStats();
+    bulkSendingActive = true;
+    
+    const methodNames = {
+        'smtp': 'Gmail SMTP',
+        'ec2': 'EC2 Relay',
+        'ses': 'AWS SES'
+    };
+    
+    showResult('bulkResult', `🔄 Starting bulk send via ${methodNames[method]}... This may take a while.`, 'info');
     
     try {
         const response = await fetch('/api/send_bulk', {
@@ -591,19 +722,30 @@ async function sendBulkEmails() {
         
         const data = await response.json();
         
+        bulkSendingActive = false;
+        
         if (data.success) {
-            showResult('bulkResult', 
-                `✅ Bulk send complete!<br>
+            updateBulkProgress(data.results.sent, data.results.failed, data.results.total);
+            
+            let resultMessage = `✅ Bulk send complete via ${methodNames[method]}!<br>
                 Total: ${data.results.total}<br>
                 Sent: ${data.results.sent}<br>
-                Failed: ${data.results.failed}<br>
-                Skipped: ${data.results.skipped.length}`, 
-                'success'
-            );
+                Failed: ${data.results.failed}`;
+            
+            if (data.results.skipped && data.results.skipped.length > 0) {
+                resultMessage += `<br>Skipped: ${data.results.skipped.length}`;
+            }
+            
+            if (method === 'ec2' && config.ec2_instances && config.ec2_instances[0]) {
+                resultMessage += `<br><br>🚀 Sent from EC2 IP: ${config.ec2_instances[0].public_ip}`;
+            }
+            
+            showResult('bulkResult', resultMessage, 'success');
         } else {
             showResult('bulkResult', `❌ ${data.error}`, 'error');
         }
     } catch (error) {
+        bulkSendingActive = false;
         showResult('bulkResult', `❌ Bulk send failed: ${error.message}`, 'error');
     }
 }
