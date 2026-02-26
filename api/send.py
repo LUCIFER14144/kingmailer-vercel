@@ -90,11 +90,14 @@ def replace_csv_row_tags(text, row):
 
 
 def add_attachment_to_message(msg, attachment):
-    """Attach a base64-encoded file to a MIME message"""
+    """Attach a base64-encoded file to a MIME message. Returns (True, None) on success or (False, error_str) on failure."""
     if not attachment:
-        return
+        return True, None
     try:
-        file_data = base64.b64decode(attachment['content'])
+        raw_b64 = attachment['content']
+        # Fix padding if needed
+        raw_b64 += '=' * (-len(raw_b64) % 4)
+        file_data = base64.b64decode(raw_b64)
         mime_type = attachment.get('type', 'application/octet-stream')
         filename = attachment.get('name', 'attachment')
         main_type, sub_type = mime_type.split('/', 1) if '/' in mime_type else ('application', 'octet-stream')
@@ -103,8 +106,9 @@ def add_attachment_to_message(msg, attachment):
         encoders.encode_base64(part)
         part.add_header('Content-Disposition', 'attachment', filename=filename)
         msg.attach(part)
-    except Exception:
-        pass  # Attachment errors shouldn't block the email
+        return True, None
+    except Exception as e:
+        return False, str(e)
 
 
 def send_via_smtp(smtp_config, from_name, to_email, subject, html_body, attachment=None):
@@ -132,7 +136,9 @@ def send_via_smtp(smtp_config, from_name, to_email, subject, html_body, attachme
         msg['Subject'] = subject
         
         msg.attach(MIMEText(html_body, 'html'))
-        add_attachment_to_message(msg, attachment)
+        att_ok, att_err = add_attachment_to_message(msg, attachment)
+        if not att_ok:
+            return {'success': False, 'error': f'Attachment error: {att_err}'}
         
         with smtplib.SMTP(smtp_server, smtp_port, timeout=30) as server:
             server.starttls()
@@ -167,7 +173,9 @@ def send_via_ses(aws_config, from_name, to_email, subject, html_body, attachment
             msg['To'] = to_email
             msg['Subject'] = subject
             msg.attach(MIMEText(html_body, 'html'))
-            add_attachment_to_message(msg, attachment)
+            att_ok, att_err = add_attachment_to_message(msg, attachment)
+            if not att_ok:
+                return {'success': False, 'error': f'Attachment error: {att_err}'}
             response = ses_client.send_raw_email(
                 Source=source,
                 Destinations=[to_email],

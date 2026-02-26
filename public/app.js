@@ -1183,19 +1183,53 @@ function clearAttachment(context) {
     }
 }
 
+// Generate a unique hyphen-formatted filename (10-16 digits total)
+// format '5-6-5' → 5+6+5=16 digits e.g. '73291-847362-10583'
+function generateAttachName(format) {
+    if (!format || format === 'none') return null;
+    const presets = ['5-6-5','8-8','4-4-4-4','6-4-6','4-6-4','6-6','4-4-4','3-4-3','5-5'];
+    if (format === 'random') format = presets[Math.floor(Math.random() * presets.length)];
+    return format.split('-').map(seg => {
+        const n = parseInt(seg);
+        const min = Math.pow(10, n - 1);
+        const max = Math.pow(10, n) - 1;
+        return String(Math.floor(Math.random() * (max - min + 1)) + min);
+    }).join('-');
+}
+
 // Convert HTML attachment to selected format and return base64 object
 async function getAttachmentData(context) {
     const raw = context === 'single' ? singleAttachmentData : bulkAttachmentData;
     const format = document.getElementById(context + 'AttachFormat').value;
     if (!raw) return null;
 
+    // Build unique filename with selected format
+    const nameFmtEl = document.getElementById(context + 'AttachNameFormat');
+    const nameFmt = nameFmtEl ? nameFmtEl.value : 'random';
+    const uniqueCode = generateAttachName(nameFmt);
+    const buildName = (ext) => uniqueCode ? (uniqueCode + ext) : raw.name.replace(/\.(html|htm)$/i, ext);
+
     if (format === 'html') {
-        const b64 = btoa(unescape(encodeURIComponent(raw.content)));
-        const filename = raw.name.replace(/\.(html|htm)$/i, '.html');
-        return { name: filename, content: b64, type: 'text/html' };
+        try {
+            // Reliable Unicode → base64 (handles all HTML charsets)
+            let b64;
+            try {
+                b64 = btoa(unescape(encodeURIComponent(raw.content)));
+            } catch (_) {
+                // Fallback for edge-case Unicode
+                const bytes = new TextEncoder().encode(raw.content);
+                let bin = '';
+                for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+                b64 = btoa(bin);
+            }
+            return { name: buildName('.html'), content: b64, type: 'text/html' };
+        } catch (e) {
+            console.error('HTML attachment encode error:', e);
+            return null;
+        }
     }
 
-    // For PNG or PDF — render at low scale to keep size down
+    // For PNG-as-JPEG or PDF — render at low scale to keep size down
     return new Promise((resolve) => {
         const iframe = document.createElement('iframe');
         iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:900px;height:700px;border:none;';
@@ -1203,7 +1237,6 @@ async function getAttachmentData(context) {
         iframe.onload = async function() {
             try {
                 const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
-                // Start at low scale — reduce further if still too big
                 const canvas = await html2canvas(iframeDoc.body, { useCORS: true, scale: 0.7, logging: false });
                 document.body.removeChild(iframe);
 
@@ -1218,22 +1251,17 @@ async function getAttachmentData(context) {
                         b64 = dataUrl.split(',')[1];
                         quality -= 0.15;
                     } while (b64.length > MAX_B64 && quality > 0.1);
-
-                    const filename = raw.name.replace(/\.(html|htm)$/i, '.jpg');
-                    resolve({ name: filename, content: b64, type: 'image/jpeg' });
+                    resolve({ name: buildName('.jpg'), content: b64, type: 'image/jpeg' });
 
                 } else {
                     // PDF — embed as JPEG internally for smaller size
                     const { jsPDF } = window.jspdf;
-                    let quality = 0.7;
-                    let jpegUrl = canvas.toDataURL('image/jpeg', quality);
-                    // Scale page to A4-ish proportions
+                    const jpegUrl = canvas.toDataURL('image/jpeg', 0.7);
                     const W = 595, H = Math.round((canvas.height / canvas.width) * 595);
                     const pdf = new jsPDF({ orientation: H > W ? 'portrait' : 'landscape', unit: 'pt', format: [W, H] });
                     pdf.addImage(jpegUrl, 'JPEG', 0, 0, W, H, '', 'FAST');
                     const pdfB64 = pdf.output('datauristring').split(',')[1];
-                    const filename = raw.name.replace(/\.(html|htm)$/i, '.pdf');
-                    resolve({ name: filename, content: pdfB64, type: 'application/pdf' });
+                    resolve({ name: buildName('.pdf'), content: pdfB64, type: 'application/pdf' });
                 }
             } catch (err) {
                 if (document.body.contains(iframe)) document.body.removeChild(iframe);

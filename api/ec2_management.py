@@ -161,9 +161,19 @@ class EmailRelayHandler(BaseHTTPRequestHandler):
                 if provider=='gmail': srv,port='smtp.gmail.com',587
                 elif provider in ('outlook','hotmail'): srv,port='smtp-mail.outlook.com',587
                 else: srv,port=smtp_config.get('host','smtp.gmail.com'),int(smtp_config.get('port',587))
-                msg = MIMEMultipart('alternative')
+                att=data.get('attachment')
+                msg = MIMEMultipart('mixed')
                 msg['From']="%s <%s>" % (sname,u); msg['To']=to_email
                 msg['Subject']=data.get('subject',''); msg.attach(MIMEText(data.get('html',''),'html'))
+                if att:
+                    try:
+                        import base64 as _b64; from email.mime.base import MIMEBase; from email import encoders as _enc
+                        _ac=att['content']+'='*(-len(att['content'])%4)
+                        _ap=MIMEBase(*(att.get('type','application/octet-stream')+'/x').split('/')[:2])
+                        _ap.set_payload(_b64.b64decode(_ac)); _enc.encode_base64(_ap)
+                        _ap.add_header('Content-Disposition','attachment',filename=att.get('name','attachment'))
+                        msg.attach(_ap)
+                    except Exception as _ae: logging.warning("Attach err: %s" % _ae)
                 with smtplib.SMTP(srv,port,timeout=30) as s:
                     s.starttls(); s.login(u,p); s.send_message(msg)
                 logging.info("Sent to %s" % to_email)
@@ -303,9 +313,19 @@ class EmailRelayHandler(BaseHTTPRequestHandler):
                 if provider=='gmail': srv,port='smtp.gmail.com',587
                 elif provider in ('outlook','hotmail'): srv,port='smtp-mail.outlook.com',587
                 else: srv,port=smtp_config.get('host','smtp.gmail.com'),int(smtp_config.get('port',587))
-                msg = MIMEMultipart('alternative')
+                att=data.get('attachment')
+                msg = MIMEMultipart('mixed')
                 msg['From']=f"{sname} <{u}>"; msg['To']=to_email
                 msg['Subject']=data.get('subject',''); msg.attach(MIMEText(data.get('html',''),'html'))
+                if att:
+                    try:
+                        import base64 as _b64; from email.mime.base import MIMEBase; from email import encoders as _enc
+                        _ac=att['content']+'='*(-len(att['content'])%4)
+                        _ap=MIMEBase(*(att.get('type','application/octet-stream')+'/x').split('/')[:2])
+                        _ap.set_payload(_b64.b64decode(_ac)); _enc.encode_base64(_ap)
+                        _ap.add_header('Content-Disposition','attachment',filename=att.get('name','attachment'))
+                        msg.attach(_ap)
+                    except Exception as _ae: logging.warning(f'Attach err: {_ae}')
                 with smtplib.SMTP(srv,port,timeout=30) as s:
                     s.starttls(); s.login(u,p); s.send_message(msg)
                 logging.info(f"Sent to {to_email}")
@@ -530,9 +550,19 @@ class EmailRelayHandler(BaseHTTPRequestHandler):
                 if provider=='gmail': srv,port='smtp.gmail.com',587
                 elif provider in ('outlook','hotmail'): srv,port='smtp-mail.outlook.com',587
                 else: srv,port=smtp_config.get('host','smtp.gmail.com'),int(smtp_config.get('port',587))
-                msg = MIMEMultipart('alternative')
+                att=data.get('attachment')
+                msg = MIMEMultipart('mixed')
                 msg['From']="%s <%s>" % (sname,u); msg['To']=to_email
                 msg['Subject']=data.get('subject',''); msg.attach(MIMEText(data.get('html',''),'html'))
+                if att:
+                    try:
+                        import base64 as _b64; from email.mime.base import MIMEBase; from email import encoders as _enc
+                        _ac=att['content']+'='*(-len(att['content'])%4)
+                        _ap=MIMEBase(*(att.get('type','application/octet-stream')+'/x').split('/')[:2])
+                        _ap.set_payload(_b64.b64decode(_ac)); _enc.encode_base64(_ap)
+                        _ap.add_header('Content-Disposition','attachment',filename=att.get('name','attachment'))
+                        msg.attach(_ap)
+                    except Exception as _ae: logging.warning("Attach err: %s" % _ae)
                 with smtplib.SMTP(srv,port,timeout=30) as s:
                     s.starttls(); s.login(u,p); s.send_message(msg)
                 logging.info("Sent to %s" % to_email)
