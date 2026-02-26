@@ -54,6 +54,7 @@ class handler(BaseHTTPRequestHandler):
                     'pass': data.get('pass'),
                     'host': data.get('host'),
                     'port': data.get('port', 587),
+                    'sender_name': data.get('sender_name', ''),
                     'label': data.get('label', f"SMTP Account #{len(ACCOUNTS_STORE['smtp_accounts']) + 1}")
                 }
                 ACCOUNTS_STORE['smtp_accounts'].append(account)

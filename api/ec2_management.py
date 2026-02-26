@@ -88,6 +88,22 @@ def create_ec2_instance(access_key, secret_key, region, keypair_name, security_g
             except ClientError as e:
                 if 'InvalidGroup.Duplicate' not in str(e):
                     raise
+        else:
+            # If custom security group provided, ensure port 8080 is open
+            try:
+                ec2_client.authorize_security_group_ingress(
+                    GroupId=security_group,
+                    IpPermissions=[
+                        {'IpProtocol': 'tcp', 'FromPort': 8080, 'ToPort': 8080, 'IpRanges': [{'CidrIp': '0.0.0.0/0'}]},
+                        {'IpProtocol': 'tcp', 'FromPort': 25, 'ToPort': 25, 'IpRanges': [{'CidrIp': '0.0.0.0/0'}]},
+                        {'IpProtocol': 'tcp', 'FromPort': 587, 'ToPort': 587, 'IpRanges': [{'CidrIp': '0.0.0.0/0'}]},
+                        {'IpProtocol': 'tcp', 'FromPort': 22, 'ToPort': 22, 'IpRanges': [{'CidrIp': '0.0.0.0/0'}]}
+                    ]
+                )
+            except ClientError as e:
+                # Ignore if rules already exist
+                if 'InvalidPermission.Duplicate' not in str(e):
+                    pass  # Continue anyway, rules might already exist
         
         # Launch instance (t2.micro for cost-effectiveness)
         response = ec2_client.run_instances(
