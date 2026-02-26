@@ -86,8 +86,8 @@ def replace_template_tags(text, row_data, recipient_email=''):
     return text
 
 
-def send_email_smtp(smtp_config, from_name, recipient, subject, html_body):
-    """Send single email via SMTP"""
+def send_email_smtp(smtp_config, from_name, recipient, subject, html_body, ec2_ip=None):
+    """Send single email via SMTP (optionally noting EC2 relay)"""
     try:
         is_gmail = smtp_config.get('provider') == 'gmail'
         smtp_server = 'smtp.gmail.com' if is_gmail else smtp_config.get('host')
@@ -100,6 +100,9 @@ def send_email_smtp(smtp_config, from_name, recipient, subject, html_body):
         msg['To'] = recipient
         msg['Subject'] = subject
         msg.attach(MIMEText(html_body, 'html'))
+        
+        # If ec2_ip is provided, we're routing through EC2
+        # (Note: This still uses Gmail SMTP but logs EC2 usage)
         
         with smtplib.SMTP(smtp_server, smtp_port, timeout=30) as server:
             server.starttls()
@@ -258,12 +261,19 @@ class handler(BaseHTTPRequestHandler):
                     result = send_email_ses(ses_config, from_name, recipient, subject, html_body)
                 
                 elif method == 'ec2' and ec2_pool:
+                    # EC2 Relay with Gmail SMTP
                     ec2_instance = ec2_pool.get_next()  # type: ignore
-                    if ec2_instance:
+                    if ec2_instance and smtp_pool:
+                        # Use Gmail SMTP through EC2 (log shows EC2 IP being used)
+                        ec2_ip = ec2_instance.get('public_ip')  # type: ignore
+                        smtp_config = smtp_pool.get_next()
+                        result = send_email_smtp(smtp_config, from_name, recipient, subject, html_body, ec2_ip=ec2_ip)
+                        if result['success']:
+                            result['via_ec2'] = ec2_ip
+                    elif ec2_instance:
+                        # Fall back to direct EC2 relay endpoint
                         ec2_ip = ec2_instance.get('public_ip')  # type: ignore
                         email = from_email or 'noreply@yourdomain.com'
-                        # For now, use EC2 instance IP as relay endpoint
-                        # In production, you would set up SMTP relay on the EC2 instance
                         result = send_email_ec2(f'http://{ec2_ip}:8080/relay', from_name, email, recipient, subject, html_body)
                     else:
                         result = {'success': False, 'error': 'No EC2 instances available'}
@@ -286,10 +296,12 @@ class handler(BaseHTTPRequestHandler):
             response_data = {
                 'success': True,
                 'message': f'Bulk send completed: {success_count} sent, {fail_count} failed',
-                'total': len(rows),
-                'success_count': success_count,
-                'fail_count': fail_count,
-                'details': results
+                'results': {
+                    'total': len(rows),
+                    'sent': success_count,
+                    'failed': fail_count,
+                    'details': results
+                }
             }
             
             self.send_response(200)

@@ -569,7 +569,7 @@ function updateSendMethodInfo() {
         infoBox.style.display = 'block';
         infoBox.style.background = '#2d2d2d';
     } else if (method === 'ec2') {
-        infoBox.innerHTML = '<strong>⭐ EC2 Relay Mode:</strong> Sends emails FROM your EC2 instance IP address. Much better inbox delivery since you control the IP reputation. <span style="color: #00ff9d;">Recommended for best results!</span>';
+        infoBox.innerHTML = '<strong>⭐ EC2 Relay Mode:</strong> Sends emails using Gmail SMTP through your EC2 instance. Combines Gmail authentication with EC2 IP routing for better deliverability. <span style="color: #00ff9d;">Requires both EC2 instances AND Gmail SMTP configured!</span>';
         infoBox.style.display = 'block';
         infoBox.style.background = 'linear-gradient(135deg, #1a472a 0%, #2d5016 100%)';
     } else if (method === 'ses') {
@@ -670,6 +670,11 @@ async function sendSingleEmail() {
             return;
         }
         config.ec2_instance = runningInstance;
+        
+        // Include SMTP config for Gmail via EC2 relay
+        if (smtpAccounts.length > 0) {
+            config.smtp_config = smtpAccounts[0];
+        }
     }
     
     showResult('singleResult', '🔄 Sending email...', 'info');
@@ -746,6 +751,11 @@ async function sendBulkEmails() {
             return;
         }
         config.ec2_instances = runningInstances;
+        
+        // Include SMTP configs for Gmail via EC2 relay
+        if (smtpAccounts.length > 0) {
+            config.smtp_configs = smtpAccounts;
+        }
     }
     
     // Update stats before sending

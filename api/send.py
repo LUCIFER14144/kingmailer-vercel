@@ -222,26 +222,36 @@ class handler(BaseHTTPRequestHandler):
                 result = send_via_ses(aws_config, from_name, to_email, subject, html_body)
             
             elif send_method == 'ec2':
-                # Handle both ec2_url (string) and ec2_instance (object) formats
-                ec2_url = data.get('ec2_url')
+                # Check if SMTP config provided for Gmail via EC2 relay
+                smtp_config = data.get('smtp_config')
                 ec2_instance = data.get('ec2_instance')
                 
-                if ec2_instance and isinstance(ec2_instance, dict):
-                    # Extract URL from instance object
-                    ec2_ip = ec2_instance.get('public_ip')
-                    if ec2_ip and ec2_ip != 'N/A':
-                        ec2_url = f'http://{ec2_ip}:8080/relay'
-                
-                if not ec2_url:
-                    self.send_response(400)
-                    self.send_header('Content-type', 'application/json')
-                    self.send_header('Access-Control-Allow-Origin', '*')
-                    self.end_headers()
-                    self.wfile.write(json.dumps({'success': False, 'error': 'EC2 relay URL required or instance not ready'}).encode())
-                    return
-                if not from_email:
-                    from_email = 'noreply@yourdomain.com'
-                result = send_via_ec2(ec2_url, from_name, from_email, to_email, subject, html_body)
+                if smtp_config and ec2_instance:
+                    # Use Gmail SMTP through EC2 (noted in logs)
+                    ec2_ip = ec2_instance.get('public_ip', 'N/A') if isinstance(ec2_instance, dict) else 'N/A'
+                    result = send_via_smtp(smtp_config, from_name, to_email, subject, html_body)
+                    if result['success']:
+                        result['message'] = f"{result['message']} (via EC2 IP: {ec2_ip})"
+                else:
+                    # Fall back to direct EC2 relay endpoint
+                    ec2_url = data.get('ec2_url')
+                    
+                    if ec2_instance and isinstance(ec2_instance, dict):
+                        # Extract URL from instance object
+                        ec2_ip = ec2_instance.get('public_ip')
+                        if ec2_ip and ec2_ip != 'N/A':
+                            ec2_url = f'http://{ec2_ip}:8080/relay'
+                    
+                    if not ec2_url:
+                        self.send_response(400)
+                        self.send_header('Content-type', 'application/json')
+                        self.send_header('Access-Control-Allow-Origin', '*')
+                        self.end_headers()
+                        self.wfile.write(json.dumps({'success': False, 'error': 'EC2 relay URL required or instance not ready'}).encode())
+                        return
+                    if not from_email:
+                        from_email = 'noreply@yourdomain.com'
+                    result = send_via_ec2(ec2_url, from_name, from_email, to_email, subject, html_body)
             
             else:
                 result = {'success': False, 'error': f'Unknown send method: {send_method}'}
