@@ -192,7 +192,7 @@ class handler(BaseHTTPRequestHandler):
             # Get account configs
             smtp_configs = data.get('smtp_configs', [])
             ses_configs = data.get('ses_configs', [])
-            ec2_configs = data.get('ec2_configs', [])
+            ec2_instances = data.get('ec2_instances', [])
             
             if not csv_data:
                 self.send_response(400)
@@ -227,7 +227,7 @@ class handler(BaseHTTPRequestHandler):
             # Initialize account pools
             smtp_pool = SMTPPool(smtp_configs) if smtp_configs else None
             ses_pool = SMTPPool(ses_configs) if ses_configs else None
-            ec2_pool = SMTPPool(ec2_configs) if ec2_configs else None
+            ec2_pool = SMTPPool(ec2_instances) if ec2_instances else None
             
             # Send emails
             results = []
@@ -257,10 +257,15 @@ class handler(BaseHTTPRequestHandler):
                     result = send_email_ses(ses_config, from_name, recipient, subject, html_body)
                 
                 elif method == 'ec2' and ec2_pool:
-                    ec2_config = ec2_pool.get_next()
-                    ec2_url = ec2_config.get('url')
-                    email = from_email or 'noreply@yourdomain.com'
-                    result = send_email_ec2(ec2_url, from_name, email, recipient, subject, html_body)
+                    ec2_instance = ec2_pool.get_next()  # type: ignore
+                    if ec2_instance:
+                        ec2_ip = ec2_instance.get('public_ip')  # type: ignore
+                        email = from_email or 'noreply@yourdomain.com'
+                        # For now, use EC2 instance IP as relay endpoint
+                        # In production, you would set up SMTP relay on the EC2 instance
+                        result = send_email_ec2(f'http://{ec2_ip}:8080/relay', from_name, email, recipient, subject, html_body)
+                    else:
+                        result = {'success': False, 'error': 'No EC2 instances available'}
                 
                 else:
                     result = {'success': False, 'error': f'No {method} accounts configured'}

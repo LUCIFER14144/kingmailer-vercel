@@ -14,6 +14,11 @@
                 window.location.href = '/login.html';
             } else {
                 document.getElementById('userDisplay').textContent = user;
+                
+                // Show admin button if admin user
+                if (user === 'admin') {
+                    document.getElementById('adminBtn').style.display = 'inline-block';
+                }
             }
         });
 
@@ -32,6 +37,7 @@
             <p>Professional Email Marketing on Vercel - Full SMTP Support!</p>
             <div style="text-align: right; margin-top: 10px;">
                 <span style="color: #888;">User: <span id="userDisplay">-</span></span>
+                <button onclick="window.location.href='/admin.html'" id="adminBtn" style="display: none; margin-left: 15px; padding: 5px 15px; background: #667eea; color: white; border: none; border-radius: 4px; cursor: pointer;">Admin Panel</button>
                 <button onclick="logout()" style="margin-left: 15px; padding: 5px 15px; background: #444; color: white; border: none; border-radius: 4px; cursor: pointer;">Logout</button>
             </div>
         </header>
@@ -213,9 +219,9 @@
             </div>
 
             <div class="form-group">
-                <label>Verified Sender Email:</label>
-                <input type="email" id="sesFromEmail" placeholder="sender@yourdomain.com">
-                <small>Must be verified in SES Console</small>
+                <label>From Email (Optional):</label>
+                <input type="email" id="sesFromEmail" placeholder="noreply@yourdomain.com">
+                <small>Leave empty to use default identity</small>
             </div>
 
             <button class="btn btn-secondary" onclick="testSesConnection()">Test Connection</button>
@@ -227,37 +233,70 @@
             <div id="sesAccountsList" class="accounts-list"></div>
         </div>
 
-        <!-- Tab: EC2 Relay -->
+        <!-- Tab: EC2 Management -->
         <div class="tab-content" id="ec2">
-            <h2>🖥️ EC2 Relay Configuration</h2>
+            <h2>🖥️ AWS EC2 Instance Management</h2>
             
             <div class="info-box">
-                <strong>EC2 Relay Benefits:</strong><br>
-                • Full control over sending infrastructure<br>
-                • Dedicated IP address<br>
-                • Custom SPF/DKIM/DMARC setup<br>
-                • No platform restrictions
+                <strong>EC2 Email Sending:</strong><br>
+                • Create your own EC2 instances for email sending<br>
+                • Send emails from EC2 IP using Gmail SMTP or any SMTP<br>
+                • Full control over infrastructure<br>
+                • Dedicated IP address for better deliverability
             </div>
 
-            <h3>Add EC2 Relay</h3>
+            <h3>AWS Credentials</h3>
             
-            <div class="form-group">
-                <label>Relay Endpoint URL:</label>
-                <input type="url" id="ec2Url" placeholder="http://your-ec2-ip:2525/send">
+            <div class="form-row">
+                <div class="form-group">
+                    <label>AWS Access Key:</label>
+                    <input type="text" id="ec2AccessKey" placeholder="AKIAIOSFODNN7EXAMPLE">
+                </div>
+                <div class="form-group">
+                    <label>AWS Secret Key:</label>
+                    <input type="password" id="ec2SecretKey" placeholder="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY">
+                </div>
             </div>
 
-            <div class="form-group">
-                <label>Label (optional):</label>
-                <input type="text" id="ec2Label" placeholder="My EC2 Server">
+            <div class="form-row">
+                <div class="form-group">
+                    <label>AWS Region:</label>
+                    <select id="ec2Region">
+                        <option value="us-east-1">US East (N. Virginia)</option>
+                        <option value="us-west-2">US West (Oregon)</option>
+                        <option value="eu-west-1">EU (Ireland)</option>
+                        <option value="ap-southeast-1">Asia Pacific (Singapore)</option>
+                        <option value="ap-south-1">Asia Pacific (Mumbai)</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Key Pair Name:</label>
+                    <input type="text" id="ec2Keypair" placeholder="my-keypair">
+                </div>
             </div>
 
-            <button class="btn btn-secondary" onclick="testEc2Relay()">Test Connection</button>
-            <button class="btn btn-primary" onclick="addEc2Relay()">Add Relay</button>
+            <button class="btn btn-secondary" onclick="saveAwsCredentials()">Save AWS Credentials</button>
+
+            <h3 style="margin-top: 30px;">EC2 Instance Management</h3>
+            
+            <div style="display: flex; gap: 10px; margin-bottom: 20px;">
+                <button class="btn btn-primary" onclick="createEc2Instance()">🚀 Create New Instance</button>
+                <button class="btn btn-secondary" onclick="refreshEc2Instances()">🔄 Refresh List</button>
+            </div>
 
             <div id="ec2Result" class="result-box"></div>
 
-            <h3>Saved EC2 Relays</h3>
-            <div id="ec2RelaysList" class="accounts-list"></div>
+            <h3>Running EC2 Instances</h3>
+            <div id="ec2InstancesList"></div>
+
+            <div class="info-box" style="margin-top: 20px;">
+                <strong>How Email Sending Works:</strong><br>
+                1. Create EC2 instance using the button above<br>
+                2. Wait for instance to be running (usually 2-3 minutes)<br>
+                3. Add your Gmail SMTP or other SMTP credentials in SMTP Config tab<br>
+                4. When sending emails, they will be routed through your EC2 IP<br>
+                5. This gives you a dedicated IP for better inbox delivery
+            </div>
         </div>
     </div>
 

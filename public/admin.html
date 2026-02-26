@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Panel - KINGMAILER</title>
+    <link rel="stylesheet" href="style.css">
+    <style>
+        .admin-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 30px;
+            text-align: center;
+        }
+        .user-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        .user-table th {
+            background: #2d2d2d;
+            padding: 12px;
+            text-align: left;
+            color: #00ff9d;
+        }
+        .user-table td {
+            padding: 10px;
+            border-bottom: 1px solid #444;
+        }
+        .user-table tr:hover {
+            background: #2d2d2d;
+        }
+        .btn-delete {
+            background: #ff4d4f;
+            color: white;
+            border: none;
+            padding: 5px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .btn-delete:hover {
+            background: #d43f3f;
+        }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .stat-card {
+            background: #2d2d2d;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+        }
+        .stat-number {
+            font-size: 2rem;
+            font-weight: bold;
+            color: #00ff9d;
+        }
+        .stat-label {
+            color: #888;
+            margin-top: 5px;
+        }
+    </style>
+    <script>
+        // Check if admin
+        window.addEventListener('DOMContentLoaded', () => {
+            const user = localStorage.getItem('kingmailer_user');
+            if (user !== 'admin') {
+                alert('Access denied. Admin only.');
+                window.location.href = '/';
+            }
+            document.getElementById('currentAdmin').textContent = user;
+            loadUsers();
+            loadStats();
+        });
+
+        function goBack() {
+            window.location.href = '/';
+        }
+
+        async function loadUsers() {
+            try {
+                const response = await fetch('/api/users');
+                const data = await response.json();
+                
+                if (data.success) {
+                    renderUsers(data.users);
+                }
+            } catch (error) {
+                console.error('Failed to load users:', error);
+            }
+        }
+
+        function renderUsers(users) {
+            const tbody = document.getElementById('usersTableBody');
+            
+            if (users.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#888;">No users found</td></tr>';
+                return;
+            }
+            
+            tbody.innerHTML = users.map(user => `
+                <tr>
+                    <td>${user.username}</td>
+                    <td>${user.role || 'User'}</td>
+                    <td>${user.created_at || 'N/A'}</td>
+                    <td>
+                        ${user.username !== 'admin' ? `<button class="btn-delete" onclick="deleteUser('${user.username}')">Delete</button>` : '<span style="color:#888;">Protected</span>'}
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        async function createUser() {
+            const username = document.getElementById('newUsername').value.trim();
+            const password = document.getElementById('newPassword').value.trim();
+            const role = document.getElementById('newRole').value;
+            
+            if (!username || !password) {
+                showStatus('Please enter username and password', 'error');
+                return;
+            }
+            
+            if (password.length < 6) {
+                showStatus('Password must be at least 6 characters', 'error');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/users', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({username, password, role})
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    showStatus(`✅ User "${username}" created successfully!`, 'success');
+                    document.getElementById('newUsername').value = '';
+                    document.getElementById('newPassword').value = '';
+                    loadUsers();
+                    loadStats();
+                } else {
+                    showStatus(`❌ ${data.error}`, 'error');
+                }
+            } catch (error) {
+                showStatus(`❌ Failed to create user: ${error.message}`, 'error');
+            }
+        }
+
+        async function deleteUser(username) {
+            if (!confirm(`Are you sure you want to delete user "${username}"?`)) {
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/users', {
+                    method: 'DELETE',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({username})
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    showStatus(`✅ User "${username}" deleted successfully!`, 'success');
+                    loadUsers();
+                    loadStats();
+                } else {
+                    showStatus(`❌ ${data.error}`, 'error');
+                }
+            } catch (error) {
+                showStatus(`❌ Failed to delete user: ${error.message}`, 'error');
+            }
+        }
+
+        async function loadStats() {
+            try {
+                const response = await fetch('/api/users/stats');
+                const data = await response.json();
+                
+                if (data.success) {
+                    document.getElementById('totalUsers').textContent = data.stats.total_users;
+                    document.getElementById('adminUsers').textContent = data.stats.admin_users;
+                    document.getElementById('regularUsers').textContent = data.stats.regular_users;
+                }
+            } catch (error) {
+                console.error('Failed to load stats:', error);
+            }
+        }
+
+        function showStatus(message, type) {
+            const statusDiv = document.getElementById('statusMessage');
+            statusDiv.textContent = message;
+            statusDiv.className = `result-box ${type}`;
+            statusDiv.style.display = 'block';
+            
+            setTimeout(() => {
+                statusDiv.style.display = 'none';
+            }, 5000);
+        }
+    </script>
+</head>
+<body>
+    <div class="container">
+        <div class="admin-header">
+            <h1>🔑 Admin Panel</h1>
+            <p>User Management - KINGMAILER v4.0</p>
+            <p style="margin-top: 10px;">
+                <span style="color: #fff;">Logged in as: <strong id="currentAdmin">-</strong></span>
+                <button onclick="goBack()" style="margin-left: 20px; padding: 8px 20px; background: #fff; color: #667eea; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">← Back to Dashboard</button>
+            </p>
+        </div>
+
+        <!-- Statistics -->
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-number" id="totalUsers">0</div>
+                <div class="stat-label">Total Users</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="adminUsers">0</div>
+                <div class="stat-label">Admin Users</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="regularUsers">0</div>
+                <div class="stat-label">Regular Users</div>
+            </div>
+        </div>
+
+        <!-- Create User Form -->
+        <div style="background: #2d2d2d; padding: 20px; border-radius: 8px; margin-bottom: 30px;">
+            <h2>Create New User</h2>
+            
+            <div class="form-row" style="display: grid; grid-template-columns: 2fr 2fr 1fr 1fr; gap: 15px; margin-top: 20px;">
+                <div class="form-group">
+                    <label>Username:</label>
+                    <input type="text" id="newUsername" placeholder="Enter username">
+                </div>
+                
+                <div class="form-group">
+                    <label>Password:</label>
+                    <input type="password" id="newPassword" placeholder="Min. 6 characters">
+                </div>
+                
+                <div class="form-group">
+                    <label>Role:</label>
+                    <select id="newRole">
+                        <option value="user">User</option>
+                        <option value="admin">Admin</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label>&nbsp;</label>
+                    <button class="btn btn-primary" onclick="createUser()" style="width: 100%;">Create User</button>
+                </div>
+            </div>
+
+            <div id="statusMessage" class="result-box" style="display: none; margin-top: 15px;"></div>
+        </div>
+
+        <!-- Users Table -->
+        <div style="background: #2d2d2d; padding: 20px; border-radius: 8px;">
+            <h2>All Users</h2>
+            
+            <table class="user-table">
+                <thead>
+                    <tr>
+                        <th>Username</th>
+                        <th>Role</th>
+                        <th>Created At</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="usersTableBody">
+                    <tr><td colspan="4" style="text-align:center;color:#888;">Loading...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</body>
+</html>
