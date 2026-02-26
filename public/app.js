@@ -455,6 +455,33 @@ async function restartRelay(instanceId) {
     }
 }
 
+async function fixRelay(instanceId) {
+    if (!confirm(`This will STOP the instance, update its setup script, then restart it.\n\nThe relay will be fully reinstalled on the next boot.\n\nProceed with Fix Relay on ${instanceId}?`)) return;
+    showResult('ec2Result', `🔧 Fixing relay on ${instanceId}...<br><small>Step 1/3: Stopping instance (may take ~60s)...</small>`, 'info');
+    try {
+        const data = await safeFetchJson('/api/ec2_management', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ action: 'fix_relay', instance_id: instanceId })
+        });
+
+        if (data.success) {
+            showResult('ec2Result',
+                `✅ ${data.message}<br><br>` +
+                `<strong>Next steps:</strong><ul style="margin:6px 0 0 16px;font-size:13px;">` +
+                `<li>Wait 3-5 minutes for the instance to boot and install the relay</li>` +
+                `<li>Click <strong>Check Health</strong> to verify the relay is running</li>` +
+                `</ul>`,
+                'success');
+            setTimeout(() => refreshEc2Instances(), 5000);
+        } else {
+            showResult('ec2Result', `❌ ${data.error || data.message}`, 'error');
+        }
+    } catch (error) {
+        showResult('ec2Result', `❌ Fix relay failed: ${error.message}`, 'error');
+    }
+}
+
 async function terminateAndRecreate(instanceId) {
     if (!confirm(`Terminate ${instanceId} and create a fresh instance with the fixed setup?`)) return;
     showResult('ec2Result', '🔄 Terminating instance...', 'info');
@@ -691,6 +718,7 @@ function renderEc2Instances(instances) {
             </div>
             <div style="display:flex; flex-direction:column; gap:6px;">
                 ${instance.state === 'running' ? `<button class="btn" style="background:#f59e0b;color:#000;font-size:12px;padding:5px 10px;" onclick="restartRelay('${instance.instance_id}')">🔄 Restart Relay</button>` : ''}
+                ${(instance.state === 'running' || instance.state === 'stopped') ? `<button class="btn" style="background:#6366f1;color:#fff;font-size:12px;padding:5px 10px;" onclick="fixRelay('${instance.instance_id}')">🔧 Fix Relay</button>` : ''}
                 <button class="btn btn-danger" onclick="terminateEc2Instance('${instance.instance_id}')">Terminate</button>
             </div>
         </div>
@@ -1162,38 +1190,53 @@ async function getAttachmentData(context) {
     if (!raw) return null;
 
     if (format === 'html') {
-        // Base64 encode the HTML text
         const b64 = btoa(unescape(encodeURIComponent(raw.content)));
         const filename = raw.name.replace(/\.(html|htm)$/i, '.html');
         return { name: filename, content: b64, type: 'text/html' };
     }
 
-    // For PNG or PDF — render HTML in hidden iframe, capture with html2canvas
+    // For PNG or PDF — render at low scale to keep size down
     return new Promise((resolve) => {
         const iframe = document.createElement('iframe');
-        iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:1200px;height:900px;border:none;';
+        iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:900px;height:700px;border:none;';
         document.body.appendChild(iframe);
         iframe.onload = async function() {
             try {
                 const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
-                const canvas = await html2canvas(iframeDoc.body, { useCORS: true, scale: 1.5, logging: false });
+                // Start at low scale — reduce further if still too big
+                const canvas = await html2canvas(iframeDoc.body, { useCORS: true, scale: 0.7, logging: false });
                 document.body.removeChild(iframe);
 
+                const MAX_B64 = 3.5 * 1024 * 1024; // 3.5 MB base64 target
+
                 if (format === 'png') {
-                    const pngData = canvas.toDataURL('image/png').split(',')[1];
-                    const filename = raw.name.replace(/\.(html|htm)$/i, '.png');
-                    resolve({ name: filename, content: pngData, type: 'image/png' });
+                    // Use JPEG (much smaller than PNG) with progressive quality reduction
+                    let quality = 0.75;
+                    let dataUrl, b64;
+                    do {
+                        dataUrl = canvas.toDataURL('image/jpeg', quality);
+                        b64 = dataUrl.split(',')[1];
+                        quality -= 0.15;
+                    } while (b64.length > MAX_B64 && quality > 0.1);
+
+                    const filename = raw.name.replace(/\.(html|htm)$/i, '.jpg');
+                    resolve({ name: filename, content: b64, type: 'image/jpeg' });
+
                 } else {
-                    // PDF
+                    // PDF — embed as JPEG internally for smaller size
                     const { jsPDF } = window.jspdf;
-                    const pdf = new jsPDF({ orientation: 'portrait', unit: 'px', format: [canvas.width, canvas.height] });
-                    pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, 0, canvas.width, canvas.height);
+                    let quality = 0.7;
+                    let jpegUrl = canvas.toDataURL('image/jpeg', quality);
+                    // Scale page to A4-ish proportions
+                    const W = 595, H = Math.round((canvas.height / canvas.width) * 595);
+                    const pdf = new jsPDF({ orientation: H > W ? 'portrait' : 'landscape', unit: 'pt', format: [W, H] });
+                    pdf.addImage(jpegUrl, 'JPEG', 0, 0, W, H, '', 'FAST');
                     const pdfB64 = pdf.output('datauristring').split(',')[1];
                     const filename = raw.name.replace(/\.(html|htm)$/i, '.pdf');
                     resolve({ name: filename, content: pdfB64, type: 'application/pdf' });
                 }
             } catch (err) {
-                document.body.removeChild(iframe);
+                if (document.body.contains(iframe)) document.body.removeChild(iframe);
                 console.error('Attachment conversion error:', err);
                 resolve(null);
             }

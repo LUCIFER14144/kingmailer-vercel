@@ -461,6 +461,135 @@ def _attach_ssm_role(access_key, secret_key, region, instance_id):
         return {'attached': False, 'error': str(e)}
 
 
+def fix_relay_instance(access_key, secret_key, region, instance_id):
+    """Stop instance, replace UserData with a #cloud-boothook relay script, start it.
+    This repairs broken instances where the original UserData never ran properly."""
+    import base64 as _b64
+    try:
+        ec2 = boto3.client(
+            'ec2', region_name=region,
+            aws_access_key_id=access_key,
+            aws_secret_access_key=secret_key
+        )
+
+        # Check current state
+        desc = ec2.describe_instances(InstanceIds=[instance_id])
+        state = desc['Reservations'][0]['Instances'][0]['State']['Name']
+
+        if state in ('terminated', 'shutting-down'):
+            return {'success': False, 'error': f'Instance is {state} and cannot be fixed — please terminate and create a new one.'}
+
+        # Stop if running or stopping
+        if state == 'running':
+            ec2.stop_instances(InstanceIds=[instance_id])
+        if state in ('running', 'stopping'):
+            waiter = ec2.get_waiter('instance_stopped')
+            waiter.wait(InstanceIds=[instance_id], WaiterConfig={'Delay': 15, 'MaxAttempts': 24})
+
+        # New UserData: #cloud-boothook runs on EVERY boot, bypasses cloud-init "already ran" cache
+        new_userdata = r"""#cloud-boothook
+#!/bin/bash
+exec > /var/log/boothook.log 2>&1
+echo "=== KINGMAILER Relay BootHook $(date) ==="
+which python3 || yum install -y python3 2>/dev/null || dnf install -y python3 2>/dev/null || true
+mkdir -p /opt
+
+cat > /opt/email_relay_server.py << 'PYEOF'
+#!/usr/bin/env python3
+import json, smtplib, logging, socket
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from datetime import datetime
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s',
+    handlers=[logging.FileHandler('/var/log/email_relay.log'), logging.StreamHandler()])
+class EmailRelayHandler(BaseHTTPRequestHandler):
+    def log_message(self, fmt, *a): logging.info("%s - %s" % (self.client_address[0], fmt%a))
+    def do_GET(self):
+        if self.path in ('/', '/health'):
+            self.send_response(200); self.send_header('Content-type','application/json'); self.end_headers()
+            def chk(p):
+                try:
+                    s=socket.socket(); s.settimeout(3); r=s.connect_ex(('smtp.gmail.com',p)); s.close(); return 'open' if r==0 else 'blocked'
+                except: return 'unknown'
+            self.wfile.write(json.dumps({'status':'healthy','service':'KINGMAILER Relay',
+                'timestamp':datetime.now().isoformat(),'port_587_outbound':chk(587),'port_465_outbound':chk(465)}).encode())
+        else: self.send_response(404); self.end_headers()
+    def do_POST(self):
+        if self.path == '/relay':
+            try:
+                data = json.loads(self.rfile.read(int(self.headers['Content-Length'])).decode())
+                smtp_config = data.get('smtp_config')
+                if not smtp_config: raise ValueError('SMTP config required')
+                to_email = data.get('to','')
+                if not to_email: raise ValueError('Recipient required')
+                provider = smtp_config.get('provider','gmail')
+                u = smtp_config.get('user'); p = smtp_config.get('pass')
+                if not u or not p: raise ValueError('SMTP credentials required')
+                sname = smtp_config.get('sender_name', data.get('from_name','KINGMAILER'))
+                if provider=='gmail': srv,port='smtp.gmail.com',587
+                elif provider in ('outlook','hotmail'): srv,port='smtp-mail.outlook.com',587
+                else: srv,port=smtp_config.get('host','smtp.gmail.com'),int(smtp_config.get('port',587))
+                msg = MIMEMultipart('alternative')
+                msg['From']="%s <%s>" % (sname,u); msg['To']=to_email
+                msg['Subject']=data.get('subject',''); msg.attach(MIMEText(data.get('html',''),'html'))
+                with smtplib.SMTP(srv,port,timeout=30) as s:
+                    s.starttls(); s.login(u,p); s.send_message(msg)
+                logging.info("Sent to %s" % to_email)
+                self.send_response(200); self.send_header('Content-type','application/json'); self.end_headers()
+                self.wfile.write(json.dumps({'success':True,'message':'Email sent'}).encode())
+            except Exception as e:
+                logging.error(str(e))
+                self.send_response(500); self.send_header('Content-type','application/json'); self.end_headers()
+                self.wfile.write(json.dumps({'success':False,'error':str(e)}).encode())
+        else: self.send_response(404); self.end_headers()
+if __name__ == '__main__':
+    srv = HTTPServer(('0.0.0.0',3000), EmailRelayHandler)
+    logging.info('Relay started on port 3000'); srv.serve_forever()
+PYEOF
+
+chmod +x /opt/email_relay_server.py
+
+cat > /etc/systemd/system/email-relay.service << 'SVCEOF'
+[Unit]
+Description=KINGMAILER Email Relay
+After=network.target
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/bin/python3 /opt/email_relay_server.py
+Restart=always
+RestartSec=5
+[Install]
+WantedBy=multi-user.target
+SVCEOF
+
+systemctl daemon-reload
+systemctl enable email-relay.service
+systemctl restart email-relay.service
+echo '* * * * * root systemctl is-active email-relay || systemctl restart email-relay' > /etc/cron.d/email-relay-watchdog
+echo "=== Relay BootHook Done $(date) ==="
+"""
+
+        encoded = _b64.b64encode(new_userdata.encode('utf-8')).decode('utf-8')
+        ec2.modify_instance_attribute(
+            InstanceId=instance_id,
+            UserData={'Value': encoded}
+        )
+
+        # Start the instance
+        ec2.start_instances(InstanceIds=[instance_id])
+
+        return {
+            'success': True,
+            'message': '✅ Instance is restarting with a fresh relay setup (#cloud-boothook). '
+                       'The relay will auto-install on every boot. Check health in 3-5 minutes.'
+        }
+
+    except Exception as e:
+        return {'success': False, 'error': str(e)}
+
+
 def terminate_ec2_instance(access_key, secret_key, region, instance_id):
     """Terminate an EC2 instance"""
     try:
@@ -685,6 +814,20 @@ class handler(BaseHTTPRequestHandler):
                     result = {'success': False, 'error': 'AWS credentials not configured'}
                 else:
                     result = restart_relay_via_ssm(
+                        AWS_CREDENTIALS['access_key'],
+                        AWS_CREDENTIALS['secret_key'],
+                        AWS_CREDENTIALS['region'],
+                        instance_id
+                    )
+
+            elif action == 'fix_relay':
+                instance_id = data.get('instance_id')
+                if not instance_id:
+                    result = {'success': False, 'error': 'instance_id required'}
+                elif not AWS_CREDENTIALS:
+                    result = {'success': False, 'error': 'AWS credentials not configured'}
+                else:
+                    result = fix_relay_instance(
                         AWS_CREDENTIALS['access_key'],
                         AWS_CREDENTIALS['secret_key'],
                         AWS_CREDENTIALS['region'],
