@@ -44,9 +44,6 @@ def replace_template_tags(text, recipient_email=''):
     if not text:
         return text
     
-    print(f'[TAG REPLACEMENT] Input text (first 200 chars): {text[:200]}')
-    print(f'[TAG REPLACEMENT] Recipient email: {recipient_email}')
-    
     def gen_random_name():
         first = ['James', 'John', 'Robert', 'Michael', 'William', 'Mary', 'Patricia', 'Jennifer', 'Linda', 'Elizabeth']
         last = ['Smith', 'Johnson', 'Williams', 'Brown', 'Jones', 'Garcia', 'Miller', 'Davis', 'Rodriguez', 'Martinez']
@@ -79,8 +76,6 @@ def replace_template_tags(text, recipient_email=''):
         'email': recipient_email
     }
     
-    print(f'[TAG REPLACEMENT] Generated values: {replacements}')
-    
     # Replace each tag (case-insensitive)
     for tag, value in replacements.items():
         # Try multiple patterns to be extra sure
@@ -92,9 +87,6 @@ def replace_template_tags(text, recipient_email=''):
         for pattern in patterns:
             if pattern in text:
                 text = text.replace(pattern, str(value))
-                print(f'[TAG REPLACEMENT] Replaced {pattern} with {value}')
-    
-    print(f'[TAG REPLACEMENT] Output text (first 200 chars): {text[:200]}')
     
     return text
 
@@ -293,10 +285,6 @@ class handler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({'success': False, 'error': 'Recipient email required'}).encode())
                 return
             
-            # Debug logging
-            print(f'[PLACEHOLDER DEBUG] Original subject: {subject}')
-            print(f'[PLACEHOLDER DEBUG] Original html_body (first 100 chars): {html_body[:100]}')
-            
             # Process spintax in subject and body
             subject = process_spintax(subject)
             html_body = process_spintax(html_body)
@@ -309,9 +297,6 @@ class handler(BaseHTTPRequestHandler):
             # Replace standard template tags
             subject = replace_template_tags(subject, to_email)
             html_body = replace_template_tags(html_body, to_email)
-            
-            print(f'[PLACEHOLDER DEBUG] After replacement subject: {subject}')
-            print(f'[PLACEHOLDER DEBUG] After replacement html_body (first 100 chars): {html_body[:100]}')
             
             # Route to appropriate sending method
             if send_method == 'smtp' or send_method == 'gmail':
