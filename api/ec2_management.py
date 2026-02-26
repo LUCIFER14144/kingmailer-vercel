@@ -308,7 +308,7 @@ class handler(BaseHTTPRequestHandler):
                         'error': 'Please save AWS credentials first'
                     }
                 else:
-                    result = create_ec2_instance(
+                    create_result = create_ec2_instance(
                         AWS_CREDENTIALS['access_key'],
                         AWS_CREDENTIALS['secret_key'],
                         AWS_CREDENTIALS['region'],
@@ -316,15 +316,30 @@ class handler(BaseHTTPRequestHandler):
                         AWS_CREDENTIALS.get('security_group')
                     )
                     
-                    if result['success']:
+                    if create_result.get('success'):
+                        # Add to instances list
                         EC2_INSTANCES.append({
                             'id': len(EC2_INSTANCES) + 1,
-                            'instance_id': result['instance_id'],
-                            'public_ip': result['public_ip'],
-                            'region': result['region'],
-                            'state': result['state'],
+                            'instance_id': create_result['instance_id'],
+                            'public_ip': create_result['public_ip'],
+                            'region': create_result['region'],
+                            'state': create_result['state'],
                             'created_at': time.strftime('%Y-%m-%d %H:%M:%S')
                         })
+                        
+                        # Return wrapped result for frontend
+                        result = {
+                            'success': True,
+                            'instance': {
+                                'instance_id': create_result['instance_id'],
+                                'public_ip': create_result['public_ip'],
+                                'region': create_result['region'],
+                                'state': create_result['state']
+                            }
+                        }
+                    else:
+                        # Pass through error
+                        result = create_result
             
             elif action == 'list_instances':
                 # List all EC2 instances from AWS
