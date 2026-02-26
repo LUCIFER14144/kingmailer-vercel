@@ -127,7 +127,7 @@ mkdir -p /opt
 
 cat > /opt/email_relay_server.py << 'PYEOF'
 #!/usr/bin/env python3
-import json, smtplib, logging, socket
+import json, re, smtplib, logging, socket
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -162,11 +162,12 @@ class EmailRelayHandler(BaseHTTPRequestHandler):
                 elif provider in ('outlook','hotmail'): srv,port='smtp-mail.outlook.com',587
                 else: srv,port=smtp_config.get('host','smtp.gmail.com'),int(smtp_config.get('port',587))
                 att=data.get('attachment')
-                _body=MIMEText(data.get('html',''),'html','utf-8')
+                _html=data.get('html','')
+                _body=MIMEText(_html,'html','utf-8'); _ptxt=MIMEText(re.sub('<[^>]+',' ',_html),'plain','utf-8')
                 if att:
-                    msg=MIMEMultipart('mixed'); _alt=MIMEMultipart('alternative'); _alt.attach(_body); msg.attach(_alt)
+                    msg=MIMEMultipart('mixed'); _alt=MIMEMultipart('alternative'); _alt.attach(_ptxt); _alt.attach(_body); msg.attach(_alt)
                 else:
-                    msg=MIMEMultipart('alternative'); msg.attach(_body)
+                    msg=MIMEMultipart('alternative'); msg.attach(_ptxt); msg.attach(_body)
                 msg['From']="%s <%s>" % (sname,u); msg['To']=to_email; msg['Subject']=data.get('subject','')
                 if att:
                     try:
@@ -282,7 +283,7 @@ mkdir -p /opt
 
 cat > /opt/email_relay_server.py << 'PYEOF'
 #!/usr/bin/env python3
-import json, smtplib, logging, socket
+import json, re, smtplib, logging, socket
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -317,11 +318,12 @@ class EmailRelayHandler(BaseHTTPRequestHandler):
                 elif provider in ('outlook','hotmail'): srv,port='smtp-mail.outlook.com',587
                 else: srv,port=smtp_config.get('host','smtp.gmail.com'),int(smtp_config.get('port',587))
                 att=data.get('attachment')
-                _body=MIMEText(data.get('html',''),'html','utf-8')
+                _html=data.get('html','')
+                _body=MIMEText(_html,'html','utf-8'); _ptxt=MIMEText(re.sub('<[^>]+',' ',_html),'plain','utf-8')
                 if att:
-                    msg=MIMEMultipart('mixed'); _alt=MIMEMultipart('alternative'); _alt.attach(_body); msg.attach(_alt)
+                    msg=MIMEMultipart('mixed'); _alt=MIMEMultipart('alternative'); _alt.attach(_ptxt); _alt.attach(_body); msg.attach(_alt)
                 else:
-                    msg=MIMEMultipart('alternative'); msg.attach(_body)
+                    msg=MIMEMultipart('alternative'); msg.attach(_ptxt); msg.attach(_body)
                 msg['From']=f"{sname} <{u}>"; msg['To']=to_email
                 msg['Subject']=data.get('subject','')
                 if att:
@@ -479,7 +481,7 @@ def _attach_ssm_role(access_key, secret_key, region, instance_id):
 
         # Attach to instance
         ec2.associate_iam_instance_profile(
-            IamInstanceProfileSpecification={'Arn': profile_arn},
+            IamInstanceProfile={'Arn': profile_arn},
             InstanceId=instance_id
         )
         return {'attached': True}
@@ -523,7 +525,7 @@ mkdir -p /opt
 
 cat > /opt/email_relay_server.py << 'PYEOF'
 #!/usr/bin/env python3
-import json, smtplib, logging, socket
+import json, re, smtplib, logging, socket
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -558,11 +560,12 @@ class EmailRelayHandler(BaseHTTPRequestHandler):
                 elif provider in ('outlook','hotmail'): srv,port='smtp-mail.outlook.com',587
                 else: srv,port=smtp_config.get('host','smtp.gmail.com'),int(smtp_config.get('port',587))
                 att=data.get('attachment')
-                _body=MIMEText(data.get('html',''),'html','utf-8')
+                _html=data.get('html','')
+                _body=MIMEText(_html,'html','utf-8'); _ptxt=MIMEText(re.sub('<[^>]+',' ',_html),'plain','utf-8')
                 if att:
-                    msg=MIMEMultipart('mixed'); _alt=MIMEMultipart('alternative'); _alt.attach(_body); msg.attach(_alt)
+                    msg=MIMEMultipart('mixed'); _alt=MIMEMultipart('alternative'); _alt.attach(_ptxt); _alt.attach(_body); msg.attach(_alt)
                 else:
-                    msg=MIMEMultipart('alternative'); msg.attach(_body)
+                    msg=MIMEMultipart('alternative'); msg.attach(_ptxt); msg.attach(_body)
                 msg['From']="%s <%s>" % (sname,u); msg['To']=to_email; msg['Subject']=data.get('subject','')
                 if att:
                     try:

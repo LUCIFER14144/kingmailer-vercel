@@ -112,50 +112,60 @@ def add_attachment_to_message(msg, attachment):
         return False, str(e)
 
 
+def _html_to_plain(html):
+    """Strip HTML tags to produce a plain-text fallback."""
+    text = re.sub(r'<br\s*/?>', '\n', html, flags=re.IGNORECASE)
+    text = re.sub(r'<p[^>]*>', '\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'</p>', '\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'<li[^>]*>', '\n• ', text, flags=re.IGNORECASE)
+    text = re.sub(r'<[^>]+>', '', text)
+    text = re.sub(r'[ \t]+', ' ', text)
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    return text.strip()
+
+
+def _build_msg(from_header, to_email, subject, html_body, attachment=None):
+    """Build a properly structured MIME message.
+    - No attachment: multipart/alternative (text/plain + text/html)
+    - With attachment: multipart/mixed → multipart/alternative + file
+    """
+    plain = _html_to_plain(html_body)
+    alt = MIMEMultipart('alternative')
+    alt.attach(MIMEText(plain, 'plain', 'utf-8'))
+    alt.attach(MIMEText(html_body, 'html', 'utf-8'))
+
+    if attachment:
+        msg = MIMEMultipart('mixed')
+        msg.attach(alt)
+    else:
+        msg = alt
+
+    msg['From'] = from_header
+    msg['To'] = to_email
+    msg['Subject'] = subject
+    msg['Date'] = formatdate(localtime=True)
+    msg['Message-ID'] = make_msgid(domain=from_header.split('@')[-1].rstrip('>')  if '@' in from_header else 'mail')
+    return msg
+
+
 def send_via_smtp(smtp_config, from_name, to_email, subject, html_body, attachment=None):
     """Send email via SMTP (Gmail or custom server)"""
     try:
         is_gmail = smtp_config.get('provider') == 'gmail'
-        
-        if is_gmail:
-            smtp_server = 'smtp.gmail.com'
-            smtp_port = 587
-        else:
-            smtp_server = smtp_config.get('host', 'smtp.gmail.com')
-            smtp_port = int(smtp_config.get('port', 587))
-        
+        smtp_server = 'smtp.gmail.com' if is_gmail else smtp_config.get('host', 'smtp.gmail.com')
+        smtp_port   = 587             if is_gmail else int(smtp_config.get('port', 587))
+
         smtp_user = smtp_config.get('user')
         smtp_pass = smtp_config.get('pass')
-        from_email = smtp_user
         sender_name = smtp_config.get('sender_name') or from_name
+        from_header = f"{sender_name} <{smtp_user}>" if sender_name else smtp_user
 
-        from_header = f"{sender_name} <{from_email}>" if sender_name else from_email
+        msg = _build_msg(from_header, to_email, subject, html_body, attachment)
 
         if attachment:
-            # multipart/mixed  →  multipart/alternative  +  file
-            msg = MIMEMultipart('mixed')
-            msg['From'] = from_header
-            msg['To'] = to_email
-            msg['Subject'] = subject
-            msg['Date'] = formatdate(localtime=True)
-            msg['Message-ID'] = make_msgid()
-
-            alt = MIMEMultipart('alternative')
-            alt.attach(MIMEText(html_body, 'html', 'utf-8'))
-            msg.attach(alt)
-
             att_ok, att_err = add_attachment_to_message(msg, attachment)
             if not att_ok:
                 return {'success': False, 'error': f'Attachment error: {att_err}'}
-        else:
-            # Plain HTML email — multipart/alternative is the correct MIME type
-            msg = MIMEMultipart('alternative')
-            msg['From'] = from_header
-            msg['To'] = to_email
-            msg['Subject'] = subject
-            msg['Date'] = formatdate(localtime=True)
-            msg['Message-ID'] = make_msgid()
-            msg.attach(MIMEText(html_body, 'html', 'utf-8'))
 
         with smtplib.SMTP(smtp_server, smtp_port, timeout=30) as server:
             server.ehlo()
@@ -163,13 +173,13 @@ def send_via_smtp(smtp_config, from_name, to_email, subject, html_body, attachme
             server.ehlo()
             server.login(smtp_user, smtp_pass)
             server.send_message(msg)
-        
+
         return {'success': True, 'message': f'Email sent via SMTP to {to_email}'}
-    
+
     except smtplib.SMTPAuthenticationError:
         return {'success': False, 'error': 'SMTP authentication failed — check your Gmail app password'}
     except smtplib.SMTPRecipientsRefused:
-        return {'success': False, 'error': f'Recipient address rejected by server: {to_email}'}
+        return {'success': False, 'error': f'Recipient address rejected: {to_email}'}
     except Exception as e:
         return {'success': False, 'error': f'SMTP error: {str(e)}'}
 
@@ -186,23 +196,14 @@ def send_via_ses(aws_config, from_name, to_email, subject, html_body, attachment
         
         from_email = aws_config.get('from_email', 'noreply@example.com')
         source = f"{from_name} <{from_email}>" if from_name else from_email
-        
+
         if attachment:
-            msg = MIMEMultipart('mixed')
-            msg['From'] = source
-            msg['To'] = to_email
-            msg['Subject'] = subject
-            msg['Date'] = formatdate(localtime=True)
-            msg['Message-ID'] = make_msgid()
-            alt = MIMEMultipart('alternative')
-            alt.attach(MIMEText(html_body, 'html', 'utf-8'))
-            msg.attach(alt)
+            msg = _build_msg(source, to_email, subject, html_body, attachment)
             att_ok, att_err = add_attachment_to_message(msg, attachment)
             if not att_ok:
                 return {'success': False, 'error': f'Attachment error: {att_err}'}
             response = ses_client.send_raw_email(
-                Source=source,
-                Destinations=[to_email],
+                Source=source, Destinations=[to_email],
                 RawMessage={'Data': msg.as_string()}
             )
         else:
