@@ -74,13 +74,14 @@ def create_ec2_instance(access_key, secret_key, region, keypair_name, security_g
                 )
                 security_group = sg_response['GroupId']
                 
-                # Add inbound rules for SMTP ports
+                # Add inbound rules for SMTP ports and relay HTTP server
                 ec2_client.authorize_security_group_ingress(
                     GroupId=security_group,
                     IpPermissions=[
                         {'IpProtocol': 'tcp', 'FromPort': 25, 'ToPort': 25, 'IpRanges': [{'CidrIp': '0.0.0.0/0'}]},
                         {'IpProtocol': 'tcp', 'FromPort': 587, 'ToPort': 587, 'IpRanges': [{'CidrIp': '0.0.0.0/0'}]},
                         {'IpProtocol': 'tcp', 'FromPort': 465, 'ToPort': 465, 'IpRanges': [{'CidrIp': '0.0.0.0/0'}]},
+                        {'IpProtocol': 'tcp', 'FromPort': 8080, 'ToPort': 8080, 'IpRanges': [{'CidrIp': '0.0.0.0/0'}]},
                         {'IpProtocol': 'tcp', 'FromPort': 22, 'ToPort': 22, 'IpRanges': [{'CidrIp': '0.0.0.0/0'}]}
                     ]
                 )
@@ -97,22 +98,195 @@ def create_ec2_instance(access_key, secret_key, region, keypair_name, security_g
             MaxCount=1,
             SecurityGroupIds=[security_group],
             UserData='''#!/bin/bash
-                # Install and configure postfix for email relay
-                yum update -y
-                yum install -y postfix mailx
-                systemctl enable postfix
-                systemctl start postfix
+set -e
+exec > >(tee /var/log/user-data.log)
+exec 2>&1
+
+echo "=== KINGMAILER EC2 Email Relay Setup Started ==="
+date
+
+# Update system
+echo "Step 1: Updating system packages..."
+yum update -y
+
+# Install required packages
+echo "Step 2: Installing postfix, python3, and dependencies..."
+yum install -y postfix mailx python3 python3-pip
+
+# Configure postfix
+echo "Step 3: Configuring postfix..."
+cat > /etc/postfix/main.cf << 'POSTFIX_EOF'
+compatibility_level = 2
+queue_directory = /var/spool/postfix
+command_directory = /usr/sbin
+daemon_directory = /usr/libexec/postfix
+data_directory = /var/lib/postfix
+mail_owner = postfix
+inet_interfaces = all
+inet_protocols = all
+mydestination = $myhostname, localhost.$mydomain, localhost
+unknown_local_recipient_reject_code = 550
+mynetworks = 0.0.0.0/0, [::]/0
+relay_domains = 
+smtpd_banner = $myhostname ESMTP
+smtpd_tls_cert_file = /etc/pki/tls/certs/postfix.pem
+smtpd_tls_key_file = /etc/pki/tls/private/postfix.key
+smtpd_use_tls = yes
+smtpd_tls_session_cache_database = btree:${data_directory}/smtpd_scache
+smtp_tls_session_cache_database = btree:${data_directory}/smtp_scache
+POSTFIX_EOF
+
+# Start and enable postfix
+echo "Step 4: Starting postfix service..."
+systemctl enable postfix
+systemctl start postfix
+systemctl status postfix
+
+# Create email relay HTTP server
+echo "Step 5: Creating Python email relay server..."
+cat > /opt/email_relay_server.py << 'RELAY_EOF'
+#!/usr/bin/env python3
+import json
+import smtplib
+import logging
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from datetime import datetime
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('/var/log/email_relay.log'),
+        logging.StreamHandler()
+    ]
+)
+
+class EmailRelayHandler(BaseHTTPRequestHandler):
+    def log_message(self, format, *args):
+        logging.info("%s - %s" % (self.client_address[0], format%args))
+    
+    def do_GET(self):
+        """Health check endpoint"""
+        if self.path == '/health' or self.path == '/':
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            response = {
+                'status': 'healthy',
+                'service': 'KINGMAILER Email Relay',
+                'timestamp': datetime.now().isoformat(),
+                'postfix_running': self.check_postfix()
+            }
+            self.wfile.write(json.dumps(response).encode())
+        else:
+            self.send_response(404)
+            self.end_headers()
+    
+    def do_POST(self):
+        """Email relay endpoint"""
+        if self.path == '/relay':
+            try:
+                content_length = int(self.headers['Content-Length'])
+                post_data = self.rfile.read(content_length)
+                data = json.loads(post_data.decode('utf-8'))
                 
-                # Configure postfix for relay
-                echo "relayhost = " >> /etc/postfix/main.cf
-                echo "inet_interfaces = all" >> /etc/postfix/main.cf
-                systemctl restart postfix
+                from_name = data.get('from_name', 'KINGMAILER')
+                from_email = data.get('from_email', 'noreply@relay.local')
+                to_email = data.get('to', '')
+                subject = data.get('subject', 'No Subject')
+                html_body = data.get('html', '')
                 
-                # Open port 25, 587, 465 for SMTP
-                iptables -A INPUT -p tcp --dport 25 -j ACCEPT
-                iptables -A INPUT -p tcp --dport 587 -j ACCEPT
-                iptables -A INPUT -p tcp --dport 465 -j ACCEPT
-                iptables-save
+                if not to_email:
+                    raise ValueError('Recipient email required')
+                
+                # Send email via local postfix
+                msg = MIMEMultipart('alternative')
+                msg['From'] = f"{from_name} <{from_email}>"
+                msg['To'] = to_email
+                msg['Subject'] = subject
+                msg.attach(MIMEText(html_body, 'html'))
+                
+                with smtplib.SMTP('localhost', 25) as server:
+                    server.send_message(msg)
+                
+                logging.info(f"Email sent successfully to {to_email}")
+                
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': True, 'message': 'Email sent'}).encode())
+                
+            except Exception as e:
+                logging.error(f"Error sending email: {str(e)}")
+                self.send_response(500)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': False, 'error': str(e)}).encode())
+        else:
+            self.send_response(404)
+            self.end_headers()
+    
+    def check_postfix(self):
+        """Check if postfix is running"""
+        try:
+            import subprocess
+            result = subprocess.run(['systemctl', 'is-active', 'postfix'], 
+                                    capture_output=True, text=True)
+            return result.stdout.strip() == 'active'
+        except:
+            return False
+
+if __name__ == '__main__':
+    server = HTTPServer(('0.0.0.0', 8080), EmailRelayHandler)
+    logging.info('Email Relay Server started on port 8080')
+    logging.info('Health check: http://<ip>:8080/health')
+    logging.info('Relay endpoint: http://<ip>:8080/relay')
+    server.serve_forever()
+RELAY_EOF
+
+chmod +x /opt/email_relay_server.py
+
+# Create systemd service for relay server
+echo "Step 6: Creating systemd service..."
+cat > /etc/systemd/system/email-relay.service << 'SERVICE_EOF'
+[Unit]
+Description=KINGMAILER Email Relay HTTP Server
+After=network.target postfix.service
+Requires=postfix.service
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/bin/python3 /opt/email_relay_server.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+SERVICE_EOF
+
+# Start and enable relay service
+echo "Step 7: Starting email relay service..."
+systemctl daemon-reload
+systemctl enable email-relay.service
+systemctl start email-relay.service
+systemctl status email-relay.service
+
+# Configure firewall (if firewalld is running)
+if systemctl is-active --quiet firewalld; then
+    echo "Step 8: Configuring firewall..."
+    firewall-cmd --permanent --add-port=25/tcp
+    firewall-cmd --permanent --add-port=587/tcp
+    firewall-cmd --permanent --add-port=8080/tcp
+    firewall-cmd --reload
+fi
+
+echo "=== KINGMAILER EC2 Email Relay Setup Complete ==="
+echo "Health Check: curl http://$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4):8080/health"
+date
             ''',
             TagSpecifications=[{
                 'ResourceType': 'instance',

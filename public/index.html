@@ -331,7 +331,10 @@
             <div style="display: flex; gap: 10px; margin-bottom: 20px;">
                 <button class="btn btn-primary" onclick="createEc2Instance()">🚀 Create New Instance</button>
                 <button class="btn btn-secondary" onclick="refreshEc2Instances()">🔄 Refresh List</button>
+                <button class="btn" onclick="checkEc2Health()" style="background: linear-gradient(135deg, #1a472a 0%, #2d5016 100%);">💚 Check Health</button>
             </div>
+            
+            <div id="ec2HealthResult" class="result-box" style="display: none;"></div>
 
             <div id="ec2Result" class="result-box"></div>
 

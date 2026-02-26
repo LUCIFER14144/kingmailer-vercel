@@ -486,6 +486,73 @@ async function terminateEc2Instance(instanceId) {
     }
 }
 
+async function checkEc2Health() {
+    if (ec2Instances.length === 0) {
+        showResult('ec2HealthResult', '⚠️ No EC2 instances to check. Create instances first.', 'error');
+        document.getElementById('ec2HealthResult').style.display = 'block';
+        return;
+    }
+    
+    showResult('ec2HealthResult', '🔄 Checking EC2 relay health...', 'info');
+    document.getElementById('ec2HealthResult').style.display = 'block';
+    
+    try {
+        const response = await fetch('/api/ec2_health', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                instances: ec2Instances
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            const summary = data.summary;
+            let resultHtml = `
+                <strong>EC2 Relay Health Check Results</strong><br><br>
+                📊 Summary: ${summary.healthy}/${summary.total} instances healthy<br><br>
+            `;
+            
+            data.instances.forEach(instance => {
+                const statusIcon = instance.healthy ? '✅' : '❌';
+                const statusColor = instance.healthy ? '#00ff9d' : '#ff6b6b';
+                
+                resultHtml += `
+                    <div style="border-left: 3px solid ${statusColor}; padding-left: 10px; margin: 10px 0;">
+                        ${statusIcon} <strong>${instance.instance_id}</strong> (${instance.public_ip})<br>
+                        <small>Status: ${instance.status}</small><br>
+                `;
+                
+                if (instance.healthy) {
+                    resultHtml += `
+                        <small style="color: #00ff9d;">
+                            ✓ Relay endpoint ready: ${instance.relay_url}<br>
+                            ✓ Postfix: ${instance.postfix_running ? 'Running' : 'Not Running'}<br>
+                            ✓ Checked at: ${instance.timestamp}
+                        </small>
+                    `;
+                } else {
+                    resultHtml += `
+                        <small style="color: #ff6b6b;">
+                            ${instance.message}<br>
+                            ${instance.help ? '💡 ' + instance.help : ''}
+                        </small>
+                    `;
+                }
+                
+                resultHtml += `</div>`;
+            });
+            
+            showResult('ec2HealthResult', resultHtml, summary.healthy === summary.total ? 'success' : 'error');
+        } else {
+            showResult('ec2HealthResult', `❌ ${data.error}`, 'error');
+        }
+    } catch (error) {
+        showResult('ec2HealthResult', `❌ Health check failed: ${error.message}`, 'error');
+    }
+}
+
 function renderEc2Instances(instances) {
     const container = document.getElementById('ec2InstancesList');
     
