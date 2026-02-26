@@ -290,10 +290,11 @@ function renderSesAccounts() {
 
 // EC2 Management Functions
 async function saveAwsCredentials() {
-    const accessKey = document.getElementById('awsAccessKey').value;
-    const secretKey = document.getElementById('awsSecretKey').value;
-    const region = document.getElementById('awsRegion').value;
-    const keypair = document.getElementById('awsKeypair').value;
+    const accessKey = document.getElementById('ec2AccessKey').value;
+    const secretKey = document.getElementById('ec2SecretKey').value;
+    const region = document.getElementById('ec2Region').value;
+    const keypair = document.getElementById('ec2Keypair').value;
+    const securityGroup = document.getElementById('ec2SecurityGroup').value;
     
     if (!accessKey || !secretKey || !region || !keypair) {
         showResult('ec2Result', 'Please fill in all AWS credentials fields', 'error');
@@ -311,7 +312,8 @@ async function saveAwsCredentials() {
                 access_key: accessKey,
                 secret_key: secretKey,
                 region: region,
-                keypair: keypair
+                keypair: keypair,
+                security_group: securityGroup || ''
             })
         });
         

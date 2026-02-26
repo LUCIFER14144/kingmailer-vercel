@@ -15,7 +15,7 @@ EC2_INSTANCES = []
 AWS_CREDENTIALS = None
 
 
-def create_ec2_instance(access_key, secret_key, region, keypair_name):
+def create_ec2_instance(access_key, secret_key, region, keypair_name, security_group=None):
     """Create a new EC2 instance for email sending"""
     try:
         ec2_client = boto3.client(
@@ -25,6 +25,29 @@ def create_ec2_instance(access_key, secret_key, region, keypair_name):
             aws_secret_access_key=secret_key
         )
         
+        # Create default security group if not provided
+        if not security_group:
+            try:
+                sg_response = ec2_client.create_security_group(
+                    GroupName=f'kingmailer-sg-{int(time.time())}',
+                    Description='KINGMAILER Email Server Security Group'
+                )
+                security_group = sg_response['GroupId']
+                
+                # Add inbound rules for SMTP ports
+                ec2_client.authorize_security_group_ingress(
+                    GroupId=security_group,
+                    IpPermissions=[
+                        {'IpProtocol': 'tcp', 'FromPort': 25, 'ToPort': 25, 'IpRanges': [{'CidrIp': '0.0.0.0/0'}]},
+                        {'IpProtocol': 'tcp', 'FromPort': 587, 'ToPort': 587, 'IpRanges': [{'CidrIp': '0.0.0.0/0'}]},
+                        {'IpProtocol': 'tcp', 'FromPort': 465, 'ToPort': 465, 'IpRanges': [{'CidrIp': '0.0.0.0/0'}]},
+                        {'IpProtocol': 'tcp', 'FromPort': 22, 'ToPort': 22, 'IpRanges': [{'CidrIp': '0.0.0.0/0'}]}
+                    ]
+                )
+            except ClientError as e:
+                if 'InvalidGroup.Duplicate' not in str(e):
+                    raise
+        
         # Launch instance (t2.micro for cost-effectiveness)
         response = ec2_client.run_instances(
             ImageId='ami-0c55b159cbfafe1f0',  # Amazon Linux 2 AMI (update based on region)
@@ -32,7 +55,7 @@ def create_ec2_instance(access_key, secret_key, region, keypair_name):
             KeyName=keypair_name,
             MinCount=1,
             MaxCount=1,
-            SecurityGroupIds=[''],  # Will be created if not exists
+            SecurityGroupIds=[security_group],
             UserData='''#!/bin/bash
                 # Install and configure postfix for email relay
                 yum update -y
@@ -228,7 +251,8 @@ class handler(BaseHTTPRequestHandler):
                     'access_key': data.get('access_key'),
                     'secret_key': data.get('secret_key'),
                     'region': data.get('region', 'us-east-1'),
-                    'keypair': data.get('keypair')
+                    'keypair': data.get('keypair'),
+                    'security_group': data.get('security_group', '')
                 }
                 
                 result = {
@@ -248,11 +272,11 @@ class handler(BaseHTTPRequestHandler):
                         AWS_CREDENTIALS['access_key'],
                         AWS_CREDENTIALS['secret_key'],
                         AWS_CREDENTIALS['region'],
-                        AWS_CREDENTIALS['keypair']
+                        AWS_CREDENTIALS['keypair'],
+                        AWS_CREDENTIALS.get('security_group')
                     )
                     
                     if result['success']:
-                        # Add to instances list
                         EC2_INSTANCES.append({
                             'id': len(EC2_INSTANCES) + 1,
                             'instance_id': result['instance_id'],
