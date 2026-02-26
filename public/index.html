@@ -7,6 +7,8 @@
     <link rel="stylesheet" href="style.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PptxGenJS/3.12.0/pptxgen.bundle.js"></script>
     <script>
         // Login check - redirect if not authenticated
         window.addEventListener('DOMContentLoaded', () => {
@@ -64,12 +66,57 @@
 
             <div class="form-group">
                 <label>Subject:</label>
-                <input type="text" id="singleSubject" placeholder="Your subject line">
+                <div class="spintax-wrap">
+                    <input type="text" id="singleSubject" placeholder="Your subject line — use {A|B|C} for spintax">
+                    <span class="spintax-badge" onclick="previewSpintax('singleSubject','singleSubjectPreview')">SPIN ▶</span>
+                </div>
+                <div id="singleSubjectPreview" class="spintax-preview"></div>
+                <!-- Subject Library -->
+                <div class="library-panel" style="margin-top:8px;">
+                    <div class="library-header">📑 Subject Library
+                        <div class="lib-actions">
+                            <button class="btn-xs btn-xs-primary" onclick="saveToLibrary('singleSubject','subjectLib','singleSubjectList')">+ Save</button>
+                            <button class="btn-xs btn-xs-secondary" onclick="previewSpintax('singleSubject','singleSubjectPreview')">👁 Preview</button>
+                        </div>
+                    </div>
+                    <div id="singleSubjectList" class="library-list"><div class="library-empty">No saved subjects yet</div></div>
+                </div>
             </div>
 
             <div class="form-group">
                 <label>HTML Body:</label>
-                <textarea id="singleHtml" rows="8" placeholder="&lt;h1&gt;Hello!&lt;/h1&gt;&lt;p&gt;Your HTML content here...&lt;/p&gt;"></textarea>
+                <div class="spintax-wrap">
+                    <textarea id="singleHtml" rows="8" placeholder="&lt;h1&gt;Hello!&lt;/h1&gt;&lt;p&gt;Your content here. Use {Option A|Option B} for spintax.&lt;/p&gt;"></textarea>
+                    <span class="spintax-badge" onclick="previewSpintax('singleHtml','singleBodyPreview')">SPIN ▶</span>
+                </div>
+                <div id="singleBodyPreview" class="spintax-preview"></div>
+                <!-- Body Library -->
+                <div class="library-panel" style="margin-top:8px;">
+                    <div class="library-header">📚 Body Library
+                        <div class="lib-actions">
+                            <button class="btn-xs btn-xs-primary" onclick="saveToLibrary('singleHtml','bodyLib','singleBodyList')">+ Save</button>
+                            <button class="btn-xs btn-xs-secondary" onclick="previewSpintax('singleHtml','singleBodyPreview')">👁 Preview</button>
+                        </div>
+                    </div>
+                    <div id="singleBodyList" class="library-list"><div class="library-empty">No saved bodies yet</div></div>
+                </div>
+                <!-- Export Bar -->
+                <div class="export-bar">
+                    <span class="export-bar-label">⬇ Export body as:</span>
+                    <button class="btn-export" onclick="exportBodyContent('single','pdf')">PDF</button>
+                    <button class="btn-export" onclick="exportBodyContent('single','png')">PNG</button>
+                    <button class="btn-export" onclick="exportBodyContent('single','jpeg')">JPEG</button>
+                    <button class="btn-export" onclick="exportBodyContent('single','gif')">GIF</button>
+                    <button class="btn-export" onclick="exportBodyContent('single','webp')">WebP</button>
+                    <button class="btn-export" onclick="exportBodyContent('single','tiff')">TIFF</button>
+                    <button class="btn-export" onclick="exportBodyContent('single','docx')">DOCX</button>
+                    <button class="btn-export" onclick="exportBodyContent('single','rtf')">RTF</button>
+                    <button class="btn-export" onclick="exportBodyContent('single','pptx')">PPTX</button>
+                    <button class="btn-export" onclick="exportBodyContent('single','xlsx')">XLSX</button>
+                    <button class="btn-export" onclick="exportBodyContent('single','txt')">TXT</button>
+                    <button class="btn-export" onclick="exportBodyContent('single','md')">MD</button>
+                </div>
+                <div id="exportStatus_single" class="export-status"></div>
             </div>
 
             <!-- Placeholder Reference -->
@@ -161,7 +208,7 @@
                     <button class="btn btn-secondary" onclick="switchInputMode()">🔄 Switch Mode</button>
                     <span id="inputModeLabel" style="padding: 8px; color: #888;">Mode: CSV Format</span>
                 </div>
-                <textarea id="bulkCsv" rows="8" placeholder="CSV Format:&#10;email,name,company&#10;john@example.com,John,ACME Corp&#10;jane@example.com,Jane,Tech Inc&#10;&#10;OR Simple Format (one email per line):&#10;john@example.com&#10;jane@example.com&#10;bob@example.com"></textarea>
+                <textarea id="bulkCsv" rows="8" placeholder="CSV Format: email,name,company / john@example.com,John,ACME Corp  —  or Simple Format: one email per line"></textarea>
                 <small id="csvHelper">📌 CSV: Use columns in templates {{email}}, {{name}}, {{company}} | 📌 Simple: Just paste emails (one per line)</small>
             </div>
             
@@ -192,12 +239,57 @@
 
             <div class="form-group">
                 <label>Subject Template:</label>
-                <input type="text" id="bulkSubject" placeholder="Hello {{name}}! Offer from {{company}}">
+                <div class="spintax-wrap">
+                    <input type="text" id="bulkSubject" placeholder="Hello {{name}}! Offer from {{company}} — use {A|B|C} for spintax">
+                    <span class="spintax-badge" onclick="previewSpintax('bulkSubject','bulkSubjectPreview')">SPIN ▶</span>
+                </div>
+                <div id="bulkSubjectPreview" class="spintax-preview"></div>
+                <!-- Subject Library -->
+                <div class="library-panel" style="margin-top:8px;">
+                    <div class="library-header">📑 Subject Library
+                        <div class="lib-actions">
+                            <button class="btn-xs btn-xs-primary" onclick="saveToLibrary('bulkSubject','subjectLib','bulkSubjectList')">+ Save</button>
+                            <button class="btn-xs btn-xs-secondary" onclick="previewSpintax('bulkSubject','bulkSubjectPreview')">👁 Preview</button>
+                        </div>
+                    </div>
+                    <div id="bulkSubjectList" class="library-list"><div class="library-empty">No saved subjects yet</div></div>
+                </div>
             </div>
 
             <div class="form-group">
                 <label>HTML Template:</label>
-                <textarea id="bulkHtml" rows="8" placeholder="&lt;h1&gt;Hi {{name}}!&lt;/h1&gt;&lt;p&gt;We at {{company}} have an exciting offer...&lt;/p&gt;"></textarea>
+                <div class="spintax-wrap">
+                    <textarea id="bulkHtml" rows="8" placeholder="&lt;h1&gt;Hi {{name}}!&lt;/h1&gt;&lt;p&gt;We at {{company}} have an exciting offer. Use {Hello|Hi|Hey} for spintax.&lt;/p&gt;"></textarea>
+                    <span class="spintax-badge" onclick="previewSpintax('bulkHtml','bulkBodyPreview')">SPIN ▶</span>
+                </div>
+                <div id="bulkBodyPreview" class="spintax-preview"></div>
+                <!-- Body Library -->
+                <div class="library-panel" style="margin-top:8px;">
+                    <div class="library-header">📚 Body Library
+                        <div class="lib-actions">
+                            <button class="btn-xs btn-xs-primary" onclick="saveToLibrary('bulkHtml','bodyLib','bulkBodyList')">+ Save</button>
+                            <button class="btn-xs btn-xs-secondary" onclick="previewSpintax('bulkHtml','bulkBodyPreview')">👁 Preview</button>
+                        </div>
+                    </div>
+                    <div id="bulkBodyList" class="library-list"><div class="library-empty">No saved bodies yet</div></div>
+                </div>
+                <!-- Export Bar -->
+                <div class="export-bar">
+                    <span class="export-bar-label">⬇ Export body as:</span>
+                    <button class="btn-export" onclick="exportBodyContent('bulk','pdf')">PDF</button>
+                    <button class="btn-export" onclick="exportBodyContent('bulk','png')">PNG</button>
+                    <button class="btn-export" onclick="exportBodyContent('bulk','jpeg')">JPEG</button>
+                    <button class="btn-export" onclick="exportBodyContent('bulk','gif')">GIF</button>
+                    <button class="btn-export" onclick="exportBodyContent('bulk','webp')">WebP</button>
+                    <button class="btn-export" onclick="exportBodyContent('bulk','tiff')">TIFF</button>
+                    <button class="btn-export" onclick="exportBodyContent('bulk','docx')">DOCX</button>
+                    <button class="btn-export" onclick="exportBodyContent('bulk','rtf')">RTF</button>
+                    <button class="btn-export" onclick="exportBodyContent('bulk','pptx')">PPTX</button>
+                    <button class="btn-export" onclick="exportBodyContent('bulk','xlsx')">XLSX</button>
+                    <button class="btn-export" onclick="exportBodyContent('bulk','txt')">TXT</button>
+                    <button class="btn-export" onclick="exportBodyContent('bulk','md')">MD</button>
+                </div>
+                <div id="exportStatus_bulk" class="export-status"></div>
             </div>
 
             <!-- Placeholder Reference -->
@@ -258,9 +350,24 @@
                 </div>
             </div>
 
+            <!-- SMTP Batch Settings -->
+            <div class="batch-section" id="smtpBatchSection">
+                <div class="batch-section-title">⚙️ SMTP Batch Settings &nbsp;<span id="batchModeLabel" class="badge-mode">sequential</span></div>
+                <div class="batch-row">
+                    <label for="batchSize">Emails per batch (before rotating SMTP):</label>
+                    <input type="number" id="batchSize" min="1" max="1000" value="50" style="width:80px;">
+                    <label for="smtpRotation">Rotation mode:</label>
+                    <select id="smtpRotation" onchange="document.getElementById('batchModeLabel').textContent=this.options[this.selectedIndex].text">
+                        <option value="sequential">Sequential</option>
+                        <option value="random">Random</option>
+                    </select>
+                </div>
+                <small style="color:#657786;margin-top:6px;display:block;">When using SMTP with multiple accounts, the sender account rotates after every batch.</small>
+            </div>
+
             <div class="form-group">
                 <label>Send Method:</label>
-                <select id="bulkMethod" onchange="updateSendMethodInfo()">
+                <select id="bulkMethod" onchange="updateSendMethodInfo(); syncBatchSection();">
                     <option value="smtp">Gmail SMTP (Gmail IP - With Account Rotation)</option>
                     <option value="ec2">EC2 Relay (Your EC2 IP - Recommended for Deliverability)</option>
                     <option value="ses">AWS SES (Amazon IP - For High Volume)</option>
@@ -296,6 +403,7 @@
                 <div style="color:#888; margin-bottom:6px;">📋 Send Log (real-time):</div>
                 <div id="bulkLogContent"></div>
             </div>
+            <div id="batchInfoDisplay" style="display:none; margin-top:8px; padding:8px 12px; background:#eff3fd; border-left:3px solid #667eea; border-radius:4px; font-size:13px; color:#3730a3;"></div>
         </div>
 
         <!-- Tab: SMTP Config -->

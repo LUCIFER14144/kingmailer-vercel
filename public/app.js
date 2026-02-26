@@ -27,6 +27,8 @@ document.addEventListener('DOMContentLoaded', function() {
     loadAccounts();
     loadEc2Credentials(); // Load saved credentials first
     loadEc2Instances();
+    syncBatchSection();
+    renderAllLibraries();
     
     // Show/hide custom SMTP fields
     document.getElementById('smtpProvider').addEventListener('change', function() {
@@ -1048,7 +1050,25 @@ async function sendBulkEmails() {
         
         if (method === 'smtp') {
             emailPayload.smtp_config = smtpAccounts[rotateIdx % smtpAccounts.length];
-            rotateIdx++;
+            // Rotate SMTP account after each batch
+            const batchSz = Math.max(1, parseInt((document.getElementById('batchSize') || {}).value) || 50);
+            if ((i + 1) % batchSz === 0 && smtpAccounts.length > 1) {
+                const rotMode = (document.getElementById('smtpRotation') || {}).value || 'sequential';
+                if (rotMode === 'random') {
+                    rotateIdx = Math.floor(Math.random() * smtpAccounts.length);
+                } else {
+                    rotateIdx++;
+                }
+                const batchInfoEl = document.getElementById('batchInfoDisplay');
+                if (batchInfoEl) {
+                    const acc = smtpAccounts[rotateIdx % smtpAccounts.length];
+                    batchInfoEl.style.display = 'block';
+                    batchInfoEl.textContent = `🔄 SMTP rotated → ${acc.user} (account ${(rotateIdx % smtpAccounts.length) + 1}/${smtpAccounts.length}, after ${i + 1} emails)`;
+                }
+            } else {
+                // No rotation — still track index per-email for sequential mode when batch not met
+                if (smtpAccounts.length === 1) rotateIdx = 0;
+            }
         } else if (method === 'ses') {
             emailPayload.aws_config = sesAccounts[0];
         } else if (method === 'ec2') {
@@ -1310,4 +1330,303 @@ function showResult(elementId, message, type) {
     element.innerHTML = message;
     element.className = `result-box ${type}`;
     element.style.display = 'block';
+}
+
+// ── Batch section visibility ───────────────────────────────────────────────
+function syncBatchSection() {
+    const methodEl = document.getElementById('bulkMethod');
+    const section  = document.getElementById('smtpBatchSection');
+    if (!section || !methodEl) return;
+    section.style.display = (methodEl.value === 'smtp') ? 'block' : 'none';
+}
+
+// ── Spintax resolver ───────────────────────────────────────────────────────
+function resolveSpintax(text) {
+    if (!text) return text;
+    const pat = /\{([^{}]+)\}/g;
+    let out = text, iter = 0;
+    while (out.includes('{') && iter < 30) {
+        out = out.replace(pat, (_, opts) => {
+            const choices = opts.split('|');
+            return choices[Math.floor(Math.random() * choices.length)];
+        });
+        iter++;
+    }
+    return out;
+}
+
+function previewSpintax(fieldId, previewId) {
+    const field   = document.getElementById(fieldId);
+    const preview = document.getElementById(previewId);
+    if (!field || !preview) return;
+    const resolved = resolveSpintax(field.value || '');
+    // Strip HTML tags for preview
+    const plain = resolved.replace(/<[^>]+>/g, ' ').replace(/\s{2,}/g, ' ').trim().slice(0, 250);
+    preview.textContent = plain || '(empty)';
+    preview.style.display = 'block';
+    clearTimeout(preview._hideTimer);
+    preview._hideTimer = setTimeout(() => { preview.style.display = 'none'; }, 7000);
+}
+
+// ── Library helpers ────────────────────────────────────────────────────────
+const LIBRARY_KEY = 'km_library_v1';
+
+function loadLibrary() {
+    try {
+        const raw = localStorage.getItem(LIBRARY_KEY);
+        return raw ? JSON.parse(raw) : { subjects: [], bodies: [] };
+    } catch { return { subjects: [], bodies: [] }; }
+}
+
+function saveLibrary(lib) {
+    try { localStorage.setItem(LIBRARY_KEY, JSON.stringify(lib)); } catch {}
+}
+
+function escHtml(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// Save subject or body to library
+// listKey: 'subjectLib' | 'bodyLib'   listElId: id of the <div> to re-render
+function saveToLibrary(fieldId, listKey, listElId) {
+    const field = document.getElementById(fieldId);
+    if (!field || !field.value.trim()) { alert('Field is empty'); return; }
+    const lib  = loadLibrary();
+    const key  = listKey === 'subjectLib' ? 'subjects' : 'bodies';
+    const cap  = key === 'subjects' ? 50 : 30;
+    const val  = field.value.trim();
+    // Deduplicate
+    if (lib[key].includes(val)) { alert('Already saved'); return; }
+    lib[key].unshift(val);
+    if (lib[key].length > cap) lib[key].pop();
+    saveLibrary(lib);
+    renderLibraryList(key, listElId, fieldId);
+}
+
+function renderLibraryList(key, listElId, fieldId) {
+    const el  = document.getElementById(listElId);
+    if (!el) return;
+    const lib  = loadLibrary();
+    const items = lib[key] || [];
+    if (!items.length) {
+        el.innerHTML = '<div class="library-empty">No saved items yet</div>';
+        return;
+    }
+    el.innerHTML = items.map((item, idx) => {
+        const preview = item.replace(/<[^>]+>/g, '').slice(0, 80);
+        return `<div class="library-item" onclick="loadFromLibrary('${escHtml(fieldId)}','${escHtml(key)}',${idx},'${escHtml(listElId)}')">
+            <span class="library-item-text" title="${escHtml(item)}">${escHtml(preview)}</span>
+            <button class="library-item-del" onclick="deleteFromLibrary(event,'${escHtml(key)}',${idx},'${escHtml(listElId)}','${escHtml(fieldId)}')">✕</button>
+        </div>`;
+    }).join('');
+}
+
+function loadFromLibrary(fieldId, key, idx, listElId) {
+    const field = document.getElementById(fieldId);
+    const lib   = loadLibrary();
+    if (!field || !lib[key] || !lib[key][idx]) return;
+    field.value = lib[key][idx];
+    // Mark active row
+    const rows = document.querySelectorAll(`#${CSS.escape(listElId)} .library-item`);
+    rows.forEach((r, i) => r.classList.toggle('active', i === idx));
+}
+
+function deleteFromLibrary(evt, key, idx, listElId, fieldId) {
+    evt.stopPropagation();
+    const lib = loadLibrary();
+    lib[key].splice(idx, 1);
+    saveLibrary(lib);
+    renderLibraryList(key, listElId, fieldId);
+}
+
+// Render all libraries on load (single + bulk share the same localStorage)
+function renderAllLibraries() {
+    renderLibraryList('subjects', 'singleSubjectList', 'singleSubject');
+    renderLibraryList('bodies',   'singleBodyList',    'singleHtml');
+    renderLibraryList('subjects', 'bulkSubjectList',   'bulkSubject');
+    renderLibraryList('bodies',   'bulkBodyList',      'bulkHtml');
+}
+
+// ── Client-side HTML conversion helpers ───────────────────────────────────
+function htmlToPlainText(html) {
+    try {
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+        // Insert newlines at block elements
+        doc.querySelectorAll('br,p,div,li,h1,h2,h3,h4,h5,h6,tr').forEach(el => {
+            el.insertAdjacentText('beforebegin', '\n');
+        });
+        return (doc.body ? doc.body.textContent : doc.documentElement.textContent)
+            .replace(/[ \t]+/g, ' ')
+            .replace(/\n{3,}/g, '\n\n')
+            .trim();
+    } catch { return html.replace(/<[^>]+>/g, '').trim(); }
+}
+
+function htmlToMarkdown(html) {
+    try {
+        let md = html;
+        md = md.replace(/<h([1-6])[^>]*>([\s\S]*?)<\/h\1>/gi, (_, n, t) => '#'.repeat(parseInt(n)) + ' ' + t.replace(/<[^>]+>/g,'') + '\n');
+        md = md.replace(/<strong[^>]*>([\s\S]*?)<\/strong>/gi, '**$1**');
+        md = md.replace(/<b[^>]*>([\s\S]*?)<\/b>/gi, '**$1**');
+        md = md.replace(/<em[^>]*>([\s\S]*?)<\/em>/gi, '*$1*');
+        md = md.replace(/<i[^>]*>([\s\S]*?)<\/i>/gi, '*$1*');
+        md = md.replace(/<a[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi, '[$2]($1)');
+        md = md.replace(/<br\s*\/?>/gi, '\n');
+        md = md.replace(/<\/?p[^>]*>/gi, '\n');
+        md = md.replace(/<li[^>]*>/gi, '\n- ');
+        md = md.replace(/<[^>]+>/g, '');
+        return md.replace(/\n{3,}/g, '\n\n').trim();
+    } catch { return htmlToPlainText(html); }
+}
+
+function htmlToRtf(html) {
+    const text = htmlToPlainText(html);
+    const lines = text.split('\n').map(l =>
+        l.replace(/\\/g,'\\\\').replace(/\{/g,'\\{').replace(/\}/g,'\\}') + '\\par'
+    );
+    return ['{\\rtf1\\ansi\\deff0', ...lines, '}'].join('\n');
+}
+
+// ── Export body as chosen format (client-side) ─────────────────────────────
+async function exportBodyContent(which, format) {
+    const fieldId = which === 'single' ? 'singleHtml' : 'bulkHtml';
+    const statusId = 'exportStatus_' + which;
+    const el = document.getElementById(fieldId);
+    const status = document.getElementById(statusId);
+    if (!el || !el.value.trim()) { alert('HTML body is empty — nothing to export.'); return; }
+    const html = el.value;
+
+    function setStatus(msg) {
+        if (status) { status.textContent = msg; status.style.display = msg ? 'block' : 'none'; }
+    }
+    function triggerDownload(blob, filename) {
+        const url = URL.createObjectURL(blob);
+        const a   = document.createElement('a');
+        a.href = url; a.download = filename; a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    setStatus('Exporting...');
+    try {
+        // ── Text formats ──────────────────────────────────────────────────
+        if (format === 'txt') {
+            triggerDownload(new Blob([htmlToPlainText(html)], { type: 'text/plain' }), 'export.txt');
+
+        } else if (format === 'md') {
+            triggerDownload(new Blob([htmlToMarkdown(html)], { type: 'text/markdown' }), 'export.md');
+
+        } else if (format === 'rtf') {
+            triggerDownload(new Blob([htmlToRtf(html)], { type: 'application/rtf' }), 'export.rtf');
+
+        // ── Word (HTML wrapped in .doc MIME — opens in Word/LibreOffice) ─
+        } else if (format === 'docx') {
+            const wordHtml = `<html xmlns:o="urn:schemas-microsoft-com:office:office"
+                xmlns:w="urn:schemas-microsoft-com:office:word"
+                xmlns="http://www.w3.org/TR/REC-html40">
+                <head><meta charset="utf-8">
+                <meta name=ProgId content=Word.Document>
+                <meta name=Generator content="Microsoft Word 15">
+                <!--[if gte mso 9]><xml><w:WordDocument><w:View>Print</w:View></w:WordDocument></xml><![endif]-->
+                </head><body>${html}</body></html>`;
+            triggerDownload(new Blob([wordHtml], { type: 'application/vnd.ms-word' }), 'export.doc');
+
+        // ── XLSX via SheetJS ──────────────────────────────────────────────
+        } else if (format === 'xlsx') {
+            if (window.XLSX) {
+                // Try to extract tables first; fallback to plain text rows
+                const doc = new DOMParser().parseFromString(html, 'text/html');
+                const tables = doc.querySelectorAll('table');
+                const wb = XLSX.utils.book_new();
+                if (tables.length) {
+                    tables.forEach((tbl, ti) => {
+                        const ws = XLSX.utils.table_to_sheet(tbl);
+                        XLSX.utils.book_append_sheet(wb, ws, `Sheet${ti + 1}`);
+                    });
+                } else {
+                    const rows = htmlToPlainText(html).split('\n').map(l => [l]);
+                    const ws   = XLSX.utils.aoa_to_sheet(rows);
+                    XLSX.utils.book_append_sheet(wb, ws, 'Content');
+                }
+                const data = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+                triggerDownload(new Blob([data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), 'export.xlsx');
+            } else {
+                // Fallback: CSV
+                const rows = htmlToPlainText(html).split('\n').map(l => '"' + l.replace(/"/g, '""') + '"').join('\n');
+                triggerDownload(new Blob([rows], { type: 'text/csv' }), 'export.csv');
+                setStatus('✓ SheetJS not loaded — exported as CSV instead'); return;
+            }
+
+        // ── PPTX via PptxGenJS ────────────────────────────────────────────
+        } else if (format === 'pptx') {
+            if (typeof PptxGenJS !== 'undefined') {
+                const pptx  = new PptxGenJS();
+                const text  = htmlToPlainText(html);
+                const paras = text.split('\n\n').filter(p => p.trim()).slice(0, 20);
+                (paras.length ? paras : [text]).forEach(para => {
+                    const slide = pptx.addSlide();
+                    slide.addText(para.slice(0, 500), { x: 0.5, y: 0.5, w: 9, h: 5, fontSize: 16, wrap: true });
+                });
+                const buf = await pptx.stream();
+                triggerDownload(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' }), 'export.pptx');
+            } else {
+                setStatus('❌ PptxGenJS library not available'); return;
+            }
+
+        // ── PDF via jsPDF + html2canvas ───────────────────────────────────
+        } else if (format === 'pdf') {
+            await _exportViaCanvas(html, 'pdf', 'export.pdf', setStatus, triggerDownload);
+            return;
+
+        // ── Image formats via html2canvas ─────────────────────────────────
+        } else if (['png','jpeg','gif','webp','tiff'].includes(format)) {
+            await _exportViaCanvas(html, format, `export.${format === 'tiff' ? 'tiff' : format}`, setStatus, triggerDownload);
+            return;
+
+        } else {
+            setStatus(`❌ Unknown format: ${format}`); return;
+        }
+
+        setStatus(`✓ Downloaded export.${format}`);
+        setTimeout(() => setStatus(''), 4000);
+    } catch (err) {
+        setStatus(`❌ Export failed: ${err.message}`);
+        console.error('exportBodyContent error:', err);
+    }
+}
+
+// Render HTML in hidden iframe → html2canvas → export as PDF or image
+async function _exportViaCanvas(html, format, filename, setStatus, triggerDownload) {
+    setStatus(`Rendering HTML → ${format.toUpperCase()}...`);
+    return new Promise((resolve) => {
+        const iframe = document.createElement('iframe');
+        iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:900px;height:600px;border:none;';
+        document.body.appendChild(iframe);
+        iframe.onload = async () => {
+            try {
+                const iDoc = iframe.contentDocument || iframe.contentWindow.document;
+                const canvas = await html2canvas(iDoc.body, { scale: 0.8, useCORS: true, logging: false });
+                document.body.removeChild(iframe);
+
+                if (format === 'pdf') {
+                    const { jsPDF } = window.jspdf;
+                    const W = 595, H = Math.round((canvas.height / canvas.width) * 595);
+                    const pdf = new jsPDF({ orientation: H > W ? 'portrait' : 'landscape', unit: 'pt', format: [W, H] });
+                    pdf.addImage(canvas.toDataURL('image/jpeg', 0.85), 'JPEG', 0, 0, W, H, '', 'FAST');
+                    triggerDownload(new Blob([pdf.output('arraybuffer')], { type: 'application/pdf' }), filename);
+                } else {
+                    // For GIF/WebP/TIFF → use JPEG/PNG as those MIME types aren't natively supported by canvas
+                    const mimeMap = { png:'image/png', jpeg:'image/jpeg', gif:'image/jpeg', webp:'image/webp', tiff:'image/png' };
+                    const mime = mimeMap[format] || 'image/png';
+                    canvas.toBlob(blob => { if (blob) triggerDownload(blob, filename); }, mime, 0.9);
+                }
+                setStatus(`✓ Downloaded ${filename}`);
+                setTimeout(() => setStatus(''), 4000);
+            } catch (err) {
+                if (document.body.contains(iframe)) document.body.removeChild(iframe);
+                setStatus(`❌ Render error: ${err.message}`);
+            }
+            resolve();
+        };
+        iframe.srcdoc = html;
+    });
 }

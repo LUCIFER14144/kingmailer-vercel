@@ -283,6 +283,188 @@ footer a:hover {
     text-decoration: underline;
 }
 
+/* ── Placeholder fix ──────────────────────────────────────────────────────── */
+input::placeholder,
+textarea::placeholder {
+    color: #aaa;
+    opacity: 1;
+}
+
+/* ── Spintax wrap ─────────────────────────────────────────────────────────── */
+.spintax-wrap {
+    position: relative;
+}
+.spintax-badge {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    background: #f59e0b;
+    color: #000;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 7px;
+    border-radius: 10px;
+    cursor: pointer;
+    z-index: 2;
+    user-select: none;
+    letter-spacing: .5px;
+}
+.spintax-badge:hover { background: #d97706; }
+.spintax-preview {
+    margin-top: 6px;
+    padding: 8px 12px;
+    background: #fffbeb;
+    border: 1px solid #f59e0b;
+    border-radius: 6px;
+    font-size: 13px;
+    color: #92400e;
+    display: none;
+}
+
+/* ── Library panel ─────────────────────────────────────────────────────────── */
+.library-panel {
+    margin-top: 8px;
+    border: 1px solid #e1e8ed;
+    border-radius: 8px;
+    overflow: hidden;
+}
+.library-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    background: #f5f7fa;
+    border-bottom: 1px solid #e1e8ed;
+    font-size: 13px;
+    font-weight: 600;
+    color: #14171a;
+}
+.library-header .lib-actions { display: flex; gap: 6px; }
+.library-list {
+    max-height: 150px;
+    overflow-y: auto;
+    padding: 4px 0;
+}
+.library-item {
+    display: flex;
+    align-items: center;
+    padding: 6px 12px;
+    cursor: pointer;
+    border-bottom: 1px solid #f0f0f0;
+    font-size: 13px;
+    transition: background .15s;
+}
+.library-item:last-child { border-bottom: none; }
+.library-item:hover, .library-item.active { background: #eff3fd; }
+.library-item-text { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #14171a; }
+.library-item-del {
+    flex-shrink: 0;
+    margin-left: 8px;
+    background: none;
+    border: none;
+    color: #e0245e;
+    font-size: 14px;
+    cursor: pointer;
+    padding: 0 4px;
+    line-height: 1;
+}
+.library-empty { padding: 12px; text-align: center; color: #999; font-size: 13px; font-style: italic; }
+
+/* ── Btn-xs ────────────────────────────────────────────────────────────────── */
+.btn-xs {
+    padding: 4px 10px;
+    font-size: 12px;
+    font-weight: 600;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: opacity .2s;
+}
+.btn-xs:hover { opacity: .85; }
+.btn-xs-primary { background: #667eea; color: #fff; }
+.btn-xs-secondary { background: #e1e8ed; color: #14171a; }
+
+/* ── Export bar ────────────────────────────────────────────────────────────── */
+.export-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 10px;
+    padding: 10px;
+    background: #f5f7fa;
+    border: 1px solid #e1e8ed;
+    border-radius: 8px;
+    align-items: center;
+}
+.export-bar-label {
+    font-size: 12px;
+    font-weight: 700;
+    color: #657786;
+    margin-right: 4px;
+    white-space: nowrap;
+}
+.btn-export {
+    padding: 4px 9px;
+    font-size: 11px;
+    font-weight: 700;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    background: #e1e8ed;
+    color: #14171a;
+    transition: background .15s, transform .1s;
+    letter-spacing: .3px;
+}
+.btn-export:hover { background: #667eea; color: #fff; transform: translateY(-1px); }
+.export-status {
+    font-size: 12px;
+    color: #667eea;
+    margin-top: 4px;
+    display: none;
+}
+
+/* ── Batch row ─────────────────────────────────────────────────────────────── */
+.batch-section {
+    padding: 12px;
+    background: #f5f7fa;
+    border: 1px solid #e1e8ed;
+    border-radius: 8px;
+    margin-bottom: 15px;
+}
+.batch-section-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: #14171a;
+    margin-bottom: 10px;
+}
+.batch-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+    align-items: center;
+}
+.batch-row label { font-size: 13px; color: #657786; font-weight: 600; }
+.batch-row input[type=number], .batch-row select {
+    padding: 5px 8px;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    font-size: 13px;
+    background: #fff;
+    color: #14171a;
+    width: auto;
+}
+.badge-mode {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 700;
+    background: #667eea;
+    color: #fff;
+}
+
+
+
 /* Responsive */
 @media (max-width: 768px) {
     body {
