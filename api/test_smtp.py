@@ -3,12 +3,11 @@ KINGMAILER v4.0 - SMTP Test API
 Vercel Serverless Function for testing SMTP connections
 """
 
-from flask import Flask, request, jsonify
+from http.server import BaseHTTPRequestHandler
 import smtplib
 import boto3
 from botocore.exceptions import ClientError
-
-app = Flask(__name__)
+import json
 
 def test_smtp_connection(smtp_config):
     """Test SMTP connection and authentication"""

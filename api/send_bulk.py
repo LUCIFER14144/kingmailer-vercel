@@ -1,9 +1,9 @@
 """
-KINGMAILER v4.0 - Bulk Email Sending API
+KINGMAILER v4.0 - Bulk Email Sending API  
 Vercel Serverless Function for CSV bulk sending with template replacement
 """
 
-from flask import Flask, request, jsonify
+from http.server import BaseHTTPRequestHandler
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -14,8 +14,7 @@ import io
 import time
 import random
 import re
-
-app = Flask(__name__)
+import json
 
 def replace_tags(template, data):
     """Replace {{tag}} placeholders with data from CSV"""

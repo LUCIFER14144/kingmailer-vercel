@@ -3,11 +3,9 @@ KINGMAILER v4.0 - Account Management API
 Vercel Serverless Function for managing SMTP/SES accounts
 """
 
-from flask import Flask, request, jsonify
+from http.server import BaseHTTPRequestHandler
 import json
 import os
-
-app = Flask(__name__)
 
 # In-memory storage (for demo - use database in production)
 ACCOUNTS_STORE = {
