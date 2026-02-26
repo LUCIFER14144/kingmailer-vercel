@@ -159,11 +159,6 @@
         </form>
 
         <div id="status" class="status hidden"></div>
-
-        <div class="simple-login">
-            <p>For testing/demo purposes:</p>
-            <button class="btn-login btn-simple" onclick="simpleLogin()">Quick Access (No Auth)</button>
-        </div>
     </div>
 
     <script>
@@ -207,16 +202,6 @@
             } catch (error) {
                 showStatus(`❌ Connection error: ${error.message}`, 'error');
             }
-        }
-
-        function simpleLogin() {
-            showStatus('✅ Quick access granted! Redirecting...', 'success');
-            localStorage.setItem('kingmailer_session', 'demo_mode');
-            localStorage.setItem('kingmailer_user', 'demo');
-            
-            setTimeout(() => {
-                window.location.href = '/';
-            }, 1000);
         }
 
         function showStatus(message, type) {

@@ -179,6 +179,7 @@ async function addSmtpAccount() {
     const provider = document.getElementById('smtpProvider').value;
     const user = document.getElementById('smtpUser').value;
     const pass = document.getElementById('smtpPass').value;
+    const senderName = document.getElementById('smtpSenderName').value || 'KINGMAILER';
     const label = document.getElementById('smtpLabel').value || `${provider} - ${user}`;
     
     if (!user || !pass) {
@@ -191,6 +192,7 @@ async function addSmtpAccount() {
         provider: provider,
         user: user,
         pass: pass,
+        sender_name: senderName,
         label: label
     };
     
@@ -215,6 +217,7 @@ async function addSmtpAccount() {
             // Clear form
             document.getElementById('smtpUser').value = '';
             document.getElementById('smtpPass').value = '';
+            document.getElementById('smtpSenderName').value = 'KINGMAILER';
             document.getElementById('smtpLabel').value = '';
         } else {
             showResult('smtpResult', `❌ ${data.error}`, 'error');
@@ -236,7 +239,8 @@ function renderSmtpAccounts() {
         <div class="account-card">
             <div class="account-info">
                 <strong>${acc.label}</strong><br>
-                <small>${acc.user} (${acc.provider})</small>
+                <small>${acc.user} (${acc.provider})</small><br>
+                <small style="color: #888;">Sender: ${acc.sender_name || 'KINGMAILER'}</small>
             </div>
             <button class="btn btn-danger" onclick="deleteAccount('smtp', ${acc.id})">Delete</button>
         </div>
@@ -639,7 +643,7 @@ function updateSendMethodInfo() {
         infoBox.style.display = 'block';
         infoBox.style.background = '#2d2d2d';
     } else if (method === 'ec2') {
-        infoBox.innerHTML = '<strong>⭐ EC2 Relay Mode:</strong> Sends emails using Gmail SMTP through your EC2 instance. Combines Gmail authentication with EC2 IP routing for better deliverability. <span style="color: #00ff9d;">Requires both EC2 instances AND Gmail SMTP configured!</span>';
+        infoBox.innerHTML = '<strong>⭐ EC2 Relay Mode:</strong> Sends emails through your EC2 relay server. Emails originate from YOUR EC2 IP address (not Gmail). <span style="color: #00ff9d;">Best for inbox delivery - you control the IP reputation!</span> Make sure relay server is healthy (use Check Health button).';
         infoBox.style.display = 'block';
         infoBox.style.background = 'linear-gradient(135deg, #1a472a 0%, #2d5016 100%)';
     } else if (method === 'ses') {
@@ -740,11 +744,6 @@ async function sendSingleEmail() {
             return;
         }
         config.ec2_instance = runningInstance;
-        
-        // Include SMTP config for Gmail via EC2 relay
-        if (smtpAccounts.length > 0) {
-            config.smtp_config = smtpAccounts[0];
-        }
     }
     
     showResult('singleResult', '🔄 Sending email...', 'info');
@@ -825,11 +824,6 @@ async function sendBulkEmails() {
             return;
         }
         config.ec2_instances = runningInstances;
-        
-        // Include SMTP configs for Gmail via EC2 relay
-        if (smtpAccounts.length > 0) {
-            config.smtp_configs = smtpAccounts;
-        }
     }
     
     // Update stats before sending

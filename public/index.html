@@ -213,6 +213,12 @@
             </div>
 
             <div class="form-group">
+                <label>Sender Name:</label>
+                <input type="text" id="smtpSenderName" placeholder="John Doe" value="KINGMAILER">
+                <small>This name will appear as the email sender</small>
+            </div>
+
+            <div class="form-group">
                 <label>Label (optional):</label>
                 <input type="text" id="smtpLabel" placeholder="My Gmail Account">
             </div>
@@ -342,12 +348,13 @@
             <div id="ec2InstancesList"></div>
 
             <div class="info-box" style="margin-top: 20px;">
-                <strong>How Email Sending Works:</strong><br>
-                1. Create EC2 instance using the button above<br>
-                2. Wait for instance to be running (usually 2-3 minutes)<br>
-                3. Add your Gmail SMTP or other SMTP credentials in SMTP Config tab<br>
-                4. When sending emails, they will be routed through your EC2 IP<br>
-                5. This gives you a dedicated IP for better inbox delivery
+                <strong>How EC2 Relay Works:</strong><br>
+                1. Create EC2 instance using the button above (wait 5-10 minutes for initialization)<br>
+                2. Instance automatically installs Python relay server + Postfix mail server<br>
+                3. Click "💚 Check Health" to verify relay server is ready<br>
+                4. When sending emails via EC2 Relay method, emails originate from YOUR EC2 IP<br>
+                5. NO SMTP credentials needed - uses dedicated relay server on port 8080<br>
+                6. This gives you a dedicated IP for maximum inbox delivery
             </div>
         </div>
     </div>
