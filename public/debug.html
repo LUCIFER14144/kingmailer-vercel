@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Debug Placeholder Test</title>
+    <style>
+        body { font-family: monospace; max-width: 1000px; margin: 30px auto; padding: 20px; background: #f5f5f5; }
+        h1 { color: #333; }
+        .section { background: white; padding: 20px; margin: 20px 0; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        textarea { width: 100%; min-height: 100px; padding: 10px; font-family: monospace; border: 1px solid #ddd; border-radius: 4px; }
+        button { background: #0070f3; color: white; border: none; padding: 12px 24px; border-radius: 6px; cursor: pointer; font-size: 16px; margin: 10px 5px; }
+        button:hover { background: #0051cc; }
+        .result { margin: 20px 0; padding: 15px; border-radius: 6px; white-space: pre-wrap; }
+        .success { background: #d4edda; color: #155724; }
+        .error { background: #f8d7da; color: #721c24; }
+        .info { background: #d1ecf1; color: #0c5460; }
+        label { display: block; margin: 10px 0 5px 0; font-weight: bold; color: #333; }
+        code { background: #e9ecef; padding: 2px 6px; border-radius: 3px; }
+    </style>
+</head>
+<body>
+    <h1>🔍 Placeholder Debug Test</h1>
+    
+    <div class="section">
+        <h3>Step 1: Enter test data with placeholders</h3>
+        
+        <label>Subject (use {{name}}, {{date}}, etc.):</label>
+        <textarea id="subject">Hello {{name}} from {{company}} - {{date}}</textarea>
+        
+        <label>HTML Body (use placeholders):</label>
+        <textarea id="html"><p>Dear {{name}},</p>
+<p>Your email is {{email}} and ID is {{13_digit}}</p>
+<p>Company: {{company}}</p>
+<p>Date: {{date}}, Time: {{time}}, Year: {{year}}</p>
+<p>Codes: {{random_6}} and {{random_8}}</p></textarea>
+        
+        <button onclick="testPlaceholders()">Test Placeholder Replacement</button>
+    </div>
+    
+    <div id="result"></div>
+
+    <script>
+        async function testPlaceholders() {
+            const result = document.getElementById('result');
+            result.innerHTML = '<div class="result info">Testing...</div>';
+            
+            const subject = document.getElementById('subject').value;
+            const html = document.getElementById('html').value;
+            
+            try {
+                const response = await fetch('/api/test', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        subject: subject,
+                        html: html,
+                        to: 'test@example.com'
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    result.innerHTML = `
+                        <div class="result success">
+                            <h3>✅ TEST SUCCESSFUL</h3>
+                            
+                            <h4>ORIGINAL INPUT:</h4>
+                            <div style="background: #f8f9fa; padding: 10px; margin: 10px 0; border-left: 3px solid #6c757d;">
+                                <strong>Subject:</strong> ${escapeHtml(data.original.subject)}<br>
+                                <strong>HTML:</strong> ${escapeHtml(data.original.html)}<br>
+                                <strong>Placeholders Found:</strong> Subject: ${data.placeholders_found.subject}, HTML: ${data.placeholders_found.html}
+                            </div>
+                            
+                            <h4>AFTER REPLACEMENT:</h4>
+                            <div style="background: #d4edda; padding: 10px; margin: 10px 0; border-left: 3px solid #28a745;">
+                                <strong>Subject:</strong> ${escapeHtml(data.processed.subject)}<br>
+                                <strong>HTML:</strong> ${escapeHtml(data.processed.html)}<br>
+                                <strong>Placeholders Remaining:</strong> Subject: ${data.placeholders_remaining.subject}, HTML: ${data.placeholders_remaining.html}
+                            </div>
+                            
+                            ${data.placeholders_remaining.subject === 0 && data.placeholders_remaining.html === 0 
+                                ? '<h3 style="color: #28a745;">✅ ALL PLACEHOLDERS REPLACED SUCCESSFULLY!</h3>' 
+                                : '<h3 style="color: #dc3545;">⚠️ SOME PLACEHOLDERS NOT REPLACED!</h3>'}
+                        </div>
+                    `;
+                } else {
+                    result.innerHTML = `<div class="result error">❌ Error: ${escapeHtml(data.error)}</div>`;
+                }
+            } catch (error) {
+                result.innerHTML = `<div class="result error">❌ Request failed: ${escapeHtml(error.message)}</div>`;
+            }
+        }
+        
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+    </script>
+</body>
+</html>
