@@ -520,7 +520,7 @@ async function checkEc2Health() {
             
             data.instances.forEach(instance => {
                 const statusIcon = instance.healthy ? '✅' : '❌';
-                const statusColor = instance.healthy ? '#00ff9d' : '#ff6b6b';
+                const statusColor = instance.healthy ? (instance.warnings ? '#ff9800' : '#00ff9d') : '#ff6b6b';
                 
                 resultHtml += `
                     <div style="border-left: 3px solid ${statusColor}; padding-left: 10px; margin: 10px 0;">
@@ -533,9 +533,30 @@ async function checkEc2Health() {
                         <small style="color: #00ff9d;">
                             ✓ Relay endpoint ready: ${instance.relay_url}<br>
                             ✓ Postfix: ${instance.postfix_running ? 'Running' : 'Not Running'}<br>
-                            ✓ Checked at: ${instance.timestamp}
+                            ✓ Port 25 Outbound: ${instance.port_25_outbound || 'unknown'}<br>
+                    `;
+                    
+                    // Show mail queue status
+                    if (instance.mail_queue) {
+                        const queueStatus = instance.mail_queue.status === 'empty' ? 'Empty ✓' : 
+                                          `${instance.mail_queue.count || 0} emails queued ⚠️`;
+                        resultHtml += `            ✓ Mail Queue: ${queueStatus}<br>`;
+                    }
+                    
+                    resultHtml += `            ✓ Checked at: ${instance.timestamp}
                         </small>
                     `;
+                    
+                    // Show warnings if any
+                    if (instance.warnings && instance.warnings.length > 0) {
+                        resultHtml += `
+                        <div style="margin-top: 8px; padding: 8px; background: rgba(255, 152, 0, 0.1); border-radius: 4px;">
+                            <small style="color: #ff9800; display: block;">
+                                ${instance.warnings.join('<br>')}
+                            </small>
+                        </div>
+                        `;
+                    }
                 } else {
                     resultHtml += `
                         <small style="color: #ff6b6b;">

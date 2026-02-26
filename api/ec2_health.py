@@ -52,15 +52,39 @@ class handler(BaseHTTPRequestHandler):
                     with urllib.request.urlopen(req, timeout=15) as response:
                         health_data = json.loads(response.read().decode('utf-8'))
                         
-                        results.append({
+                        # Check for critical warnings
+                        mail_queue = health_data.get('mail_queue', {})
+                        port25_status = health_data.get('port_25_outbound', 'unknown')
+                        
+                        # Determine if there are issues
+                        has_warning = False
+                        warning_messages = []
+                        
+                        if port25_status == 'blocked':
+                            has_warning = True
+                            warning_messages.append('⚠️ AWS is blocking port 25 outbound - emails will NOT be delivered!')
+                            warning_messages.append('➡️ Request removal: https://aws.amazon.com/forms/ec2-email-limit-rdns-request')
+                        
+                        if mail_queue.get('status') == 'has_mail' and mail_queue.get('count', 0) > 0:
+                            has_warning = True
+                            warning_messages.append(f'⚠️ {mail_queue.get("count")} emails stuck in queue')
+                        
+                        result_data = {
                             'instance_id': instance_id,
                             'public_ip': public_ip,
-                            'status': 'healthy',
+                            'status': 'healthy_with_warnings' if has_warning else 'healthy',
                             'healthy': True,
                             'relay_url': f'http://{public_ip}:8080/relay',
                             'postfix_running': health_data.get('postfix_running', False),
+                            'port_25_outbound': port25_status,
+                            'mail_queue': mail_queue,
                             'timestamp': health_data.get('timestamp')
-                        })
+                        }
+                        
+                        if has_warning:
+                            result_data['warnings'] = warning_messages
+                        
+                        results.append(result_data)
                 except urllib.error.URLError as e:
                     error_msg = str(e)
                     help_text = 'Check: 1) Wait 10-15 min after creation for setup to complete, 2) Verify security group allows port 8080, 3) SSH and check: systemctl status email-relay, netstat -tlnp | grep 8080'

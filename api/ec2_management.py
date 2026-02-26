@@ -131,6 +131,12 @@ yum install -y postfix mailx python3 python3-pip
 
 # Configure postfix
 echo "Step 3: Configuring postfix..."
+
+# Get instance hostname and IP
+PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
+PUBLIC_HOSTNAME=$(curl -s http://169.254.169.254/latest/meta-data/public-hostname)
+INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
+
 cat > /etc/postfix/main.cf << 'POSTFIX_EOF'
 compatibility_level = 2
 queue_directory = /var/spool/postfix
@@ -139,18 +145,35 @@ daemon_directory = /usr/libexec/postfix
 data_directory = /var/lib/postfix
 mail_owner = postfix
 inet_interfaces = all
-inet_protocols = all
-mydestination = $myhostname, localhost.$mydomain, localhost
+inet_protocols = ipv4
+mydestination = \$myhostname, localhost.\$mydomain, localhost
 unknown_local_recipient_reject_code = 550
-mynetworks = 0.0.0.0/0, [::]/0
+mynetworks = 127.0.0.0/8, [::1]/128
 relay_domains = 
-smtpd_banner = $myhostname ESMTP
+smtpd_banner = \$myhostname ESMTP
 smtpd_tls_cert_file = /etc/pki/tls/certs/postfix.pem
 smtpd_tls_key_file = /etc/pki/tls/private/postfix.key
 smtpd_use_tls = yes
-smtpd_tls_session_cache_database = btree:${data_directory}/smtpd_scache
-smtp_tls_session_cache_database = btree:${data_directory}/smtp_scache
+smtpd_tls_session_cache_database = btree:\${data_directory}/smtpd_scache
+smtp_tls_session_cache_database = btree:\${data_directory}/smtp_scache
+
+# Important: Set proper hostname for better deliverability
+myhostname = \$PUBLIC_HOSTNAME
+myorigin = \$myhostname
+
+# Delivery settings
+smtp_connect_timeout = 30s
+smtp_helo_timeout = 30s
+maximal_queue_lifetime = 1h
+bounce_queue_lifetime = 1h
+
+# Log all SMTP transactions
+smtp_sasl_auth_enable = no
+smtpd_relay_restrictions = permit_mynetworks, reject_unauth_destination
 POSTFIX_EOF
+
+# Replace variables in config
+sed -i "s/\\$PUBLIC_HOSTNAME/$PUBLIC_HOSTNAME/g" /etc/postfix/main.cf
 
 # Start and enable postfix
 echo "Step 4: Starting postfix service..."
@@ -190,11 +213,19 @@ class EmailRelayHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header('Content-type', 'application/json')
             self.end_headers()
+            
+            # Check mail queue
+            mail_queue_status = self.check_mail_queue()
+            port25_status = self.check_port25_connectivity()
+            
             response = {
                 'status': 'healthy',
                 'service': 'KINGMAILER Email Relay',
                 'timestamp': datetime.now().isoformat(),
-                'postfix_running': self.check_postfix()
+                'postfix_running': self.check_postfix(),
+                'mail_queue': mail_queue_status,
+                'port_25_outbound': port25_status,
+                'warning': 'AWS blocks port 25 by default - request removal at https://aws.amazon.com/forms/ec2-email-limit-rdns-request' if port25_status == 'blocked' else None
             }
             self.wfile.write(json.dumps(response).encode())
         else:
@@ -254,6 +285,45 @@ class EmailRelayHandler(BaseHTTPRequestHandler):
             return result.stdout.strip() == 'active'
         except:
             return False
+    
+    def check_mail_queue(self):
+        """Check Postfix mail queue for stuck emails"""
+        try:
+            import subprocess
+            result = subprocess.run(['mailq'], capture_output=True, text=True, timeout=5)
+            output = result.stdout.strip()
+            
+            if 'Mail queue is empty' in output or 'empty' in output.lower():
+                return {'status': 'empty', 'count': 0}
+            else:
+                # Count queued messages (rough estimate)
+                lines = output.split('\n')
+                queue_count = sum(1 for line in lines if '@' in line)
+                return {'status': 'has_mail', 'count': queue_count, 'warning': 'Emails stuck in queue - likely AWS port 25 block'}
+        except:
+            return {'status': 'unknown', 'count': 0}
+    
+    def check_port25_connectivity(self):
+        """Test if port 25 outbound is working"""
+        try:
+            import socket
+            import subprocess
+            
+            # Try to connect to a known mail server on port 25
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(3)
+                result = sock.connect_ex(('gmail-smtp-in.l.google.com', 25))
+                sock.close()
+                
+                if result == 0:
+                    return 'open'
+                else:
+                    return 'blocked'
+            except:
+                return 'blocked'
+        except:
+            return 'unknown'
 
 if __name__ == '__main__':
     server = HTTPServer(('0.0.0.0', 8080), EmailRelayHandler)
