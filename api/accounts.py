@@ -5,7 +5,6 @@ Vercel Serverless Function for managing SMTP/SES accounts
 
 from http.server import BaseHTTPRequestHandler
 import json
-import os
 
 # In-memory storage (for demo - use database in production)
 ACCOUNTS_STORE = {
@@ -14,20 +13,37 @@ ACCOUNTS_STORE = {
     'ec2_relays': []
 }
 
-@app.route('/api/accounts', methods=['GET', 'POST', 'DELETE'])
-def manage_accounts():
-    """Manage email sending accounts"""
-    try:
-        if request.method == 'GET':
-            # Return all accounts
-            return jsonify({
+
+class handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        """Return all accounts"""
+        try:
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            
+            response = {
                 'success': True,
                 'accounts': ACCOUNTS_STORE
-            }), 200
-        
-        elif request.method == 'POST':
-            # Add new account
-            data = request.get_json()
+            }
+            
+            self.wfile.write(json.dumps(response).encode())
+            
+        except Exception as e:
+            self.send_response(500)
+            self.send_header('Content-type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps({'success': False, 'error': str(e)}).encode())
+    
+    def do_POST(self):
+        """Add new account"""
+        try:
+            content_length = int(self.headers['Content-Length'])
+            post_data = self.rfile.read(content_length)
+            data = json.loads(post_data.decode('utf-8'))
+            
             account_type = data.get('type')  # 'smtp', 'ses', 'ec2'
             
             if account_type == 'smtp':
@@ -42,11 +58,15 @@ def manage_accounts():
                 }
                 ACCOUNTS_STORE['smtp_accounts'].append(account)
                 
-                return jsonify({
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({
                     'success': True,
                     'message': 'SMTP account added successfully',
                     'account': account
-                }), 200
+                }).encode())
             
             elif account_type == 'ses':
                 account = {
@@ -59,11 +79,15 @@ def manage_accounts():
                 }
                 ACCOUNTS_STORE['ses_accounts'].append(account)
                 
-                return jsonify({
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({
                     'success': True,
                     'message': 'AWS SES account added successfully',
                     'account': account
-                }), 200
+                }).encode())
             
             elif account_type == 'ec2':
                 relay = {
@@ -73,18 +97,37 @@ def manage_accounts():
                 }
                 ACCOUNTS_STORE['ec2_relays'].append(relay)
                 
-                return jsonify({
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({
                     'success': True,
                     'message': 'EC2 relay added successfully',
                     'relay': relay
-                }), 200
+                }).encode())
             
             else:
-                return jsonify({'success': False, 'error': 'Invalid account type'}), 400
+                self.send_response(400)
+                self.send_header('Content-type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': False, 'error': 'Invalid account type'}).encode())
         
-        elif request.method == 'DELETE':
-            # Delete account
-            data = request.get_json()
+        except Exception as e:
+            self.send_response(500)
+            self.send_header('Content-type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps({'success': False, 'error': str(e)}).encode())
+    
+    def do_DELETE(self):
+        """Delete account"""
+        try:
+            content_length = int(self.headers['Content-Length'])
+            post_data = self.rfile.read(content_length)
+            data = json.loads(post_data.decode('utf-8'))
+            
             account_type = data.get('type')
             account_id = data.get('id')
             
@@ -104,16 +147,25 @@ def manage_accounts():
                     if relay['id'] != account_id
                 ]
             
-            return jsonify({
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps({
                 'success': True,
                 'message': 'Account deleted successfully'
-            }), 200
+            }).encode())
+        
+        except Exception as e:
+            self.send_response(500)
+            self.send_header('Content-type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps({'success': False, 'error': str(e)}).encode())
     
-    except Exception as e:
-        return jsonify({'success': False, 'error': f'Account management error: {str(e)}'}), 500
-
-
-# Vercel serverless handler
-def handler(request):
-    with app.request_context(request.environ):
-        return app.full_dispatch_request()
+    def do_OPTIONS(self):
+        self.send_response(200)
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        self.end_headers()
