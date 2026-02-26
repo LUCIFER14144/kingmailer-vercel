@@ -413,6 +413,27 @@ async function saveAwsCredentials() {
     }
 }
 
+async function restartRelay(instanceId) {
+    showResult('ec2Result', `🔄 Sending restart command to ${instanceId} via SSM... (may take ~30s)`, 'info');
+    try {
+        const response = await fetch('/api/ec2_management', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ action: 'restart_relay', instance_id: instanceId })
+        });
+        const data = await response.json();
+        if (data.success) {
+            let msg = `✅ ${data.message}`;
+            if (data.output) msg += `<br><pre style="font-size:11px;margin-top:6px;white-space:pre-wrap;">${data.output}</pre>`;
+            showResult('ec2Result', msg, 'success');
+        } else {
+            showResult('ec2Result', `❌ ${data.error}`, 'error');
+        }
+    } catch (error) {
+        showResult('ec2Result', `❌ Restart failed: ${error.message}`, 'error');
+    }
+}
+
 async function createEc2Instance() {
     showResult('ec2Result', '🔄 Creating EC2 instance... This may take 2-3 minutes.', 'info');
     
@@ -626,7 +647,10 @@ function renderEc2Instances(instances) {
                     Created: ${instance.created_at}
                 </small>
             </div>
-            <button class="btn btn-danger" onclick="terminateEc2Instance('${instance.instance_id}')">Terminate</button>
+            <div style="display:flex; flex-direction:column; gap:6px;">
+                ${instance.state === 'running' ? `<button class="btn" style="background:#f59e0b;color:#000;font-size:12px;padding:5px 10px;" onclick="restartRelay('${instance.instance_id}')">🔄 Restart Relay</button>` : ''}
+                <button class="btn btn-danger" onclick="terminateEc2Instance('${instance.instance_id}')">Terminate</button>
+            </div>
         </div>
     `;
     }).join('');

@@ -113,222 +113,105 @@ def create_ec2_instance(access_key, secret_key, region, keypair_name, security_g
             MinCount=1,
             MaxCount=1,
             SecurityGroupIds=[security_group],
-            UserData='''#!/bin/bash
-set -e
-exec > >(tee /var/log/user-data.log)
-exec 2>&1
+            UserData="""#!/bin/bash
+exec > >(tee /var/log/user-data.log) 2>&1
 
 echo "=== KINGMAILER EC2 Email Relay Setup Started ==="
 date
 
-# Update system
-echo "Step 1: Updating system packages..."
-yum update -y
+yum update -y || dnf update -y || true
+yum install -y python3 python3-pip || dnf install -y python3 || true
 
-# Install required packages
-echo "Step 2: Installing python3 and dependencies..."
-yum install -y python3 python3-pip telnet nc
+echo "Creating relay server..."
+mkdir -p /opt
 
-# No Postfix needed - we route through authenticated SMTP instead!
-echo "Step 3: Skipping Postfix (using authenticated SMTP on ports 587/465)..."
-
-# Create email relay HTTP server (JetMailer-style)
-echo "Step 4: Creating Python SMTP relay server..."
-cat > /opt/email_relay_server.py << 'RELAY_EOF'
+cat > /opt/email_relay_server.py << 'PYEOF'
 #!/usr/bin/env python3
-"""KINGMAILER Email Relay - JetCloudMailer Style
-Routes authenticated SMTP traffic through EC2 IP without needing port 25
-Sends via Gmail/Outlook SMTP on ports 587/465 from this EC2 IP
-"""
-import json
-import smtplib
-import logging
-import socket
+import json, smtplib, logging, socket
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('/var/log/email_relay.log'),
-        logging.StreamHandler()
-    ]
-)
-
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s',
+    handlers=[logging.FileHandler('/var/log/email_relay.log'), logging.StreamHandler()])
 class EmailRelayHandler(BaseHTTPRequestHandler):
-    def log_message(self, format, *args):
-        logging.info("%s - %s" % (self.client_address[0], format%args))
-    
+    def log_message(self, fmt, *a): logging.info("%s - %s" % (self.client_address[0], fmt%a))
     def do_GET(self):
-        """Health check endpoint"""
-        if self.path == '/health' or self.path == '/':
-            self.send_response(200)
-            self.send_header('Content-type', 'application/json')
-            self.end_headers()
-            
-            # Test SMTP ports connectivity
-            port587_status = self.check_smtp_port(587)
-            port465_status = self.check_smtp_port(465)
-            
-            response = {
-                'status': 'healthy',
-                'service': 'KINGMAILER Email Relay (JetMailer Style)',
-                'timestamp': datetime.now().isoformat(),
-                'method': 'Authenticated SMTP via EC2 IP',
-                'port_587_outbound': port587_status,
-                'port_465_outbound': port465_status,
-                'info': 'No port 25 needed - uses Gmail/Outlook SMTP on 587/465'
-            }
-            self.wfile.write(json.dumps(response).encode())
-        else:
-            self.send_response(404)
-            self.end_headers()
-    
+        if self.path in ('/', '/health'):
+            self.send_response(200); self.send_header('Content-type','application/json'); self.end_headers()
+            def chk(p):
+                try:
+                    s=socket.socket(); s.settimeout(3); r=s.connect_ex(('smtp.gmail.com',p)); s.close(); return 'open' if r==0 else 'blocked'
+                except: return 'unknown'
+            self.wfile.write(json.dumps({'status':'healthy','service':'KINGMAILER Relay',
+                'timestamp':datetime.now().isoformat(),'port_587_outbound':chk(587),'port_465_outbound':chk(465)}).encode())
+        else: self.send_response(404); self.end_headers()
     def do_POST(self):
-        """Email relay endpoint - JetMailer style"""
         if self.path == '/relay':
             try:
-                content_length = int(self.headers['Content-Length'])
-                post_data = self.rfile.read(content_length)
-                data = json.loads(post_data.decode('utf-8'))
-                
-                # Email details
-                from_name = data.get('from_name', 'KINGMAILER')
-                to_email = data.get('to', '')
-                subject = data.get('subject', 'No Subject')
-                html_body = data.get('html', '')
-                
-                # SMTP credentials (REQUIRED for JetMailer approach)
+                data = json.loads(self.rfile.read(int(self.headers['Content-Length'])).decode())
                 smtp_config = data.get('smtp_config')
-                if not smtp_config:
-                    raise ValueError('SMTP config required for relay')
-                
-                if not to_email:
-                    raise ValueError('Recipient email required')
-                
-                # Extract SMTP settings
-                provider = smtp_config.get('provider', 'gmail')
-                smtp_user = smtp_config.get('user')
-                smtp_pass = smtp_config.get('pass')
-                sender_name = smtp_config.get('sender_name', from_name)
-                
-                if not smtp_user or not smtp_pass:
-                    raise ValueError('SMTP username and password required')
-                
-                # Determine SMTP server and port
-                if provider == 'gmail':
-                    smtp_server = 'smtp.gmail.com'
-                    smtp_port = 587
-                elif provider == 'outlook' or provider == 'hotmail':
-                    smtp_server = 'smtp-mail.outlook.com'
-                    smtp_port = 587
-                else:
-                    smtp_server = smtp_config.get('host', 'smtp.gmail.com')
-                    smtp_port = int(smtp_config.get('port', 587))
-                
-                # Build email message
+                if not smtp_config: raise ValueError('SMTP config required')
+                to_email = data.get('to','')
+                if not to_email: raise ValueError('Recipient required')
+                provider = smtp_config.get('provider','gmail')
+                u = smtp_config.get('user'); p = smtp_config.get('pass')
+                if not u or not p: raise ValueError('SMTP credentials required')
+                sname = smtp_config.get('sender_name', data.get('from_name','KINGMAILER'))
+                if provider=='gmail': srv,port='smtp.gmail.com',587
+                elif provider in ('outlook','hotmail'): srv,port='smtp-mail.outlook.com',587
+                else: srv,port=smtp_config.get('host','smtp.gmail.com'),int(smtp_config.get('port',587))
                 msg = MIMEMultipart('alternative')
-                msg['From'] = f"{sender_name} <{smtp_user}>"
-                msg['To'] = to_email
-                msg['Subject'] = subject
-                msg.attach(MIMEText(html_body, 'html'))
-                
-                # Send via authenticated SMTP FROM THIS EC2 IP
-                # This gives you EC2 IP in headers while using Gmail's infrastructure
-                logging.info(f"Sending to {to_email} via {smtp_server}:{smtp_port} from EC2 IP")
-                
-                with smtplib.SMTP(smtp_server, smtp_port, timeout=30) as server:
-                    server.starttls()
-                    server.login(smtp_user, smtp_pass)
-                    server.send_message(msg)
-                
-                logging.info(f"Email sent successfully to {to_email}")
-                
-                self.send_response(200)
-                self.send_header('Content-type', 'application/json')
-                self.end_headers()
-                self.wfile.write(json.dumps({'success': True, 'message': 'Email sent'}).encode())
-                
+                msg['From']="%s <%s>" % (sname,u); msg['To']=to_email
+                msg['Subject']=data.get('subject',''); msg.attach(MIMEText(data.get('html',''),'html'))
+                with smtplib.SMTP(srv,port,timeout=30) as s:
+                    s.starttls(); s.login(u,p); s.send_message(msg)
+                logging.info("Sent to %s" % to_email)
+                self.send_response(200); self.send_header('Content-type','application/json'); self.end_headers()
+                self.wfile.write(json.dumps({'success':True,'message':'Email sent'}).encode())
             except Exception as e:
-                logging.error(f"Error sending email: {str(e)}")
-                self.send_response(500)
-                self.send_header('Content-type', 'application/json')
-                self.end_headers()
-                self.wfile.write(json.dumps({'success': False, 'error': str(e)}).encode())
-        else:
-            self.send_response(404)
-            self.end_headers()
-    
-    def check_smtp_port(self, port):
-        """Test if SMTP port (587 or 465) is accessible"""
-        try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(3)
-            
-            # Test Gmail SMTP server
-            if port == 587:
-                result = sock.connect_ex(('smtp.gmail.com', 587))
-            else:
-                result = sock.connect_ex(('smtp.gmail.com', 465))
-            
-            sock.close()
-            return 'open' if result == 0 else 'blocked'
-        except:
-            return 'unknown'
-
+                logging.error(str(e))
+                self.send_response(500); self.send_header('Content-type','application/json'); self.end_headers()
+                self.wfile.write(json.dumps({'success':False,'error':str(e)}).encode())
+        else: self.send_response(404); self.end_headers()
 if __name__ == '__main__':
-    server = HTTPServer(('0.0.0.0', 3000), EmailRelayHandler)
-    logging.info('Email Relay Server started on port 3000')
-    logging.info('Health check: http://<ip>:3000/health')
-    logging.info('Relay endpoint: http://<ip>:3000/relay')
-    server.serve_forever()
-RELAY_EOF
+    srv = HTTPServer(('0.0.0.0',3000), EmailRelayHandler)
+    logging.info('Relay started on port 3000'); srv.serve_forever()
+PYEOF
 
 chmod +x /opt/email_relay_server.py
 
-# Create systemd service for relay server
-echo "Step 5: Creating systemd service..."
-cat > /etc/systemd/system/email-relay.service << 'SERVICE_EOF'
+cat > /etc/systemd/system/email-relay.service << 'SVCEOF'
 [Unit]
-Description=KINGMAILER Email Relay HTTP Server (JetMailer Style)
+Description=KINGMAILER Email Relay
 After=network.target
-
 [Service]
 Type=simple
 User=root
 ExecStart=/usr/bin/python3 /opt/email_relay_server.py
 Restart=always
-RestartSec=10
-
+RestartSec=5
 [Install]
 WantedBy=multi-user.target
-SERVICE_EOF
+SVCEOF
 
-# Start and enable relay service
-echo "Step 6: Starting email relay service..."
 systemctl daemon-reload
 systemctl enable email-relay.service
 systemctl start email-relay.service
-systemctl status email-relay.service
+systemctl status email-relay.service || true
 
-# Configure firewall (if firewalld is running)
-if systemctl is-active --quiet firewalld; then
-    echo "Step 7: Configuring firewall..."
-    firewall-cmd --permanent --add-port=587/tcp
-    firewall-cmd --permanent --add-port=465/tcp
-    firewall-cmd --permanent --add-port=3000/tcp
-    firewall-cmd --reload
+# Watchdog cron: auto-restart relay if it stops
+echo '* * * * * root systemctl is-active email-relay || systemctl restart email-relay' > /etc/cron.d/email-relay-watchdog
+
+if systemctl is-active --quiet firewalld 2>/dev/null; then
+    firewall-cmd --permanent --add-port=3000/tcp || true
+    firewall-cmd --permanent --add-port=587/tcp || true
+    firewall-cmd --reload || true
 fi
 
-echo "=== KINGMAILER EC2 Email Relay Setup Complete (JetMailer Style) ==="
-echo \"No port 25 needed - uses authenticated SMTP on ports 587/465\"
-echo "Health Check: curl http://$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4):3000/health"
+echo "=== Setup Complete ==="
 date
-            ''',
+""",
             TagSpecifications=[{
                 'ResourceType': 'instance',
                 'Tags': [
@@ -366,6 +249,139 @@ date
             'success': False,
             'error': str(e)
         }
+
+
+def restart_relay_via_ssm(access_key, secret_key, region, instance_id):
+    """Use AWS SSM Run Command to reinstall and restart the relay server — no SSH needed."""
+    try:
+        ssm_client = boto3.client(
+            'ssm',
+            region_name=region,
+            aws_access_key_id=access_key,
+            aws_secret_access_key=secret_key
+        )
+
+        # Full relay reinstall + start script sent via SSM
+        setup_script = """#!/bin/bash
+echo "=== KINGMAILER Relay Restart via SSM ==="
+which python3 || yum install -y python3 2>/dev/null || dnf install -y python3 2>/dev/null || true
+mkdir -p /opt
+
+cat > /opt/email_relay_server.py << 'PYEOF'
+#!/usr/bin/env python3
+import json, smtplib, logging, socket
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from datetime import datetime
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s',
+    handlers=[logging.FileHandler('/var/log/email_relay.log'), logging.StreamHandler()])
+class EmailRelayHandler(BaseHTTPRequestHandler):
+    def log_message(self, fmt, *a): logging.info("%s - %s" % (self.client_address[0], fmt%a))
+    def do_GET(self):
+        if self.path in ('/', '/health'):
+            self.send_response(200); self.send_header('Content-type','application/json'); self.end_headers()
+            def chk(p):
+                try:
+                    s=socket.socket(); s.settimeout(3); r=s.connect_ex(('smtp.gmail.com',p)); s.close(); return 'open' if r==0 else 'blocked'
+                except: return 'unknown'
+            self.wfile.write(json.dumps({'status':'healthy','service':'KINGMAILER Relay',
+                'timestamp':datetime.now().isoformat(),'port_587_outbound':chk(587),'port_465_outbound':chk(465)}).encode())
+        else: self.send_response(404); self.end_headers()
+    def do_POST(self):
+        if self.path == '/relay':
+            try:
+                data = json.loads(self.rfile.read(int(self.headers['Content-Length'])).decode())
+                smtp_config = data.get('smtp_config')
+                if not smtp_config: raise ValueError('SMTP config required')
+                to_email = data.get('to','')
+                if not to_email: raise ValueError('Recipient required')
+                provider = smtp_config.get('provider','gmail')
+                u = smtp_config.get('user'); p = smtp_config.get('pass')
+                if not u or not p: raise ValueError('SMTP credentials required')
+                sname = smtp_config.get('sender_name', data.get('from_name','KINGMAILER'))
+                if provider=='gmail': srv,port='smtp.gmail.com',587
+                elif provider in ('outlook','hotmail'): srv,port='smtp-mail.outlook.com',587
+                else: srv,port=smtp_config.get('host','smtp.gmail.com'),int(smtp_config.get('port',587))
+                msg = MIMEMultipart('alternative')
+                msg['From']=f"{sname} <{u}>"; msg['To']=to_email
+                msg['Subject']=data.get('subject',''); msg.attach(MIMEText(data.get('html',''),'html'))
+                with smtplib.SMTP(srv,port,timeout=30) as s:
+                    s.starttls(); s.login(u,p); s.send_message(msg)
+                logging.info(f"Sent to {to_email}")
+                self.send_response(200); self.send_header('Content-type','application/json'); self.end_headers()
+                self.wfile.write(json.dumps({'success':True,'message':'Email sent'}).encode())
+            except Exception as e:
+                logging.error(str(e))
+                self.send_response(500); self.send_header('Content-type','application/json'); self.end_headers()
+                self.wfile.write(json.dumps({'success':False,'error':str(e)}).encode())
+        else: self.send_response(404); self.end_headers()
+if __name__ == '__main__':
+    srv = HTTPServer(('0.0.0.0',3000), EmailRelayHandler)
+    logging.info('Relay started on port 3000'); srv.serve_forever()
+PYEOF
+
+chmod +x /opt/email_relay_server.py
+
+cat > /etc/systemd/system/email-relay.service << 'SVCEOF'
+[Unit]
+Description=KINGMAILER Email Relay
+After=network.target
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/bin/python3 /opt/email_relay_server.py
+Restart=always
+RestartSec=5
+[Install]
+WantedBy=multi-user.target
+SVCEOF
+
+systemctl daemon-reload
+systemctl enable email-relay.service
+systemctl restart email-relay.service
+sleep 3
+systemctl is-active email-relay.service && echo 'RELAY_OK' || echo 'RELAY_FAILED'
+curl -s http://localhost:3000/health | head -c 200
+"""
+
+        response = ssm_client.send_command(
+            InstanceIds=[instance_id],
+            DocumentName='AWS-RunShellScript',
+            Parameters={'commands': [setup_script]},
+            Comment='KINGMAILER relay restart'
+        )
+        command_id = response['Command']['CommandId']
+
+        # Poll for result (up to 45s)
+        import time as _time
+        for _ in range(9):
+            _time.sleep(5)
+            try:
+                out = ssm_client.get_command_invocation(CommandId=command_id, InstanceId=instance_id)
+                status = out['Status']
+                if status in ('Success', 'Failed', 'TimedOut', 'Cancelled'):
+                    stdout = out.get('StandardOutputContent', '')
+                    stderr = out.get('StandardErrorContent', '')
+                    if 'RELAY_OK' in stdout:
+                        return {'success': True, 'message': '✅ Relay server restarted successfully!', 'output': stdout[-500:]}
+                    elif status == 'Success':
+                        return {'success': True, 'message': 'SSM command completed — check health in 15 seconds', 'output': stdout[-500:]}
+                    else:
+                        return {'success': False, 'error': f'Command {status}: {stderr[-300:] or stdout[-300:]}'}
+            except Exception:
+                continue
+
+        return {'success': True, 'message': '⏳ Restart command sent — check health in 30 seconds', 'command_id': command_id}
+
+    except Exception as e:
+        err = str(e)
+        if 'InvalidInstanceId' in err or 'not registered' in err.lower() or 'ManagedInstance' in err:
+            return {
+                'success': False,
+                'error': 'SSM agent not available. SSH into the instance and run: sudo systemctl restart email-relay'
+            }
+        return {'success': False, 'error': f'SSM error: {err}'}
 
 
 def terminate_ec2_instance(access_key, secret_key, region, instance_id):
@@ -584,6 +600,20 @@ class handler(BaseHTTPRequestHandler):
                         # Pass through error
                         result = create_result
             
+            elif action == 'restart_relay':
+                instance_id = data.get('instance_id')
+                if not instance_id:
+                    result = {'success': False, 'error': 'instance_id required'}
+                elif not AWS_CREDENTIALS:
+                    result = {'success': False, 'error': 'AWS credentials not configured'}
+                else:
+                    result = restart_relay_via_ssm(
+                        AWS_CREDENTIALS['access_key'],
+                        AWS_CREDENTIALS['secret_key'],
+                        AWS_CREDENTIALS['region'],
+                        instance_id
+                    )
+
             elif action == 'list_instances':
                 # List all EC2 instances from AWS
                 if not AWS_CREDENTIALS:
