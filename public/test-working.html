@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Placeholder Test - LIVE</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 1200px; margin: 20px auto; padding: 20px; }
+        .test-section { background: #f5f5f5; padding: 20px; margin: 20px 0; border-radius: 8px; }
+        textarea { width: 100%; min-height: 150px; margin: 10px 0; padding: 10px; font-family: monospace; }
+        button { background: #4CAF50; color: white; padding: 12px 24px; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; }
+        button:hover { background: #45a049; }
+        .result { margin: 15px 0; padding: 15px; border-radius: 4px; white-space: pre-wrap; font-family: monospace; }
+        .success { background: #d4edda; border: 1px solid #c3e6cb; color: #155724; }
+        .error { background: #f8d7da; border: 1px solid #f5c6cb; color: #721c24; }
+        h2 { color: #333; border-bottom: 2px solid #667eea; padding-bottom: 10px; }
+    </style>
+</head>
+<body>
+    <h1>🔬 Placeholder Replacement Test (Production)</h1>
+    
+    <div class="test-section">
+        <h2>Test 1: Simple Subject Line</h2>
+        <input type="text" id="test1-subject" value="Hello {{name}}, your {{13_digit}} is ready!" style="width:100%; padding:10px;">
+        <button onclick="runTest1()">Test Subject Replacement</button>
+        <div id="test1-result"></div>
+    </div>
+    
+    <div class="test-section">
+        <h2>Test 2: HTML Body with Multiple Placeholders</h2>
+        <textarea id="test2-html"><div>
+  <h1>Hello {{name}}!</h1>
+  <p>Email: {{email}}</p>
+  <p>Company: {{company}}</p>
+  <p>ID: {{13_digit}}</p>
+  <p>Date: {{date}} at {{time}}</p>
+  <p>Random Name: {{random_name}}</p>
+  <p>Year: {{year}}</p>
+</div></textarea>
+        <button onclick="runTest2()">Test HTML Replacement</button>
+        <div id="test2-result"></div>
+    </div>
+    
+    <div class="test-section">
+        <h2>Test 3: All Placeholders</h2>
+        <textarea id="test3-html">{{email}} | {{name}} | {{company}} | {{random_name}} | {{13_digit}} | {{unique_id}} | {{date}} | {{time}} | {{year}} | {{random_6}} | {{random_8}} | {{recipient}}</textarea>
+        <button onclick="runTest3()">Test All Placeholders</button>
+        <div id="test3-result"></div>
+    </div>
+
+    <script>
+        async function testPlaceholders(subject, html, resultId) {
+            const resultDiv = document.getElementById(resultId);
+            resultDiv.innerHTML = '<p style="color:blue;">⏳ Testing...</p>';
+            
+            try {
+                const response = await fetch('/api/test', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        subject: subject || '',
+                        html: html || '',
+                        to: 'test@example.com'
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    let output = '<div class="result success">';
+                    output += '<strong>✅ SUCCESS!</strong><br><br>';
+                    
+                    if (subject) {
+                        output += '<strong>ORIGINAL SUBJECT:</strong><br>' + escapeHtml(data.original.subject) + '<br><br>';
+                        output += '<strong>PROCESSED SUBJECT:</strong><br>' + escapeHtml(data.processed.subject) + '<br><br>';
+                        output += '<strong>Placeholders Replaced:</strong> ' + data.counts.subject + '<br><br>';
+                    }
+                    
+                    if (html) {
+                        output += '<strong>ORIGINAL HTML:</strong><br>' + escapeHtml(data.original.html) + '<br><br>';
+                        output += '<strong>PROCESSED HTML:</strong><br>' + escapeHtml(data.processed.html) + '<br><br>';
+                        output += '<strong>Placeholders Replaced:</strong> ' + data.counts.html + '<br>';
+                    }
+                    
+                    output += '</div>';
+                    resultDiv.innerHTML = output;
+                } else {
+                    resultDiv.innerHTML = '<div class="result error">❌ ERROR: ' + escapeHtml(data.error || 'Unknown error') + '</div>';
+                }
+            } catch (error) {
+                resultDiv.innerHTML = '<div class="result error">❌ NETWORK ERROR: ' + escapeHtml(error.message) + '</div>';
+            }
+        }
+        
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+        
+        function runTest1() {
+            const subject = document.getElementById('test1-subject').value;
+            testPlaceholders(subject, '', 'test1-result');
+        }
+        
+        function runTest2() {
+            const html = document.getElementById('test2-html').value;
+            testPlaceholders('', html, 'test2-result');
+        }
+        
+        function runTest3() {
+            const html = document.getElementById('test3-html').value;
+            testPlaceholders('', html, 'test3-result');
+        }
+    </script>
+</body>
+</html>
