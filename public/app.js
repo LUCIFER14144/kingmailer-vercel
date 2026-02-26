@@ -611,7 +611,7 @@ function renderEc2Instances(instances) {
                     Region: ${instance.region}<br>
                     State: <span style="color: ${stateColor}; font-weight: bold;">${stateEmoji} ${instance.state.toUpperCase()}</span><br>
                     ${instance.state === 'pending' ? '<span style="color: #f59e0b;">⏳ Initializing... Auto-refreshing every 30s</span><br>' : ''}
-                    ${instance.state === 'running' ? '<span style="color: #00ff9d;">✅ Ready for email relay (port 8080)</span><br>' : ''}
+                    ${instance.state === 'running' ? '<span style="color: #00ff9d;">✅ Ready for email relay (port 3000)</span><br>' : ''}
                     Created: ${instance.created_at}
                 </small>
             </div>
