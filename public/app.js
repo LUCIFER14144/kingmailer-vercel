@@ -414,23 +414,65 @@ async function saveAwsCredentials() {
 }
 
 async function restartRelay(instanceId) {
-    showResult('ec2Result', `🔄 Sending restart command to ${instanceId} via SSM... (may take ~30s)`, 'info');
+    showResult('ec2Result', `🔄 Connecting to ${instanceId} via SSM... (may take ~30s)`, 'info');
     try {
-        const response = await fetch('/api/ec2_management', {
+        const data = await safeFetchJson('/api/ec2_management', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({ action: 'restart_relay', instance_id: instanceId })
         });
-        const data = await response.json();
+
         if (data.success) {
             let msg = `✅ ${data.message}`;
-            if (data.output) msg += `<br><pre style="font-size:11px;margin-top:6px;white-space:pre-wrap;">${data.output}</pre>`;
+            if (data.output) msg += `<br><pre style="font-size:11px;margin-top:6px;white-space:pre-wrap;overflow:auto;">${data.output}</pre>`;
             showResult('ec2Result', msg, 'success');
+        } else if (data.ssm_role_attached) {
+            // SSM role just attached — start a 60-second countdown then auto-retry
+            let secs = 60;
+            const el = document.getElementById('ec2Result');
+            el.className = 'result-box info';
+            el.style.display = 'block';
+            const tick = setInterval(() => {
+                secs--;
+                el.innerHTML = `🔑 SSM role attached to instance.<br>⏳ Auto-retrying in <strong>${secs}</strong>s — SSM agent needs time to register...`;
+                if (secs <= 0) {
+                    clearInterval(tick);
+                    el.innerHTML = `🔄 Retrying relay restart...`;
+                    restartRelay(instanceId);
+                }
+            }, 1000);
+            el.innerHTML = `🔑 SSM role attached to instance.<br>⏳ Auto-retrying in <strong>${secs}</strong>s — SSM agent needs time to register...`;
+        } else if (data.ssm_not_available) {
+            showResult('ec2Result',
+                `⚠️ ${data.message || data.error}<br><br>` +
+                `<strong>Fix:</strong> <button class="btn btn-danger" style="font-size:12px;" onclick="terminateAndRecreate('${instanceId}')">🔄 Terminate &amp; Create Fresh Instance</button>`,
+                'error');
         } else {
-            showResult('ec2Result', `❌ ${data.error}`, 'error');
+            showResult('ec2Result', `❌ ${data.error || data.message}`, 'error');
         }
     } catch (error) {
         showResult('ec2Result', `❌ Restart failed: ${error.message}`, 'error');
+    }
+}
+
+async function terminateAndRecreate(instanceId) {
+    if (!confirm(`Terminate ${instanceId} and create a fresh instance with the fixed setup?`)) return;
+    showResult('ec2Result', '🔄 Terminating instance...', 'info');
+    try {
+        const termData = await safeFetchJson('/api/ec2_management', {
+            method: 'DELETE',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ instance_id: instanceId })
+        });
+        if (!termData.success) {
+            showResult('ec2Result', `❌ Terminate failed: ${termData.error}`, 'error');
+            return;
+        }
+        showResult('ec2Result', '✅ Terminated. Creating fresh instance...', 'info');
+        await sleep(2000);
+        await createEc2Instance();
+    } catch (err) {
+        showResult('ec2Result', `❌ ${err.message}`, 'error');
     }
 }
 
@@ -830,9 +872,10 @@ async function sendSingleEmail() {
     
     // Get attachment if any
     const attachment = await getAttachmentData('single');
+    if (attachmentTooLarge(attachment, 'singleResult')) return;
     
     try {
-        const response = await fetch('/api/send', {
+        const data = await safeFetchJson('/api/send', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({
@@ -844,8 +887,6 @@ async function sendSingleEmail() {
                 ...config
             })
         });
-        
-        const data = await response.json();
         
         if (data.success) {
             showResult('singleResult', `✅ ${data.message}`, 'success');
@@ -1000,12 +1041,11 @@ async function sendBulkEmails() {
         document.getElementById('bulkLog').scrollTop = document.getElementById('bulkLog').scrollHeight;
         
         try {
-            const resp = await fetch('/api/send', {
+            const result = await safeFetchJson('/api/send', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(emailPayload)
             });
-            const result = await resp.json();
             
             if (result.success) {
                 sent++;
@@ -1160,6 +1200,37 @@ async function getAttachmentData(context) {
         };
         iframe.srcdoc = raw.content;
     });
+}
+
+// Safe fetch: always returns a parsed object even if server sends non-JSON (413, 502, etc.)
+async function safeFetchJson(url, options) {
+    const resp = await fetch(url, options);
+    const text = await resp.text();
+    try {
+        return JSON.parse(text);
+    } catch (_) {
+        if (resp.status === 413 || text.toLowerCase().includes('entity too large') || text.toLowerCase().includes('request entity')) {
+            return { success: false, error: 'Attachment too large (Vercel 4.5 MB limit). Use HTML format or a smaller file.' };
+        }
+        if (resp.status === 504 || resp.status === 502) {
+            return { success: false, error: `Server timeout (${resp.status}). Email may still have sent — check your inbox.` };
+        }
+        return { success: false, error: `Server error ${resp.status}: ${text.slice(0, 150)}` };
+    }
+}
+
+// Check attachment size before sending (Vercel body limit ≈ 4.5 MB)
+function attachmentTooLarge(attachment, resultElementId) {
+    if (!attachment) return false;
+    const bytes = Math.ceil(attachment.content.length * 0.75);
+    const mb = bytes / (1024 * 1024);
+    if (mb > 3.5) {
+        showResult(resultElementId,
+            `❌ Attachment is ~${mb.toFixed(1)} MB — too large for Vercel (4.5 MB limit).<br>` +
+            `Try: switch format to <strong>HTML</strong>, or use a smaller/simpler HTML file.`, 'error');
+        return true;
+    }
+    return false;
 }
 
 // Utility: Show result message

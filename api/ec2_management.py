@@ -376,12 +376,89 @@ curl -s http://localhost:3000/health | head -c 200
 
     except Exception as e:
         err = str(e)
-        if 'InvalidInstanceId' in err or 'not registered' in err.lower() or 'ManagedInstance' in err:
-            return {
-                'success': False,
-                'error': 'SSM agent not available. SSH into the instance and run: sudo systemctl restart email-relay'
-            }
+        is_ssm_unregistered = ('InvalidInstanceId' in err or 'not registered' in err.lower()
+                               or 'ManagedInstance' in err or 'isManagedInstance' in err)
+        if is_ssm_unregistered:
+            # Auto-attach SSM IAM role so next click works
+            attach = _attach_ssm_role(access_key, secret_key, region, instance_id)
+            if attach.get('attached'):
+                return {
+                    'success': False,
+                    'ssm_role_attached': True,
+                    'message': '🔑 SSM role attached to instance. Wait 60 seconds for SSM to register, then click Restart Relay again.'
+                }
+            elif attach.get('already_had_profile'):
+                return {
+                    'success': False,
+                    'ssm_not_available': True,
+                    'message': '⚠️ SSM agent not responding (instance has IAM role but SSM agent may not be installed). Terminate this instance and create a new one — the new setup is hardened and will work.'
+                }
+            else:
+                return {
+                    'success': False,
+                    'ssm_not_available': True,
+                    'message': f'⚠️ Could not attach SSM role: {attach.get("error")}. Terminate this instance and create a new one.'
+                }
         return {'success': False, 'error': f'SSM error: {err}'}
+
+
+def _attach_ssm_role(access_key, secret_key, region, instance_id):
+    """Attach AmazonSSMManagedInstanceCore IAM role to enable SSM on an instance."""
+    import time as _t
+    try:
+        iam = boto3.client('iam', aws_access_key_id=access_key, aws_secret_access_key=secret_key)
+        ec2 = boto3.client('ec2', region_name=region, aws_access_key_id=access_key, aws_secret_access_key=secret_key)
+
+        role_name = 'KINGMAILER-SSM-Role'
+        profile_name = 'KINGMAILER-SSM-Profile'
+        ssm_policy_arn = 'arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore'
+
+        # Check if instance already has a profile
+        existing = ec2.describe_iam_instance_profile_associations(
+            Filters=[{'Name': 'instance-id', 'Values': [instance_id]}]
+        )
+        if existing['IamInstanceProfileAssociations']:
+            return {'attached': False, 'already_had_profile': True}
+
+        # Create role if not exists
+        trust = json.dumps({
+            'Version': '2012-10-17',
+            'Statement': [{'Effect': 'Allow', 'Principal': {'Service': 'ec2.amazonaws.com'}, 'Action': 'sts:AssumeRole'}]
+        })
+        try:
+            iam.create_role(RoleName=role_name, AssumeRolePolicyDocument=trust,
+                            Description='KINGMAILER EC2 SSM access role')
+        except iam.exceptions.EntityAlreadyExistsException:
+            pass
+
+        # Attach SSM policy
+        try:
+            iam.attach_role_policy(RoleName=role_name, PolicyArn=ssm_policy_arn)
+        except Exception:
+            pass
+
+        # Create instance profile
+        try:
+            iam.create_instance_profile(InstanceProfileName=profile_name)
+            _t.sleep(3)
+            iam.add_role_to_instance_profile(InstanceProfileName=profile_name, RoleName=role_name)
+            _t.sleep(5)
+        except iam.exceptions.EntityAlreadyExistsException:
+            pass
+
+        # Get profile ARN
+        profile = iam.get_instance_profile(InstanceProfileName=profile_name)
+        profile_arn = profile['InstanceProfile']['Arn']
+
+        # Attach to instance
+        ec2.associate_iam_instance_profile(
+            IamInstanceProfileSpecification={'Arn': profile_arn},
+            InstanceId=instance_id
+        )
+        return {'attached': True}
+
+    except Exception as e:
+        return {'attached': False, 'error': str(e)}
 
 
 def terminate_ec2_instance(access_key, secret_key, region, instance_id):
