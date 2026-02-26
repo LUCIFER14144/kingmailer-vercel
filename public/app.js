@@ -552,10 +552,10 @@ function switchInputMode() {
     
     if (inputMode === 'simple') {
         label.textContent = 'Mode: Simple (One Email Per Line)';
-        textarea.placeholder = 'john@example.com\\njane@example.com\\nbob@example.com\\nalice@example.com';
+        textarea.placeholder = 'john@example.com\njane@example.com\nbob@example.com\nalice@example.com';
     } else {
         label.textContent = 'Mode: CSV Format';
-        textarea.placeholder = 'email,name,company\\njohn@example.com,John,ACME Corp\\njane@example.com,Jane,Tech Inc';
+        textarea.placeholder = 'email,name,company\njohn@example.com,John,ACME Corp\njane@example.com,Jane,Tech Inc';
     }
 }
 
@@ -592,10 +592,10 @@ function updateBulkStats() {
     // Count emails
     let emailCount = 0;
     if (inputMode === 'simple') {
-        const lines = csv.split('\\n').filter(line => line.trim() && line.includes('@'));
+        const lines = csv.split('\n').filter(line => line.trim() && line.includes('@'));
         emailCount = lines.length;
     } else {
-        const lines = csv.split('\\n').filter(line => line.trim());
+        const lines = csv.split('\n').filter(line => line.trim());
         emailCount = Math.max(0, lines.length - 1); // Exclude header
     }
     
@@ -715,8 +715,8 @@ async function sendBulkEmails() {
     
     // Convert simple format to CSV if needed
     if (inputMode === 'simple') {
-        const emails = csv.split('\\n').filter(line => line.trim() && line.includes('@'));
-        csv = 'email\\n' + emails.join('\\n');
+        const emails = csv.split('\n').filter(line => line.trim() && line.includes('@'));
+        csv = 'email\n' + emails.join('\n');
     }
     
     // Get config based on method
