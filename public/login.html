@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KINGMAILER Login</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1e1e1e 0%, #2d2d2d 100%);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            color: white;
+        }
+
+        .login-container {
+            background: #2d2d2d;
+            padding: 40px;
+            border-radius: 10px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+            width: 400px;
+            text-align: center;
+        }
+
+        .logo {
+            font-size: 2.5rem;
+            font-weight: bold;
+            color: #00ff9d;
+            margin-bottom: 10px;
+        }
+
+        .version {
+            color: #888;
+            font-size: 0.9rem;
+            margin-bottom: 30px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+            text-align: left;
+        }
+
+        label {
+            display: block;
+            color: #ccc;
+            margin-bottom: 5px;
+            font-size: 0.9rem;
+        }
+
+        input {
+            width: 100%;
+            padding: 12px;
+            background: #1e1e1e;
+            border: 1px solid #444;
+            border-radius: 5px;
+            color: white;
+            font-size: 1rem;
+            transition: border-color 0.3s;
+        }
+
+        input:focus {
+            outline: none;
+            border-color: #00ff9d;
+        }
+
+        .btn-login {
+            width: 100%;
+            padding: 12px;
+            background: #00ff9d;
+            color: #000;
+            border: none;
+            border-radius: 5px;
+            font-size: 1.1rem;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+
+        .btn-login:hover {
+            background: #00cc7d;
+        }
+
+        .status {
+            margin-top: 20px;
+            padding: 10px;
+            border-radius: 5px;
+            font-size: 0.9rem;
+        }
+
+        .status.error {
+            background: rgba(255, 77, 79, 0.2);
+            border: 1px solid #ff4d4f;
+            color: #ff4d4f;
+        }
+
+        .status.success {
+            background: rgba(0, 255, 157, 0.2);
+            border: 1px solid #00ff9d;
+            color: #00ff9d;
+        }
+
+        .status.info {
+            background: rgba(0, 122, 204, 0.2);
+            border: 1px solid #007acc;
+            color: #007acc;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        .simple-login {
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 1px solid #444;
+        }
+
+        .simple-login p {
+            color: #888;
+            font-size: 0.85rem;
+            margin-bottom: 10px;
+        }
+
+        .btn-simple {
+            background: #444;
+            margin-top: 10px;
+        }
+
+        .btn-simple:hover {
+            background: #555;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <div class="logo">👑 KINGMAILER</div>
+        <div class="version">v4.0 Enterprise Edition</div>
+
+        <form id="loginForm" onsubmit="handleLogin(event)">
+            <div class="form-group">
+                <label for="username">Username</label>
+                <input type="text" id="username" required autocomplete="username">
+            </div>
+
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input type="password" id="password" required autocomplete="current-password">
+            </div>
+
+            <button type="submit" class="btn-login">LOGIN</button>
+        </form>
+
+        <div id="status" class="status hidden"></div>
+
+        <div class="simple-login">
+            <p>For testing/demo purposes:</p>
+            <button class="btn-login btn-simple" onclick="simpleLogin()">Quick Access (No Auth)</button>
+        </div>
+    </div>
+
+    <script>
+        async function handleLogin(event) {
+            event.preventDefault();
+            
+            const username = document.getElementById('username').value.trim();
+            const password = document.getElementById('password').value.trim();
+            const statusDiv = document.getElementById('status');
+
+            if (!username || !password) {
+                showStatus('Please enter both username and password', 'error');
+                return;
+            }
+
+            showStatus('Authenticating...', 'info');
+
+            try {
+                const response = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({username, password})
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    showStatus('✅ Login successful! Redirecting...', 'success');
+                    
+                    // Store session
+                    localStorage.setItem('kingmailer_session', data.token || 'authenticated');
+                    localStorage.setItem('kingmailer_user', username);
+                    
+                    // Redirect to dashboard
+                    setTimeout(() => {
+                        window.location.href = '/';
+                    }, 1000);
+                } else {
+                    showStatus(`❌ ${data.error || 'Login failed'}`, 'error');
+                }
+            } catch (error) {
+                showStatus(`❌ Connection error: ${error.message}`, 'error');
+            }
+        }
+
+        function simpleLogin() {
+            showStatus('✅ Quick access granted! Redirecting...', 'success');
+            localStorage.setItem('kingmailer_session', 'demo_mode');
+            localStorage.setItem('kingmailer_user', 'demo');
+            
+            setTimeout(() => {
+                window.location.href = '/';
+            }, 1000);
+        }
+
+        function showStatus(message, type) {
+            const statusDiv = document.getElementById('status');
+            statusDiv.textContent = message;
+            statusDiv.className = `status ${type}`;
+            statusDiv.classList.remove('hidden');
+        }
+
+        // Check if already logged in
+        window.addEventListener('DOMContentLoaded', () => {
+            const session = localStorage.getItem('kingmailer_session');
+            if (session) {
+                window.location.href = '/';
+            }
+        });
+    </script>
+</body>
+</html>

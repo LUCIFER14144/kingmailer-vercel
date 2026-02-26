@@ -12,6 +12,7 @@ let ec2Relays = [];
 document.addEventListener('DOMContentLoaded', function() {
     initTabs();
     loadAccounts();
+    loadEc2Relays();
     
     // Show/hide custom SMTP fields
     document.getElementById('smtpProvider').addEventListener('change', function() {
@@ -57,6 +58,20 @@ async function loadAccounts() {
         }
     } catch (error) {
         console.error('Failed to load accounts:', error);
+    }
+}
+
+async function loadEc2Relays() {
+    try {
+        const response = await fetch('/api/ec2_relay');
+        const data = await response.json();
+        
+        if (data.success) {
+            ec2Relays = data.relays || [];
+            renderEc2Relays();
+        }
+    } catch (error) {
+        console.error('Failed to load EC2 relays:', error);
     }
 }
 
@@ -287,19 +302,19 @@ async function testEc2Relay() {
     showResult('ec2Result', '🔄 Testing EC2 relay connection...', 'info');
     
     try {
-        const response = await fetch('/api/test_smtp', {
+        const response = await fetch('/api/ec2_relay', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({
-                type: 'ec2',
-                relay_url: url
+                action: 'test',
+                url: url
             })
         });
         
         const data = await response.json();
         
         if (data.success) {
-            showResult('ec2Result', `✅ ${data.message}`, 'success');
+            showResult('ec2Result', `✅ ${data.message || 'Connection successful'}`, 'success');
         } else {
             showResult('ec2Result', `❌ ${data.error}`, 'error');
         }
@@ -318,11 +333,11 @@ async function addEc2Relay() {
     }
     
     try {
-        const response = await fetch('/api/accounts', {
+        const response = await fetch('/api/ec2_relay', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({
-                type: 'ec2',
+                action: 'add',
                 url: url,
                 label: label
             })
@@ -332,7 +347,7 @@ async function addEc2Relay() {
         
         if (data.success) {
             showResult('ec2Result', '✅ EC2 relay added successfully!', 'success');
-            loadAccounts();
+            loadEc2Relays();
             
             // Clear form
             document.getElementById('ec2Url').value = '';
@@ -371,7 +386,10 @@ async function deleteAccount(type, id) {
     }
     
     try {
-        const response = await fetch('/api/accounts', {
+        // Use different endpoint for EC2 relays
+        const endpoint = (type === 'ec2') ? '/api/ec2_relay' : '/api/accounts';
+        
+        const response = await fetch(endpoint, {
             method: 'DELETE',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({ type, id })
@@ -380,7 +398,11 @@ async function deleteAccount(type, id) {
         const data = await response.json();
         
         if (data.success) {
-            loadAccounts();
+            if (type === 'ec2') {
+                loadEc2Relays();
+            } else {
+                loadAccounts();
+            }
         }
     } catch (error) {
         console.error('Failed to delete account:', error);
@@ -419,7 +441,7 @@ async function sendSingleEmail() {
             showResult('singleResult', 'Please add an EC2 relay first', 'error');
             return;
         }
-        config.relay_url = ec2Relays[0].url;
+        config.ec2_url = ec2Relays[0].url;
     }
     
     showResult('singleResult', '🔄 Sending email...', 'info');
@@ -478,6 +500,12 @@ async function sendBulkEmails() {
             return;
         }
         config.aws_config = sesAccounts[0];
+    } else if (method === 'ec2') {
+        if (ec2Relays.length === 0) {
+            showResult('bulkResult', 'Please add at least one EC2 relay first', 'error');
+            return;
+        }
+        config.ec2_configs = ec2Relays;
     }
     
     showResult('bulkResult', '🔄 Starting bulk send... This may take a while.', 'info');

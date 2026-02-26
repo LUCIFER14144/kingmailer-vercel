@@ -1,6 +1,6 @@
 """
-KINGMAILER v4.0 - Bulk Email Sending API  
-Vercel Serverless Function for CSV bulk sending with template replacement
+KINGMAILER v4.0 - Bulk Email Sending API
+Features: CSV processing, SMTP/SES/EC2, Account Rotation, Spintax, Template Tags
 """
 
 from http.server import BaseHTTPRequestHandler
@@ -8,46 +8,97 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import boto3
-from botocore.exceptions import ClientError
+import json
 import csv
 import io
 import time
 import random
 import re
-import json
+import urllib.request
+from datetime import datetime
+import string
 
 
-def replace_tags(template, data):
-    """Replace {{tag}} placeholders with data from CSV"""
-    def replacer(match):
-        key = match.group(1)
-        return str(data.get(key, match.group(0)))
+# Spintax Processor
+def process_spintax(text):
+    """Process spintax syntax: {option1|option2|option3}"""
+    if not text:
+        return text
+    pattern = r'\{([^{}]+)\}'
+    def replace_fn(match):
+        options = match.group(1).split('|')
+        return random.choice(options).strip()
+    max_iter = 10
+    iteration = 0
+    while '{' in text and '|' in text and iteration < max_iter:
+        text = re.sub(pattern, replace_fn, text)
+        iteration += 1
+    return text
+
+
+# Template Tag Replacements
+def gen_random_name():
+    first = ['James', 'John', 'Robert', 'Michael', 'William', 'Mary', 'Patricia', 'Jennifer', 'Linda', 'Elizabeth']
+    last = ['Smith', 'Johnson', 'Williams', 'Brown', 'Jones', 'Garcia', 'Miller', 'Davis', 'Rodriguez', 'Martinez']
+    return f"{random.choice(first)} {random.choice(last)}"
+
+def gen_company():
+    prefixes = ['Tech', 'Global', 'Digital', 'Smart', 'Innovative', 'Advanced', 'Premier', 'Elite']
+    suffixes = ['Solutions', 'Systems', 'Corporation', 'Industries', 'Group', 'Services', 'Technologies']
+    return f"{random.choice(prefixes)} {random.choice(suffixes)}"
+
+def gen_13_digit():
+    timestamp = int(datetime.now().timestamp() * 1000)
+    random_suffix = random.randint(100, 999)
+    id_str = f"{timestamp}{random_suffix}"
+    return id_str[:13]
+
+
+def replace_template_tags(text, row_data, recipient_email=''):
+    """Replace template tags including CSV column data"""
+    if not text:
+        return text
     
-    return re.sub(r'\{\{(\w+)\}\}', replacer, template)
+    # First replace CSV column placeholders
+    for key, value in row_data.items():
+        text = re.sub(r'\{\{' + key + r'\}\}', str(value), text, flags=re.IGNORECASE)
+        text = re.sub(r'\{' + key + r'\}', str(value), text, flags=re.IGNORECASE)
+    
+    # Then replace standard template tags (generate fresh for each email)
+    replacements = {
+        'random_name': gen_random_name(),
+        'company': gen_company(),
+        'company_name': gen_company(),
+        '13_digit': gen_13_digit(),
+        'unique_id': gen_13_digit(),
+        'date': datetime.now().strftime('%B %d, %Y'),
+        'time': datetime.now().strftime('%I:%M %p'),
+        'year': str(datetime.now().year),
+        'random_6': ''.join(random.choices(string.ascii_letters + string.digits, k=6)),
+        'random_8': ''.join(random.choices(string.ascii_letters + string.digits, k=8)),
+        'recipient': recipient_email,
+        'email': recipient_email
+    }
+    
+    for tag, value in replacements.items():
+        text = re.sub(r'\{\{' + tag + r'\}\}', str(value), text, flags=re.IGNORECASE)
+    
+    return text
 
 
-def send_email_smtp(smtp_config, to_email, subject, html_body, text_body=""):
+def send_email_smtp(smtp_config, from_name, recipient, subject, html_body):
     """Send single email via SMTP"""
     try:
         is_gmail = smtp_config.get('provider') == 'gmail'
-        
-        if is_gmail:
-            smtp_server = 'smtp.gmail.com'
-            smtp_port = 587
-        else:
-            smtp_server = smtp_config.get('host', 'smtp.gmail.com')
-            smtp_port = int(smtp_config.get('port', 587))
-        
+        smtp_server = 'smtp.gmail.com' if is_gmail else smtp_config.get('host')
+        smtp_port = 587 if is_gmail else int(smtp_config.get('port', 587))
         smtp_user = smtp_config.get('user')
         smtp_pass = smtp_config.get('pass')
         
         msg = MIMEMultipart('alternative')
-        msg['From'] = smtp_user
-        msg['To'] = to_email
+        msg['From'] = f"{from_name} <{smtp_user}>" if from_name else smtp_user
+        msg['To'] = recipient
         msg['Subject'] = subject
-        
-        if text_body:
-            msg.attach(MIMEText(text_body, 'plain'))
         msg.attach(MIMEText(html_body, 'html'))
         
         with smtplib.SMTP(smtp_server, smtp_port, timeout=30) as server:
@@ -56,12 +107,11 @@ def send_email_smtp(smtp_config, to_email, subject, html_body, text_body=""):
             server.send_message(msg)
         
         return {'success': True}
-    
     except Exception as e:
         return {'success': False, 'error': str(e)}
 
 
-def send_email_ses(aws_config, to_email, subject, html_body, text_body=""):
+def send_email_ses(aws_config, from_name, recipient, subject, html_body):
     """Send single email via AWS SES"""
     try:
         ses_client = boto3.client(
@@ -71,35 +121,53 @@ def send_email_ses(aws_config, to_email, subject, html_body, text_body=""):
             aws_secret_access_key=aws_config.get('secret_key')
         )
         
+        from_email = aws_config.get('from_email', 'noreply@example.com')
+        source = f"{from_name} <{from_email}>" if from_name else from_email
+        
         ses_client.send_email(
-            Source=aws_config.get('from_email'),
-            Destination={'ToAddresses': [to_email]},
+            Source=source,
+            Destination={'ToAddresses': [recipient]},
             Message={
                 'Subject': {'Data': subject},
-                'Body': {
-                    'Html': {'Data': html_body},
-                    'Text': {'Data': text_body or html_body}
-                }
+                'Body': {'Html': {'Data': html_body}}
             }
         )
         
         return {'success': True}
-    
+    except Exception as e:
+        return {'success': False, 'error': str(e)}
+
+
+def send_email_ec2(ec2_url, from_name, from_email, recipient, subject, html_body):
+    """Send email via EC2 relay"""
+    try:
+        payload = {
+            'from_name': from_name,
+            'from_email': from_email,
+            'to': recipient,
+            'subject': subject,
+            'html': html_body
+        }
+        
+        data = json.dumps(payload).encode('utf-8')
+        req = urllib.request.Request(ec2_url, data=data, method='POST')
+        req.add_header('Content-Type', 'application/json')
+        
+        with urllib.request.urlopen(req, timeout=30) as response:
+            return {'success': True}
     except Exception as e:
         return {'success': False, 'error': str(e)}
 
 
 class SMTPPool:
-    """SMTP account rotation manager"""
+    """Round-robin SMTP account rotation"""
     def __init__(self, accounts):
-        self.accounts = accounts if isinstance(accounts, list) else [accounts]
+        self.accounts = accounts
         self.current_index = 0
     
     def get_next(self):
-        """Get next SMTP account with round-robin"""
         if not self.accounts:
             return None
-        
         account = self.accounts[self.current_index]
         self.current_index = (self.current_index + 1) % len(self.accounts)
         return account
@@ -107,20 +175,24 @@ class SMTPPool:
 
 class handler(BaseHTTPRequestHandler):
     def do_POST(self):
-        """Bulk email sending with CSV upload"""
         try:
             content_length = int(self.headers['Content-Length'])
             post_data = self.rfile.read(content_length)
             data = json.loads(post_data.decode('utf-8'))
             
-            csv_data = data.get('csv_data', '')
+            csv_data = data.get('csv', '')
             subject_template = data.get('subject', 'No Subject')
             html_template = data.get('html', '')
-            text_template = data.get('text', '')
-            send_method = data.get('method', 'smtp')
-            
+            method = data.get('method', 'smtp')
             min_delay = int(data.get('min_delay', 2000))
             max_delay = int(data.get('max_delay', 5000))
+            from_name = data.get('from_name', 'KINGMAILER')
+            from_email = data.get('from_email', '')
+            
+            # Get account configs
+            smtp_configs = data.get('smtp_configs', [])
+            ses_configs = data.get('ses_configs', [])
+            ec2_configs = data.get('ec2_configs', [])
             
             if not csv_data:
                 self.send_response(400)
@@ -130,89 +202,95 @@ class handler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({'success': False, 'error': 'CSV data required'}).encode())
                 return
             
+            # Parse CSV
             csv_file = io.StringIO(csv_data)
             reader = csv.DictReader(csv_file)
-            recipients = list(reader)
+            rows = list(reader)
             
-            if not recipients:
+            if not rows:
                 self.send_response(400)
                 self.send_header('Content-type', 'application/json')
                 self.send_header('Access-Control-Allow-Origin', '*')
                 self.end_headers()
-                self.wfile.write(json.dumps({'success': False, 'error': 'No recipients in CSV'}).encode())
+                self.wfile.write(json.dumps({'success': False, 'error': 'No data in CSV'}).encode())
                 return
             
-            results = {
-                'total': len(recipients),
-                'sent': 0,
-                'failed': 0,
-                'errors': [],
-                'skipped': []
-            }
+            # Check for email column
+            if 'email' not in rows[0]:
+                self.send_response(400)
+                self.send_header('Content-type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': False, 'error': 'CSV must have "email" column'}).encode())
+                return
             
-            smtp_pool = None
-            if send_method == 'smtp' or send_method == 'gmail':
-                smtp_configs = data.get('smtp_configs', [])
-                if not smtp_configs:
-                    self.send_response(400)
-                    self.send_header('Content-type', 'application/json')
-                    self.send_header('Access-Control-Allow-Origin', '*')
-                    self.end_headers()
-                    self.wfile.write(json.dumps({'success': False, 'error': 'SMTP config required'}).encode())
-                    return
-                smtp_pool = SMTPPool(smtp_configs)
+            # Initialize account pools
+            smtp_pool = SMTPPool(smtp_configs) if smtp_configs else None
+            ses_pool = SMTPPool(ses_configs) if ses_configs else None
+            ec2_pool = SMTPPool(ec2_configs) if ec2_configs else None
             
-            aws_config = None
-            if send_method == 'ses':
-                aws_config = data.get('aws_config')
-                if not aws_config:
-                    self.send_response(400)
-                    self.send_header('Content-type', 'application/json')
-                    self.send_header('Access-Control-Allow-Origin', '*')
-                    self.end_headers()
-                    self.wfile.write(json.dumps({'success': False, 'error': 'AWS config required'}).encode())
-                    return
+            # Send emails
+            results = []
+            success_count = 0
+            fail_count = 0
             
-            for idx, recipient in enumerate(recipients):
-                email = recipient.get('email') or recipient.get('Email') or recipient.get('EMAIL')
-                
-                if not email or '@' not in email:
-                    results['skipped'].append(recipient)
+            for index, row in enumerate(rows):
+                recipient = row.get('email', '').strip()
+                if not recipient:
                     continue
                 
-                subject = replace_tags(subject_template, recipient)
-                html_body = replace_tags(html_template, recipient)
-                text_body = replace_tags(text_template, recipient) if text_template else ""
+                # Process spintax first (creates unique variation)
+                subject = process_spintax(subject_template)
+                html_body = process_spintax(html_template)
                 
-                send_result = None
+                # Then replace template tags (including CSV columns)
+                subject = replace_template_tags(subject, row, recipient)
+                html_body = replace_template_tags(html_body, row, recipient)
                 
-                if send_method == 'smtp' or send_method == 'gmail':
+                # Send email based on method
+                if method == 'smtp' and smtp_pool:
                     smtp_config = smtp_pool.get_next()
-                    send_result = send_email_smtp(smtp_config, email, subject, html_body, text_body)
+                    result = send_email_smtp(smtp_config, from_name, recipient, subject, html_body)
                 
-                elif send_method == 'ses':
-                    send_result = send_email_ses(aws_config, email, subject, html_body, text_body)
+                elif method == 'ses' and ses_pool:
+                    ses_config = ses_pool.get_next()
+                    result = send_email_ses(ses_config, from_name, recipient, subject, html_body)
                 
-                if send_result and send_result['success']:
-                    results['sent'] += 1
+                elif method == 'ec2' and ec2_pool:
+                    ec2_config = ec2_pool.get_next()
+                    ec2_url = ec2_config.get('url')
+                    email = from_email or 'noreply@yourdomain.com'
+                    result = send_email_ec2(ec2_url, from_name, email, recipient, subject, html_body)
+                
                 else:
-                    results['failed'] += 1
-                    error_msg = send_result.get('error', 'Unknown error') if send_result else 'No result'
-                    results['errors'].append({'email': email, 'error': error_msg})
+                    result = {'success': False, 'error': f'No {method} accounts configured'}
                 
-                if idx < len(recipients) - 1:
-                    delay_ms = random.randint(min_delay, max_delay)
-                    time.sleep(delay_ms / 1000.0)
+                if result['success']:
+                    success_count += 1
+                    results.append({'email': recipient, 'status': 'sent'})
+                else:
+                    fail_count += 1
+                    results.append({'email': recipient, 'status': 'failed', 'error': result.get('error', 'Unknown')})
+                
+                # Random delay between emails (except for last one)
+                if index < len(rows) - 1:
+                    delay = random.randint(min_delay, max_delay) / 1000.0
+                    time.sleep(delay)
+            
+            response_data = {
+                'success': True,
+                'message': f'Bulk send completed: {success_count} sent, {fail_count} failed',
+                'total': len(rows),
+                'success_count': success_count,
+                'fail_count': fail_count,
+                'details': results
+            }
             
             self.send_response(200)
             self.send_header('Content-type', 'application/json')
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
-            self.wfile.write(json.dumps({
-                'success': True,
-                'message': f'Bulk sending completed: {results["sent"]} sent, {results["failed"]} failed',
-                'results': results
-            }).encode())
+            self.wfile.write(json.dumps(response_data).encode())
         
         except Exception as e:
             self.send_response(500)
