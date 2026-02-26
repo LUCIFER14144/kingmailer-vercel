@@ -1,11 +1,11 @@
 /* ── KINGMAILER Web – Frontend JS ────────────────────────────────────────── */
 // ── Tab switching ─────────────────────────────────────────────────────────
-document.querySelectorAll('.tab').forEach(btn => {
+document.querySelectorAll('.tab-btn').forEach(btn => {
   btn.addEventListener('click', () => {
-    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    document.querySelectorAll('.tab-btn').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(p => p.classList.remove('active'));
     btn.classList.add('active');
-    const panel = document.getElementById('tab-' + btn.dataset.tab);
+    const panel = document.getElementById(btn.dataset.tab);
     if (panel) panel.classList.add('active');
   });
 });
