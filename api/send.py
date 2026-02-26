@@ -44,8 +44,6 @@ def replace_template_tags(text, recipient_email=''):
     if not text:
         return text
     
-    print(f'[REPLACE_TAGS] Input text length: {len(text)}, has {{{{: {"{" in text}')
-    
     def gen_random_name():
         first = ['James', 'John', 'Robert', 'Michael', 'William', 'Mary', 'Patricia', 'Jennifer', 'Linda', 'Elizabeth']
         last = ['Smith', 'Johnson', 'Williams', 'Brown', 'Jones', 'Garcia', 'Miller', 'Davis', 'Rodriguez', 'Martinez']
@@ -78,17 +76,10 @@ def replace_template_tags(text, recipient_email=''):
         'email': recipient_email
     }
     
-    original_text = text
     for tag, value in replacements.items():
         # Escape tag name to handle special characters like underscores and digits
         pattern = r'\{\{' + re.escape(tag) + r'\}\}'
-        count_before = len(re.findall(pattern, text, flags=re.IGNORECASE))
         text = re.sub(pattern, str(value), text, flags=re.IGNORECASE)
-        if count_before > 0:
-            print(f'[REPLACE_TAGS] Replaced {count_before}x {{{{{{{{{{tag}}}}}}}}}} with: {value}')
-    
-    if text == original_text:
-        print(f'[REPLACE_TAGS] WARNING: No replacements made!')
     
     return text
 
@@ -279,14 +270,6 @@ class handler(BaseHTTPRequestHandler):
             csv_row = data.get('csv_row', {})
             attachment = data.get('attachment')  # {name, content (base64), type}
             
-            # DEBUG: Log incoming data
-            print(f'\n=== SEND API DEBUG ===')
-            print(f'To: {to_email}')
-            print(f'Subject (original): {subject[:100]}...' if len(subject) > 100 else f'Subject (original): {subject}')
-            print(f'HTML (original): {html_body[:100]}...' if len(html_body) > 100 else f'HTML (original): {html_body}')
-            print(f'Method: {send_method}')
-            print(f'CSV Row: {csv_row}')
-            
             if not to_email:
                 self.send_response(400)
                 self.send_header('Content-type', 'application/json')
@@ -307,11 +290,6 @@ class handler(BaseHTTPRequestHandler):
             # Replace standard template tags
             subject = replace_template_tags(subject, to_email)
             html_body = replace_template_tags(html_body, to_email)
-            
-            # DEBUG: Log after replacement
-            print(f'Subject (after replacement): {subject[:100]}...' if len(subject) > 100 else f'Subject (after replacement): {subject}')
-            print(f'HTML (after replacement): {html_body[:100]}...' if len(html_body) > 100 else f'HTML (after replacement): {html_body}')
-            print(f'======================\n')
             
             # Route to appropriate sending method
             if send_method == 'smtp' or send_method == 'gmail':

@@ -60,8 +60,6 @@ def replace_template_tags(text, row_data, recipient_email=''):
     if not text:
         return text
     
-    print(f'[BULK_REPLACE] Input text length: {len(text)}')
-    
     # First replace CSV column placeholders
     for key, value in row_data.items():
         text = re.sub(r'\{\{' + key + r'\}\}', str(value), text, flags=re.IGNORECASE)
@@ -84,14 +82,10 @@ def replace_template_tags(text, row_data, recipient_email=''):
         'email': recipient_email
     }
     
-    original_text = text
     for tag, value in replacements.items():
         # Escape tag name to handle special characters like underscores and digits
         pattern = r'\{\{' + re.escape(tag) + r'\}\}'
-        count_before = len(re.findall(pattern, text, flags=re.IGNORECASE))
         text = re.sub(pattern, str(value), text, flags=re.IGNORECASE)
-        if count_before > 0:
-            print(f'[BULK_REPLACE] Replaced {count_before}x {{{{{{{{{{tag}}}}}}}}}} with: {value}')
     
     return text
 
