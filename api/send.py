@@ -65,7 +65,7 @@ def replace_template_tags(text, recipient_email=''):
     
     replacements = {
         'random_name': gen_random_name(),
-        'name': gen_random_name(),          # fallback when CSV has no 'name' column
+        'name': gen_random_name(),
         'company': gen_company(),
         'company_name': gen_company(),
         '13_digit': gen_13_digit(),
@@ -81,13 +81,18 @@ def replace_template_tags(text, recipient_email=''):
     
     print(f'[TAG REPLACEMENT] Generated values: {replacements}')
     
+    # Replace each tag (case-insensitive)
     for tag, value in replacements.items():
-        # Escape tag name to handle special characters like underscores and digits
-        pattern = r'\{\{' + re.escape(tag) + r'\}\}'
-        before = text
-        text = re.sub(pattern, str(value), text, flags=re.IGNORECASE)
-        if before != text:
-            print(f'[TAG REPLACEMENT] Replaced {{{{{{tag}}}}}} with {value}')
+        # Try multiple patterns to be extra sure
+        patterns = [
+            f'{{{{{{tag}}}}}',  # Exact match
+            f'{{{{{{tag.upper()}}}}}',  # Uppercase
+            f'{{{{{{tag.lower()}}}}}',  # Lowercase
+        ]
+        for pattern in patterns:
+            if pattern in text:
+                text = text.replace(pattern, str(value))
+                print(f'[TAG REPLACEMENT] Replaced {pattern} with {value}')
     
     print(f'[TAG REPLACEMENT] Output text (first 200 chars): {text[:200]}')
     
