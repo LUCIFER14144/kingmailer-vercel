@@ -60,22 +60,17 @@ def replace_template_tags(text, row_data, recipient_email=''):
     if not text:
         return text
     
-    # First replace CSV column placeholders (case-insensitive)
+    print(f'[BULK_REPLACE] Input text length: {len(text)}')
+    
+    # First replace CSV column placeholders
     for key, value in row_data.items():
-        # Replace with simple string replacement for exact matches
-        patterns = [
-            f'{{{{{{key}}}}}',
-            f'{{{{{{key.upper()}}}}}',
-            f'{{{{{{key.lower()}}}}}',
-        ]
-        for pattern in patterns:
-            if pattern in text:
-                text = text.replace(pattern, str(value))
+        text = re.sub(r'\{\{' + key + r'\}\}', str(value), text, flags=re.IGNORECASE)
+        text = re.sub(r'\{' + key + r'\}', str(value), text, flags=re.IGNORECASE)
     
     # Then replace standard template tags (generate fresh for each email)
     replacements = {
         'random_name': gen_random_name(),
-        'name': gen_random_name(),
+        'name': gen_random_name(),          # fallback when CSV has no 'name' column
         'company': gen_company(),
         'company_name': gen_company(),
         '13_digit': gen_13_digit(),
@@ -89,16 +84,14 @@ def replace_template_tags(text, row_data, recipient_email=''):
         'email': recipient_email
     }
     
-    # Replace each tag (case-insensitive)
+    original_text = text
     for tag, value in replacements.items():
-        patterns = [
-            f'{{{{{{tag}}}}}',
-            f'{{{{{{tag.upper()}}}}}',
-            f'{{{{{{tag.lower()}}}}}',
-        ]
-        for pattern in patterns:
-            if pattern in text:
-                text = text.replace(pattern, str(value))
+        # Escape tag name to handle special characters like underscores and digits
+        pattern = r'\{\{' + re.escape(tag) + r'\}\}'
+        count_before = len(re.findall(pattern, text, flags=re.IGNORECASE))
+        text = re.sub(pattern, str(value), text, flags=re.IGNORECASE)
+        if count_before > 0:
+            print(f'[BULK_REPLACE] Replaced {count_before}x {{{{{{{{{{tag}}}}}}}}}} with: {value}')
     
     return text
 
