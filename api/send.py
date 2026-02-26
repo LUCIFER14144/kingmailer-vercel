@@ -225,43 +225,25 @@ class handler(BaseHTTPRequestHandler):
                 result = send_via_ses(aws_config, from_name, to_email, subject, html_body)
             
             elif send_method == 'ec2':
-                # EC2 Relay Mode (JetMailer Style) - Route SMTP through EC2 IP
-                # Requires SMTP config to authenticate via Gmail/Outlook
+                # EC2 Relay - Route email through EC2 IP on port 3000
                 ec2_instance = data.get('ec2_instance')
-                smtp_config = data.get('smtp_config')
-                
-                if not smtp_config:
-                    self.send_response(400)
-                    self.send_header('Content-type', 'application/json')
-                    self.send_header('Access-Control-Allow-Origin', '*')
-                    self.end_headers()
-                    self.wfile.write(json.dumps({'success': False, 'error': 'EC2 relay requires SMTP config (like JetMailer)'}).encode())
-                    return
+                smtp_config = data.get('smtp_config')  # Optional - used if provided
                 
                 if ec2_instance and isinstance(ec2_instance, dict):
                     ec2_ip = ec2_instance.get('public_ip')
-                    if ec2_ip and ec2_ip != 'N/A':
-                        # Use EC2 relay endpoint with SMTP auth
-                        ec2_url = f'http://{ec2_ip}:8080/relay'
+                    if ec2_ip and ec2_ip not in ('N/A', 'Pending...'):
+                        ec2_url = f'http://{ec2_ip}:3000/relay'
                         result = send_via_ec2(ec2_url, smtp_config, from_name, to_email, subject, html_body)
+                        if result['success']:
+                            result['message'] = f'Email sent via EC2 IP {ec2_ip} to {to_email}'
                     else:
-                        self.send_response(400)
-                        self.send_header('Content-type', 'application/json')
-                        self.send_header('Access-Control-Allow-Origin', '*')
-                        self.end_headers()
-                        self.wfile.write(json.dumps({'success': False, 'error': 'EC2 instance has no public IP'}).encode())
-                        return
+                        result = {'success': False, 'error': 'EC2 instance has no public IP yet'}
                 else:
-                    # Fallback to direct URL if provided
                     ec2_url = data.get('ec2_url')
                     if not ec2_url:
-                        self.send_response(400)
-                        self.send_header('Content-type', 'application/json')
-                        self.send_header('Access-Control-Allow-Origin', '*')
-                        self.end_headers()
-                        self.wfile.write(json.dumps({'success': False, 'error': 'EC2 relay URL required or instance not ready'}).encode())
-                        return
-                    result = send_via_ec2(ec2_url, smtp_config, from_name, to_email, subject, html_body)
+                        result = {'success': False, 'error': 'No EC2 instance selected or instance not ready'}
+                    else:
+                        result = send_via_ec2(ec2_url, smtp_config, from_name, to_email, subject, html_body)
             
             else:
                 result = {'success': False, 'error': f'Unknown send method: {send_method}'}

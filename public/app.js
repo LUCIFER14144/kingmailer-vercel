@@ -780,10 +780,15 @@ async function sendSingleEmail() {
         // Get first running instance
         const runningInstance = ec2Instances.find(i => i.state === 'running');
         if (!runningInstance) {
-            showResult('singleResult', 'No running EC2 instances available', 'error');
+            const pending = ec2Instances.filter(i => i.state === 'pending').length;
+            showResult('singleResult', pending > 0 ? `⏳ EC2 instance still initializing. Wait 3-5 minutes.` : '❌ No running EC2 instances', 'error');
             return;
         }
         config.ec2_instance = runningInstance;
+        // Auto-include SMTP accounts so EC2 relay can authenticate and send from EC2 IP
+        if (smtpAccounts.length > 0) {
+            config.smtp_config = smtpAccounts[0];
+        }
     }
     
     showResult('singleResult', '🔄 Sending email...', 'info');
