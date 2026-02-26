@@ -217,7 +217,7 @@ async function addSmtpAccount() {
             // Clear form
             document.getElementById('smtpUser').value = '';
             document.getElementById('smtpPass').value = '';
-            document.getElementById('smtpSenderName').value = 'KINGMAILER';
+            document.getElementById('smtpSenderName').value = '';
             document.getElementById('smtpLabel').value = '';
         } else {
             showResult('smtpResult', `❌ ${data.error}`, 'error');

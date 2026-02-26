@@ -5,6 +5,7 @@ Verifies if EC2 instances have email relay server running
 
 import json
 import urllib.request
+import urllib.error
 from http.server import BaseHTTPRequestHandler
 
 
@@ -48,7 +49,7 @@ class handler(BaseHTTPRequestHandler):
                 health_url = f'http://{public_ip}:8080/health'
                 try:
                     req = urllib.request.Request(health_url, method='GET')
-                    with urllib.request.urlopen(req, timeout=5) as response:
+                    with urllib.request.urlopen(req, timeout=15) as response:
                         health_data = json.loads(response.read().decode('utf-8'))
                         
                         results.append({
@@ -61,13 +62,17 @@ class handler(BaseHTTPRequestHandler):
                             'timestamp': health_data.get('timestamp')
                         })
                 except urllib.error.URLError as e:
+                    error_msg = str(e)
+                    help_text = 'Check: 1) Wait 10-15 min after creation for setup to complete, 2) Verify security group allows port 8080, 3) SSH and check: systemctl status email-relay, netstat -tlnp | grep 8080'
+                    
                     results.append({
                         'instance_id': instance_id,
                         'public_ip': public_ip,
                         'status': 'unreachable',
                         'healthy': False,
-                        'message': f'Cannot reach relay server: {str(e)}',
-                        'help': 'Instance may still be initializing (wait 5-10 min) or relay service failed to start'
+                        'message': f'Cannot reach relay server - Connection failed',
+                        'error_detail': error_msg,
+                        'help': help_text
                     })
                 except Exception as e:
                     results.append({

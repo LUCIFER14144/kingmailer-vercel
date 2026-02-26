@@ -15,6 +15,7 @@ import time
 import random
 import re
 import urllib.request
+import urllib.error
 from datetime import datetime
 import string
 
@@ -160,9 +161,15 @@ def send_email_ec2(ec2_url, from_name, from_email, recipient, subject, html_body
         req.add_header('Content-Type', 'application/json')
         
         with urllib.request.urlopen(req, timeout=30) as response:
-            return {'success': True}
+            resp_data = json.loads(response.read().decode('utf-8'))
+            return {'success': True, 'response': resp_data}
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode('utf-8') if e.fp else str(e)
+        return {'success': False, 'error': f'HTTP {e.code}: {error_body}'}
+    except urllib.error.URLError as e:
+        return {'success': False, 'error': f'Connection failed: {str(e.reason)}'}
     except Exception as e:
-        return {'success': False, 'error': str(e)}
+        return {'success': False, 'error': f'Unexpected error: {str(e)}'}
 
 
 class SMTPPool:
@@ -271,9 +278,13 @@ class handler(BaseHTTPRequestHandler):
                         if ec2_ip and ec2_ip != 'N/A':
                             # Send via EC2 relay endpoint (emails will come from EC2 IP)
                             email = from_email or 'noreply@relay.local'
-                            result = send_email_ec2(f'http://{ec2_ip}:8080/relay', from_name, email, recipient, subject, html_body)
+                            relay_url = f'http://{ec2_ip}:8080/relay'
+                            result = send_email_ec2(relay_url, from_name, email, recipient, subject, html_body)
                             if result['success']:
                                 result['via_ec2_ip'] = ec2_ip
+                            else:
+                                # Add more context to EC2 relay errors
+                                result['error'] = f"EC2 relay failed ({ec2_ip}): {result.get('error', 'Unknown error')}"
                         else:
                             result = {'success': False, 'error': f'EC2 instance {ec2_instance.get("instance_id")} has no public IP'}
                     else:
