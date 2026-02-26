@@ -16,6 +16,17 @@ let bulkStopped = false;
 let singleAttachmentData = null;
 let bulkAttachmentData = null;
 
+// Subject pools (multiple subjects → randomly picked per email)
+let singleSubjectPool = [];
+let bulkSubjectPool = [];
+
+// Body pool for bulk sending (multiple .html files → randomly picked per email)
+let bodyPool = []; // [{id, name, content}]
+let _bodyPoolNextId = 0;
+
+// HTML file converter data (separate from body pool / attachment)
+const htmlConverterData = { single: null, bulk: null };
+
 // Utility: sleep
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
@@ -1025,7 +1036,11 @@ async function sendBulkEmails() {
     let sent = 0;
     let failed = 0;
     let rotateIdx = 0;
-    
+
+    // Use pools if populated, else fall back to field values
+    const _useSubjectPool = bulkSubjectPool.length > 0;
+    const _useBodyPool = bodyPool.length > 0;
+
     for (let i = 0; i < rows.length; i++) {
         // Stop check
         if (bulkStopped) break;
@@ -1040,10 +1055,19 @@ async function sendBulkEmails() {
         const toEmail = row['email'];
         
         // Build payload for this email
+        // Pick subject: random from pool, or the field value (server resolves spintax per-email)
+        const _pickSubject = _useSubjectPool
+            ? bulkSubjectPool[Math.floor(Math.random() * bulkSubjectPool.length)]
+            : subject;
+        // Pick body: random from pool, or the field value
+        const _pickHtml = _useBodyPool
+            ? bodyPool[Math.floor(Math.random() * bodyPool.length)].content
+            : html;
+
         const emailPayload = {
             to: toEmail,
-            subject: subject,
-            html: html,
+            subject: _pickSubject,
+            html: _pickHtml,
             method: method,
             csv_row: row
         };
@@ -1445,6 +1469,280 @@ function renderAllLibraries() {
     renderLibraryList('bodies',   'singleBodyList',    'singleHtml');
     renderLibraryList('subjects', 'bulkSubjectList',   'bulkSubject');
     renderLibraryList('bodies',   'bulkBodyList',      'bulkHtml');
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ── SUBJECT POOL  (multiple subjects → random pick per email) ────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+
+function addSubjectToPool(context) {
+    const fieldId = context === 'single' ? 'singleSubject' : 'bulkSubject';
+    const field = document.getElementById(fieldId);
+    if (!field || !field.value.trim()) { alert('Subject field is empty'); return; }
+    // Support pasting multiple lines at once
+    const lines = field.value.trim().split('\n').map(l => l.trim()).filter(l => l);
+    const pool = context === 'single' ? singleSubjectPool : bulkSubjectPool;
+    lines.forEach(line => { if (!pool.includes(line)) pool.push(line); });
+    renderSubjectPool(context);
+}
+
+function loadSubjectPoolFile(context, event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        const lines = e.target.result.trim().split('\n').map(l => l.trim()).filter(l => l);
+        const pool = context === 'single' ? singleSubjectPool : bulkSubjectPool;
+        lines.forEach(line => { if (!pool.includes(line)) pool.push(line); });
+        renderSubjectPool(context);
+    };
+    reader.readAsText(file);
+    event.target.value = '';
+}
+
+function renderSubjectPool(context) {
+    const poolEl = document.getElementById(context + 'SubjectPool');
+    const countEl = document.getElementById(context + 'SubjectCount');
+    const pool = context === 'single' ? singleSubjectPool : bulkSubjectPool;
+    if (countEl) countEl.textContent = pool.length;
+    if (!poolEl) return;
+    if (!pool.length) {
+        poolEl.innerHTML = '<div class="library-empty">Add a subject or browse .txt file (one per line) — randomly picked per email</div>';
+        return;
+    }
+    poolEl.innerHTML = pool.map((s, i) => `
+        <div class="library-item">
+            <span class="library-item-text" title="${escHtml(s)}">${escHtml(s.slice(0, 90))}${s.length > 90 ? '…' : ''}</span>
+            <button class="library-item-del" onclick="removeSubjectFromPool('${context}',${i})">✕</button>
+        </div>`).join('');
+}
+
+function removeSubjectFromPool(context, idx) {
+    const pool = context === 'single' ? singleSubjectPool : bulkSubjectPool;
+    pool.splice(idx, 1);
+    renderSubjectPool(context);
+}
+
+function clearSubjectPool(context) {
+    if (context === 'single') singleSubjectPool = [];
+    else bulkSubjectPool = [];
+    renderSubjectPool(context);
+}
+
+// 10 spam-free subject templates with spintax + placeholders
+const SPAM_FREE_SUBJECTS = [
+    '{Hi|Hello|Hey} {{name}}, Your {Exclusive|Special|VIP} {Offer|Deal|Invitation} is Ready',
+    '{Important|Urgent|Action Required}: Account Update — {{unique_id}}',
+    'Your {Order|Invoice|Receipt} #{{13_digit}} from {{company}} is {Confirmed|Ready|Processed}',
+    '{Congratulations|Great News|You\'re Selected} — {Claim|Unlock|Access} Your {Reward|Gift|Bonus}',
+    '{Don\'t Miss|Last Chance|Limited Time}: {Save 20%|Get 30% Off|Exclusive Discount} {Today|This Week|Ending Soon}',
+    '{New|Latest|Exclusive} {Opportunity|Product|Service} Available at {{company}}',
+    '{{random_name}} wants to {connect|collaborate|partner} with you — {{date}}',
+    '{Monthly|Weekly|Quarterly} {Report|Summary|Newsletter} — {{company}} — {{date}}',
+    '{Re:|Fwd:|Follow-up:} {Your Request|Our Conversation|Your Inquiry} #{{random_6}}',
+    '{Reminder|Notice|Alert}: {Meeting|Appointment|Discussion} {Today|Tomorrow|Scheduled} at {{time}}'
+];
+
+function loadSpamFreeSubjectTemplates(context) {
+    const pool = context === 'single' ? singleSubjectPool : bulkSubjectPool;
+    SPAM_FREE_SUBJECTS.forEach(s => { if (!pool.includes(s)) pool.push(s); });
+    renderSubjectPool(context);
+    // Also set first template in the field
+    const fieldId = context === 'single' ? 'singleSubject' : 'bulkSubject';
+    const field = document.getElementById(fieldId);
+    if (field && !field.value.trim()) field.value = SPAM_FREE_SUBJECTS[0];
+    alert('✅ Loaded 10 spam-free subject templates into the pool!\nThey will be randomly rotated during sending.');
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ── BODY POOL  (multiple HTML files → random pick per email, bulk only) ──────
+// ══════════════════════════════════════════════════════════════════════════════
+
+function loadBodyFiles(event) {
+    const files = Array.from(event.target.files);
+    if (!files.length) return;
+    let loaded = 0;
+    files.forEach(file => {
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            bodyPool.push({ id: _bodyPoolNextId++, name: file.name, content: e.target.result });
+            loaded++;
+            if (loaded === files.length) renderBodyPool();
+        };
+        reader.readAsText(file);
+    });
+    event.target.value = '';
+}
+
+function renderBodyPool() {
+    const poolEl = document.getElementById('bodyPoolList');
+    const countEl = document.getElementById('bodyPoolCount');
+    if (countEl) countEl.textContent = bodyPool.length;
+    if (!poolEl) return;
+    if (!bodyPool.length) {
+        poolEl.innerHTML = '<div class="library-empty">Browse HTML files — one will be randomly picked per email during bulk send</div>';
+        return;
+    }
+    poolEl.innerHTML = bodyPool.map(b => `
+        <div class="library-item">
+            <span class="library-item-text">📄 ${escHtml(b.name)} <small style="color:#888;">(${Math.round(b.content.length/1024*10)/10} KB)</small></span>
+            <button class="btn-xs" style="font-size:10px;background:#667eea;color:#fff;border:none;border-radius:3px;padding:2px 6px;cursor:pointer;margin-right:4px;" onclick="useBodyFromPool(${b.id})">Use</button>
+            <button class="library-item-del" onclick="removeBodyFile(${b.id})">✕</button>
+        </div>`).join('');
+}
+
+function removeBodyFile(id) {
+    bodyPool = bodyPool.filter(b => b.id !== id);
+    renderBodyPool();
+}
+
+function clearBodyPool() {
+    bodyPool = [];
+    renderBodyPool();
+}
+
+function useBodyFromPool(id) {
+    const item = bodyPool.find(b => b.id === id);
+    if (!item) return;
+    const field = document.getElementById('bulkHtml');
+    if (field) { field.value = item.content; alert(`✅ "${item.name}" loaded into the HTML body field.`); }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ── SPAM-FREE HTML BODY TEMPLATE ─────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+
+const SAMPLE_HTML_TEMPLATE = `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;background:#f9f9f9;">
+  <div style="background:#fff;padding:30px;border-radius:8px;border:1px solid #e0e0e0;">
+    <h2 style="color:#333;margin-top:0;">{Exclusive Offer|Special Deal|Premium Opportunity} Just for You</h2>
+    <p style="color:#555;line-height:1.6;">{Hi|Hello|Dear} {{name}},</p>
+    <p style="color:#555;line-height:1.6;">
+      {We are thrilled to|We're excited to|We'd like to} {inform|notify|let you know} that <strong>{{company}}</strong>
+      has a {special|exclusive|limited} {offer|deal|opportunity} available {just for you|today|this week}.
+    </p>
+    <div style="background:#f0f4ff;padding:15px;border-radius:6px;margin:20px 0;border-left:4px solid #667eea;">
+      <strong>Reference ID:</strong> {{13_digit}}<br>
+      <strong>Date:</strong> {{date}}<br>
+      <strong>Valid Until:</strong> {48 hours|72 hours|End of this week|This month only}
+    </div>
+    <p style="color:#555;line-height:1.6;">
+      {To take advantage of|To claim|To access} this {offer|opportunity|deal},
+      {simply reply to this email|reach out to our team|contact us today}.
+    </p>
+    <a href="#" style="display:inline-block;background:#667eea;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:bold;">
+      {Get Started|Claim Now|Learn More|Take Action}
+    </a>
+    <p style="color:#888;font-size:12px;margin-top:30px;">
+      {Best regards|Warm regards|Sincerely},<br>
+      <strong>{{random_name}}</strong><br>
+      {{company}}<br>
+      <small>Ref: {{unique_id}} | {{date}}</small>
+    </p>
+  </div>
+</div>`;
+
+function loadSampleHtmlTemplate(fieldId) {
+    const field = document.getElementById(fieldId);
+    if (!field) return;
+    if (field.value.trim() && !confirm('Replace current body with the sample template?')) return;
+    field.value = SAMPLE_HTML_TEMPLATE;
+    alert('✅ Sample template loaded!\nIt uses spintax {A|B|C} and placeholders {{name}}, {{company}}, {{date}}, etc.\nCustomize it as needed.');
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ── HTML FILE CONVERTER (browse any .html → download in 12 formats) ──────────
+// ══════════════════════════════════════════════════════════════════════════════
+
+function loadHtmlConverterFile(context, event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        htmlConverterData[context] = { name: file.name, content: e.target.result };
+        const nameEl = document.getElementById(context + 'ConverterFileName');
+        const clearBtn = document.getElementById(context + 'ConverterClear');
+        const barEl = document.getElementById(context + 'ConverterBar');
+        if (nameEl) nameEl.textContent = '📄 ' + file.name;
+        if (clearBtn) clearBtn.style.display = 'inline-block';
+        if (barEl) barEl.style.display = 'flex';
+    };
+    reader.readAsText(file);
+    event.target.value = '';
+}
+
+function clearConverterFile(context) {
+    htmlConverterData[context] = null;
+    const nameEl = document.getElementById(context + 'ConverterFileName');
+    const clearBtn = document.getElementById(context + 'ConverterClear');
+    const barEl = document.getElementById(context + 'ConverterBar');
+    const statusEl = document.getElementById('exportStatus_' + context + 'Converter');
+    if (nameEl) nameEl.textContent = '';
+    if (clearBtn) clearBtn.style.display = 'none';
+    if (barEl) barEl.style.display = 'none';
+    if (statusEl) { statusEl.textContent = ''; statusEl.style.display = 'none'; }
+}
+
+async function exportHtmlFile(context, format) {
+    const data = htmlConverterData[context];
+    if (!data) { alert('Please browse an HTML file first.'); return; }
+    // Reuse the existing exportBodyContent logic but with the converter file's content
+    // Temporarily swap the field value, call export, then restore
+    const statusId = 'exportStatus_' + context + 'Converter';
+    const status = document.getElementById(statusId);
+    function setStatus(msg) {
+        if (status) { status.textContent = msg; status.style.display = msg ? 'block' : 'none'; }
+    }
+    function triggerDownload(blob, filename) {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a'); a.href = url; a.download = filename; a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+    const html = data.content;
+    const baseName = data.name.replace(/\.(html|htm)$/i, '');
+    setStatus('Converting…');
+    try {
+        if (format === 'txt') {
+            triggerDownload(new Blob([htmlToPlainText(html)], {type:'text/plain'}), baseName + '.txt');
+        } else if (format === 'md') {
+            triggerDownload(new Blob([htmlToMarkdown(html)], {type:'text/markdown'}), baseName + '.md');
+        } else if (format === 'rtf') {
+            triggerDownload(new Blob([htmlToRtf(html)], {type:'application/rtf'}), baseName + '.rtf');
+        } else if (format === 'docx') {
+            const wordHtml = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><meta name=ProgId content=Word.Document></head><body>${html}</body></html>`;
+            triggerDownload(new Blob([wordHtml], {type:'application/vnd.ms-word'}), baseName + '.doc');
+        } else if (format === 'xlsx') {
+            if (window.XLSX) {
+                const doc = new DOMParser().parseFromString(html, 'text/html');
+                const tables = doc.querySelectorAll('table');
+                const wb = XLSX.utils.book_new();
+                if (tables.length) {
+                    tables.forEach((tbl, ti) => XLSX.utils.book_append_sheet(wb, XLSX.utils.table_to_sheet(tbl), `Sheet${ti+1}`));
+                } else {
+                    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(htmlToPlainText(html).split('\n').map(l => [l])), 'Content');
+                }
+                triggerDownload(new Blob([XLSX.write(wb,{bookType:'xlsx',type:'array'})], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}), baseName + '.xlsx');
+            } else { setStatus('❌ SheetJS not loaded'); return; }
+        } else if (format === 'pptx') {
+            if (typeof PptxGenJS !== 'undefined') {
+                const pptx = new PptxGenJS();
+                const paras = htmlToPlainText(html).split('\n\n').filter(p=>p.trim()).slice(0,20);
+                (paras.length ? paras : [htmlToPlainText(html)]).forEach(para => {
+                    const slide = pptx.addSlide();
+                    slide.addText(para.slice(0,500), {x:0.5,y:0.5,w:9,h:5,fontSize:16,wrap:true});
+                });
+                const buf = await pptx.stream();
+                triggerDownload(new Blob([buf], {type:'application/vnd.openxmlformats-officedocument.presentationml.presentation'}), baseName + '.pptx');
+            } else { setStatus('❌ PptxGenJS not loaded'); return; }
+        } else if (format === 'pdf') {
+            await _exportViaCanvas(html, 'pdf', baseName + '.pdf', setStatus, triggerDownload); return;
+        } else if (['png','jpeg','gif','webp','tiff'].includes(format)) {
+            await _exportViaCanvas(html, format, baseName + '.' + format, setStatus, triggerDownload); return;
+        }
+        setStatus('✓ Downloaded ' + baseName + '.' + format);
+        setTimeout(() => setStatus(''), 4000);
+    } catch (err) {
+        setStatus('❌ ' + err.message);
+    }
 }
 
 // ── Client-side HTML conversion helpers ───────────────────────────────────

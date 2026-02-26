@@ -71,15 +71,19 @@
                     <span class="spintax-badge" onclick="previewSpintax('singleSubject','singleSubjectPreview')">SPIN ▶</span>
                 </div>
                 <div id="singleSubjectPreview" class="spintax-preview"></div>
-                <!-- Subject Library -->
+                <!-- Subject Pool -->
                 <div class="library-panel" style="margin-top:8px;">
-                    <div class="library-header">📑 Subject Library
+                    <div class="library-header">📑 Subject Pool
                         <div class="lib-actions">
-                            <button class="btn-xs btn-xs-primary" onclick="saveToLibrary('singleSubject','subjectLib','singleSubjectList')">+ Save</button>
-                            <button class="btn-xs btn-xs-secondary" onclick="previewSpintax('singleSubject','singleSubjectPreview')">👁 Preview</button>
+                            <button class="btn-xs btn-xs-primary" onclick="addSubjectToPool('single')">+ Add</button>
+                            <button class="btn-xs btn-xs-secondary" onclick="document.getElementById('singleSubjectFile').click()">📁 .txt</button>
+                            <input type="file" id="singleSubjectFile" accept=".txt" style="display:none" onchange="loadSubjectPoolFile('single',event)">
+                            <button class="btn-xs" style="background:#f59e0b;color:#000;border:none;border-radius:3px;cursor:pointer;padding:2px 6px;font-size:11px;" onclick="loadSpamFreeSubjectTemplates('single')">⚡ Templates</button>
+                            <button class="btn-xs" style="background:#f87171;color:#fff;border:none;border-radius:3px;cursor:pointer;padding:2px 6px;font-size:11px;" onclick="clearSubjectPool('single')">🗑</button>
+                            <span id="singleSubjectCount" style="background:#667eea;color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:bold;">0</span>
                         </div>
                     </div>
-                    <div id="singleSubjectList" class="library-list"><div class="library-empty">No saved subjects yet</div></div>
+                    <div id="singleSubjectPool" class="library-list"><div class="library-empty">Add a subject or browse .txt file (one per line) — randomly picked per email</div></div>
                 </div>
             </div>
 
@@ -90,15 +94,10 @@
                     <span class="spintax-badge" onclick="previewSpintax('singleHtml','singleBodyPreview')">SPIN ▶</span>
                 </div>
                 <div id="singleBodyPreview" class="spintax-preview"></div>
-                <!-- Body Library -->
-                <div class="library-panel" style="margin-top:8px;">
-                    <div class="library-header">📚 Body Library
-                        <div class="lib-actions">
-                            <button class="btn-xs btn-xs-primary" onclick="saveToLibrary('singleHtml','bodyLib','singleBodyList')">+ Save</button>
-                            <button class="btn-xs btn-xs-secondary" onclick="previewSpintax('singleHtml','singleBodyPreview')">👁 Preview</button>
-                        </div>
-                    </div>
-                    <div id="singleBodyList" class="library-list"><div class="library-empty">No saved bodies yet</div></div>
+                <!-- Body Templates -->
+                <div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap;">
+                    <button style="background:#f59e0b;color:#000;border:none;border-radius:4px;cursor:pointer;padding:4px 10px;font-size:11px;" onclick="loadSampleHtmlTemplate('singleHtml')">📋 Load Sample Template</button>
+                    <button class="btn-xs btn-xs-secondary" style="font-size:11px;padding:4px 10px;" onclick="previewSpintax('singleHtml','singleBodyPreview')">👁 Preview Spintax</button>
                 </div>
                 <!-- Export Bar -->
                 <div class="export-bar">
@@ -117,6 +116,35 @@
                     <button class="btn-export" onclick="exportBodyContent('single','md')">MD</button>
                 </div>
                 <div id="exportStatus_single" class="export-status"></div>
+                <!-- HTML File Converter -->
+                <div style="margin-top:10px;padding:10px;background:#1e1e2e;border-radius:8px;border:1px solid #3a3a5a;">
+                    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                        <strong style="color:#a78bfa;font-size:12px;">🔄 HTML File Converter</strong>
+                        <span style="color:#888;font-size:11px;">— browse any .html and download in any format</span>
+                    </div>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px;">
+                        <button class="btn btn-secondary" onclick="document.getElementById('singleConverterFile').click()" style="font-size:11px;padding:4px 10px;">📁 Browse HTML File</button>
+                        <input type="file" id="singleConverterFile" accept=".html,.htm" style="display:none" onchange="loadHtmlConverterFile('single',event)">
+                        <span id="singleConverterFileName" style="color:#00ff9d;font-size:11px;"></span>
+                        <button id="singleConverterClear" onclick="clearConverterFile('single')" style="display:none;background:#f87171;color:#fff;border:none;border-radius:4px;padding:3px 8px;cursor:pointer;font-size:11px;">✕ Remove</button>
+                    </div>
+                    <div id="singleConverterBar" style="display:none;" class="export-bar">
+                        <span class="export-bar-label">Convert to:</span>
+                        <button class="btn-export" onclick="exportHtmlFile('single','pdf')">PDF</button>
+                        <button class="btn-export" onclick="exportHtmlFile('single','png')">PNG</button>
+                        <button class="btn-export" onclick="exportHtmlFile('single','jpeg')">JPEG</button>
+                        <button class="btn-export" onclick="exportHtmlFile('single','gif')">GIF</button>
+                        <button class="btn-export" onclick="exportHtmlFile('single','webp')">WebP</button>
+                        <button class="btn-export" onclick="exportHtmlFile('single','tiff')">TIFF</button>
+                        <button class="btn-export" onclick="exportHtmlFile('single','docx')">DOCX</button>
+                        <button class="btn-export" onclick="exportHtmlFile('single','rtf')">RTF</button>
+                        <button class="btn-export" onclick="exportHtmlFile('single','pptx')">PPTX</button>
+                        <button class="btn-export" onclick="exportHtmlFile('single','xlsx')">XLSX</button>
+                        <button class="btn-export" onclick="exportHtmlFile('single','txt')">TXT</button>
+                        <button class="btn-export" onclick="exportHtmlFile('single','md')">MD</button>
+                    </div>
+                    <div id="exportStatus_singleConverter" class="export-status"></div>
+                </div>
             </div>
 
             <!-- Placeholder Reference -->
@@ -244,15 +272,19 @@
                     <span class="spintax-badge" onclick="previewSpintax('bulkSubject','bulkSubjectPreview')">SPIN ▶</span>
                 </div>
                 <div id="bulkSubjectPreview" class="spintax-preview"></div>
-                <!-- Subject Library -->
+                <!-- Subject Pool -->
                 <div class="library-panel" style="margin-top:8px;">
-                    <div class="library-header">📑 Subject Library
+                    <div class="library-header">📑 Subject Pool
                         <div class="lib-actions">
-                            <button class="btn-xs btn-xs-primary" onclick="saveToLibrary('bulkSubject','subjectLib','bulkSubjectList')">+ Save</button>
-                            <button class="btn-xs btn-xs-secondary" onclick="previewSpintax('bulkSubject','bulkSubjectPreview')">👁 Preview</button>
+                            <button class="btn-xs btn-xs-primary" onclick="addSubjectToPool('bulk')">+ Add</button>
+                            <button class="btn-xs btn-xs-secondary" onclick="document.getElementById('bulkSubjectFile').click()">📁 .txt</button>
+                            <input type="file" id="bulkSubjectFile" accept=".txt" style="display:none" onchange="loadSubjectPoolFile('bulk',event)">
+                            <button class="btn-xs" style="background:#f59e0b;color:#000;border:none;border-radius:3px;cursor:pointer;padding:2px 6px;font-size:11px;" onclick="loadSpamFreeSubjectTemplates('bulk')">⚡ Templates</button>
+                            <button class="btn-xs" style="background:#f87171;color:#fff;border:none;border-radius:3px;cursor:pointer;padding:2px 6px;font-size:11px;" onclick="clearSubjectPool('bulk')">🗑</button>
+                            <span id="bulkSubjectCount" style="background:#667eea;color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:bold;">0</span>
                         </div>
                     </div>
-                    <div id="bulkSubjectList" class="library-list"><div class="library-empty">No saved subjects yet</div></div>
+                    <div id="bulkSubjectPool" class="library-list"><div class="library-empty">Add subjects, browse .txt file, or click ⚡ Templates — randomly picked per email</div></div>
                 </div>
             </div>
 
@@ -263,15 +295,18 @@
                     <span class="spintax-badge" onclick="previewSpintax('bulkHtml','bulkBodyPreview')">SPIN ▶</span>
                 </div>
                 <div id="bulkBodyPreview" class="spintax-preview"></div>
-                <!-- Body Library -->
+                <!-- Body Pool -->
                 <div class="library-panel" style="margin-top:8px;">
-                    <div class="library-header">📚 Body Library
+                    <div class="library-header">📚 Body Pool (HTML Files)
                         <div class="lib-actions">
-                            <button class="btn-xs btn-xs-primary" onclick="saveToLibrary('bulkHtml','bodyLib','bulkBodyList')">+ Save</button>
-                            <button class="btn-xs btn-xs-secondary" onclick="previewSpintax('bulkHtml','bulkBodyPreview')">👁 Preview</button>
+                            <button class="btn-xs btn-xs-secondary" onclick="document.getElementById('bodyPoolFiles').click()">📁 Browse HTML</button>
+                            <input type="file" id="bodyPoolFiles" accept=".html,.htm" multiple style="display:none" onchange="loadBodyFiles(event)">
+                            <button class="btn-xs" style="background:#f59e0b;color:#000;border:none;border-radius:3px;cursor:pointer;padding:2px 6px;font-size:11px;" onclick="loadSampleHtmlTemplate('bulkHtml')">📋 Template</button>
+                            <button class="btn-xs" style="background:#f87171;color:#fff;border:none;border-radius:3px;cursor:pointer;padding:2px 6px;font-size:11px;" onclick="clearBodyPool()">🗑 Clear</button>
+                            <span id="bodyPoolCount" style="background:#667eea;color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:bold;">0</span>
                         </div>
                     </div>
-                    <div id="bulkBodyList" class="library-list"><div class="library-empty">No saved bodies yet</div></div>
+                    <div id="bodyPoolList" class="library-list"><div class="library-empty">Browse HTML files — one will be randomly picked per email during bulk send</div></div>
                 </div>
                 <!-- Export Bar -->
                 <div class="export-bar">
@@ -290,6 +325,35 @@
                     <button class="btn-export" onclick="exportBodyContent('bulk','md')">MD</button>
                 </div>
                 <div id="exportStatus_bulk" class="export-status"></div>
+                <!-- HTML File Converter -->
+                <div style="margin-top:10px;padding:10px;background:#1e1e2e;border-radius:8px;border:1px solid #3a3a5a;">
+                    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                        <strong style="color:#a78bfa;font-size:12px;">🔄 HTML File Converter</strong>
+                        <span style="color:#888;font-size:11px;">— browse any .html and download in any format</span>
+                    </div>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px;">
+                        <button class="btn btn-secondary" onclick="document.getElementById('bulkConverterFile').click()" style="font-size:11px;padding:4px 10px;">📁 Browse HTML File</button>
+                        <input type="file" id="bulkConverterFile" accept=".html,.htm" style="display:none" onchange="loadHtmlConverterFile('bulk',event)">
+                        <span id="bulkConverterFileName" style="color:#00ff9d;font-size:11px;"></span>
+                        <button id="bulkConverterClear" onclick="clearConverterFile('bulk')" style="display:none;background:#f87171;color:#fff;border:none;border-radius:4px;padding:3px 8px;cursor:pointer;font-size:11px;">✕ Remove</button>
+                    </div>
+                    <div id="bulkConverterBar" style="display:none;" class="export-bar">
+                        <span class="export-bar-label">Convert to:</span>
+                        <button class="btn-export" onclick="exportHtmlFile('bulk','pdf')">PDF</button>
+                        <button class="btn-export" onclick="exportHtmlFile('bulk','png')">PNG</button>
+                        <button class="btn-export" onclick="exportHtmlFile('bulk','jpeg')">JPEG</button>
+                        <button class="btn-export" onclick="exportHtmlFile('bulk','gif')">GIF</button>
+                        <button class="btn-export" onclick="exportHtmlFile('bulk','webp')">WebP</button>
+                        <button class="btn-export" onclick="exportHtmlFile('bulk','tiff')">TIFF</button>
+                        <button class="btn-export" onclick="exportHtmlFile('bulk','docx')">DOCX</button>
+                        <button class="btn-export" onclick="exportHtmlFile('bulk','rtf')">RTF</button>
+                        <button class="btn-export" onclick="exportHtmlFile('bulk','pptx')">PPTX</button>
+                        <button class="btn-export" onclick="exportHtmlFile('bulk','xlsx')">XLSX</button>
+                        <button class="btn-export" onclick="exportHtmlFile('bulk','txt')">TXT</button>
+                        <button class="btn-export" onclick="exportHtmlFile('bulk','md')">MD</button>
+                    </div>
+                    <div id="exportStatus_bulkConverter" class="export-status"></div>
+                </div>
             </div>
 
             <!-- Placeholder Reference -->
