@@ -1,0 +1,327 @@
+/**
+ * KINGMAILER v4.0 - Styling
+ */
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    min-height: 100vh;
+    padding: 20px;
+}
+
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    background: white;
+    border-radius: 15px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+    overflow: hidden;
+}
+
+header {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    padding: 30px;
+    text-align: center;
+}
+
+header h1 {
+    font-size: 2.5em;
+    margin-bottom: 10px;
+}
+
+header p {
+    font-size: 1.1em;
+    opacity: 0.9;
+}
+
+/* Tabs */
+.tabs {
+    display: flex;
+    background: #f5f7fa;
+    border-bottom: 2px solid #e1e8ed;
+    overflow-x: auto;
+}
+
+.tab-btn {
+    flex: 1;
+    padding: 15px 20px;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    font-size: 1em;
+    font-weight: 600;
+    color: #657786;
+    transition: all 0.3s;
+    white-space: nowrap;
+}
+
+.tab-btn:hover {
+    background: #e1e8ed;
+    color: #14171a;
+}
+
+.tab-btn.active {
+    background: white;
+    color: #667eea;
+    border-bottom: 3px solid #667eea;
+}
+
+/* Tab Content */
+.tab-content {
+    display: none;
+    padding: 30px;
+}
+
+.tab-content.active {
+    display: block;
+}
+
+.tab-content h2 {
+    color: #14171a;
+    margin-bottom: 20px;
+    font-size: 1.8em;
+}
+
+.tab-content h3 {
+    color: #14171a;
+    margin-top: 30px;
+    margin-bottom: 15px;
+    font-size: 1.3em;
+}
+
+/* Form Elements */
+.form-group {
+    margin-bottom: 20px;
+}
+
+.form-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: 600;
+    color: #14171a;
+}
+
+.form-group input,
+.form-group textarea,
+.form-group select {
+    width: 100%;
+    padding: 12px;
+    border: 2px solid #e1e8ed;
+    border-radius: 8px;
+    font-size: 1em;
+    font-family: inherit;
+    transition: border-color 0.3s;
+}
+
+.form-group input:focus,
+.form-group textarea:focus,
+.form-group select:focus {
+    outline: none;
+    border-color: #667eea;
+}
+
+.form-group textarea {
+    resize: vertical;
+    min-height: 120px;
+}
+
+.form-group small {
+    display: block;
+    margin-top: 5px;
+    color: #657786;
+    font-size: 0.9em;
+}
+
+.form-group small a {
+    color: #667eea;
+    text-decoration: none;
+}
+
+.form-group small a:hover {
+    text-decoration: underline;
+}
+
+/* Buttons */
+.btn {
+    padding: 12px 30px;
+    border: none;
+    border-radius: 8px;
+    font-size: 1em;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s;
+    margin-right: 10px;
+}
+
+.btn-primary {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+}
+
+.btn-primary:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 10px 20px rgba(102, 126, 234, 0.4);
+}
+
+.btn-secondary {
+    background: #e1e8ed;
+    color: #14171a;
+}
+
+.btn-secondary:hover {
+    background: #d1d8dd;
+}
+
+.btn-danger {
+    background: #e0245e;
+    color: white;
+    padding: 8px 16px;
+    font-size: 0.9em;
+}
+
+.btn-danger:hover {
+    background: #c41e4d;
+}
+
+/* Info/Result Boxes */
+.info-box {
+    background: #e8f5fe;
+    border-left: 4px solid #1da1f2;
+    padding: 15px;
+    margin-bottom: 20px;
+    border-radius: 4px;
+    line-height: 1.6;
+}
+
+.result-box {
+    margin-top: 20px;
+    padding: 15px;
+    border-radius: 8px;
+    line-height: 1.6;
+    display: none;
+}
+
+.result-box.success {
+    background: #d4edda;
+    border: 1px solid #c3e6cb;
+    color: #155724;
+}
+
+.result-box.error {
+    background: #f8d7da;
+    border: 1px solid #f5c6cb;
+    color: #721c24;
+}
+
+.result-box.info {
+    background: #d1ecf1;
+    border: 1px solid #bee5eb;
+    color: #0c5460;
+}
+
+/* Accounts List */
+.accounts-list {
+    margin-top: 20px;
+}
+
+.account-card {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 15px;
+    background: #f5f7fa;
+    border: 1px solid #e1e8ed;
+    border-radius: 8px;
+    margin-bottom: 10px;
+}
+
+.account-info strong {
+    display: block;
+    color: #14171a;
+    margin-bottom: 5px;
+}
+
+.account-info small {
+    color: #657786;
+}
+
+.no-accounts {
+    text-align: center;
+    color: #657786;
+    padding: 20px;
+    font-style: italic;
+}
+
+/* Footer */
+footer {
+    background: #14171a;
+    color: white;
+    text-align: center;
+    padding: 20px;
+    margin-top: 40px;
+}
+
+footer a {
+    color: #667eea;
+    text-decoration: none;
+}
+
+footer a:hover {
+    text-decoration: underline;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    body {
+        padding: 10px;
+    }
+
+    .container {
+        border-radius: 10px;
+    }
+
+    header h1 {
+        font-size: 2em;
+    }
+
+    header p {
+        font-size: 1em;
+    }
+
+    .tab-btn {
+        padding: 12px 15px;
+        font-size: 0.9em;
+    }
+
+    .tab-content {
+        padding: 20px;
+    }
+
+    .form-row {
+        grid-template-columns: 1fr;
+    }
+
+    .account-card {
+        flex-direction: column;
+        gap: 10px;
+        text-align: center;
+    }
+
+    .btn {
+        margin-bottom: 10px;
+        width: 100%;
+    }
+}

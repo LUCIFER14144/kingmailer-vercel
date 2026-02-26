@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KINGMAILER v4.0 - Vercel Edition</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header>
+            <h1>👑 KINGMAILER v4.0</h1>
+            <p>Professional Email Marketing on Vercel - Full SMTP Support!</p>
+        </header>
+
+        <!-- Tabs -->
+        <div class="tabs">
+            <button class="tab-btn active" data-tab="send">Single Email</button>
+            <button class="tab-btn" data-tab="bulk">Bulk Sending</button>
+            <button class="tab-btn" data-tab="smtp">SMTP Config</button>
+            <button class="tab-btn" data-tab="ses">AWS SES</button>
+            <button class="tab-btn" data-tab="ec2">EC2 Relay</button>
+        </div>
+
+        <!-- Tab: Single Email -->
+        <div class="tab-content active" id="send">
+            <h2>📧 Send Single Email</h2>
+            
+            <div class="form-group">
+                <label>To Email:</label>
+                <input type="email" id="singleTo" placeholder="recipient@example.com">
+            </div>
+
+            <div class="form-group">
+                <label>Subject:</label>
+                <input type="text" id="singleSubject" placeholder="Your subject line">
+            </div>
+
+            <div class="form-group">
+                <label>HTML Body:</label>
+                <textarea id="singleHtml" rows="8" placeholder="<h1>Hello!</h1><p>Your HTML content here...</p>"></textarea>
+            </div>
+
+            <div class="form-group">
+                <label>Send Method:</label>
+                <select id="singleMethod">
+                    <option value="smtp">Gmail SMTP (Recommended)</option>
+                    <option value="ses">AWS SES</option>
+                    <option value="ec2">EC2 Relay</option>
+                </select>
+            </div>
+
+            <button class="btn btn-primary" onclick="sendSingleEmail()">Send Email</button>
+            
+            <div id="singleResult" class="result-box"></div>
+        </div>
+
+        <!-- Tab: Bulk Sending -->
+        <div class="tab-content" id="bulk">
+            <h2>📊 Bulk Email Sending</h2>
+            
+            <div class="form-group">
+                <label>CSV Data (must include 'email' column):</label>
+                <textarea id="bulkCsv" rows="8" placeholder="email,name,company&#10;john@example.com,John,ACME Corp&#10;jane@example.com,Jane,Tech Inc"></textarea>
+                <small>Columns can be used in templates: {{email}}, {{name}}, {{company}}, etc.</small>
+            </div>
+
+            <div class="form-group">
+                <label>Subject Template:</label>
+                <input type="text" id="bulkSubject" placeholder="Hello {{name}}! Offer from {{company}}">
+            </div>
+
+            <div class="form-group">
+                <label>HTML Template:</label>
+                <textarea id="bulkHtml" rows="8" placeholder="<h1>Hi {{name}}!</h1><p>We at {{company}} have an exciting offer...</p>"></textarea>
+            </div>
+
+            <div class="form-group">
+                <label>Send Method:</label>
+                <select id="bulkMethod">
+                    <option value="smtp">Gmail SMTP (With Rotation)</option>
+                    <option value="ses">AWS SES</option>
+                </select>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Min Delay (ms):</label>
+                    <input type="number" id="bulkMinDelay" value="2000" min="1000">
+                </div>
+                <div class="form-group">
+                    <label>Max Delay (ms):</label>
+                    <input type="number" id="bulkMaxDelay" value="5000" min="1000">
+                </div>
+            </div>
+
+            <button class="btn btn-primary" onclick="sendBulkEmails()">Start Bulk Sending</button>
+            
+            <div id="bulkResult" class="result-box"></div>
+        </div>
+
+        <!-- Tab: SMTP Config -->
+        <div class="tab-content" id="smtp">
+            <h2>📬 SMTP Configuration</h2>
+            
+            <div class="info-box">
+                <strong>✅ SMTP Works on Vercel!</strong><br>
+                Unlike Railway/Render, Vercel Serverless Functions have full SMTP access (ports 587/465/25).
+            </div>
+
+            <h3>Add SMTP Account</h3>
+            
+            <div class="form-group">
+                <label>Provider:</label>
+                <select id="smtpProvider">
+                    <option value="gmail">Gmail (Recommended)</option>
+                    <option value="custom">Custom SMTP Server</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label>Email / Username:</label>
+                <input type="text" id="smtpUser" placeholder="your.email@gmail.com">
+            </div>
+
+            <div class="form-group">
+                <label>Password / App Password:</label>
+                <input type="password" id="smtpPass" placeholder="App Password (not your Gmail password)">
+                <small>Gmail: <a href="https://myaccount.google.com/apppasswords" target="_blank">Generate App Password</a></small>
+            </div>
+
+            <div id="customSmtpFields" style="display: none;">
+                <div class="form-group">
+                    <label>SMTP Host:</label>
+                    <input type="text" id="smtpHost" placeholder="smtp.example.com">
+                </div>
+
+                <div class="form-group">
+                    <label>SMTP Port:</label>
+                    <input type="number" id="smtpPort" value="587" placeholder="587">
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label>Label (optional):</label>
+                <input type="text" id="smtpLabel" placeholder="My Gmail Account">
+            </div>
+
+            <button class="btn btn-secondary" onclick="testSmtpConnection()">Test Connection</button>
+            <button class="btn btn-primary" onclick="addSmtpAccount()">Add Account</button>
+
+            <div id="smtpResult" class="result-box"></div>
+
+            <h3>Saved SMTP Accounts</h3>
+            <div id="smtpAccountsList" class="accounts-list"></div>
+        </div>
+
+        <!-- Tab: AWS SES -->
+        <div class="tab-content" id="ses">
+            <h2>☁️ AWS SES Configuration</h2>
+            
+            <div class="info-box">
+                <strong>AWS SES Benefits:</strong><br>
+                • High deliverability rate<br>
+                • Low cost ($0.10 per 1000 emails)<br>
+                • Handles reputation management<br>
+                • Detailed analytics
+            </div>
+
+            <h3>Add SES Account</h3>
+            
+            <div class="form-group">
+                <label>AWS Access Key ID:</label>
+                <input type="text" id="sesAccessKey" placeholder="AKIAIOSFODNN7EXAMPLE">
+            </div>
+
+            <div class="form-group">
+                <label>AWS Secret Access Key:</label>
+                <input type="password" id="sesSecretKey" placeholder="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY">
+            </div>
+
+            <div class="form-group">
+                <label>AWS Region:</label>
+                <select id="sesRegion">
+                    <option value="us-east-1">US East (N. Virginia) - us-east-1</option>
+                    <option value="us-west-2">US West (Oregon) - us-west-2</option>
+                    <option value="eu-west-1">EU (Ireland) - eu-west-1</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label>Verified Sender Email:</label>
+                <input type="email" id="sesFromEmail" placeholder="sender@yourdomain.com">
+                <small>Must be verified in SES Console</small>
+            </div>
+
+            <button class="btn btn-secondary" onclick="testSesConnection()">Test Connection</button>
+            <button class="btn btn-primary" onclick="addSesAccount()">Add Account</button>
+
+            <div id="sesResult" class="result-box"></div>
+
+            <h3>Saved SES Accounts</h3>
+            <div id="sesAccountsList" class="accounts-list"></div>
+        </div>
+
+        <!-- Tab: EC2 Relay -->
+        <div class="tab-content" id="ec2">
+            <h2>🖥️ EC2 Relay Configuration</h2>
+            
+            <div class="info-box">
+                <strong>EC2 Relay Benefits:</strong><br>
+                • Full control over sending infrastructure<br>
+                • Dedicated IP address<br>
+                • Custom SPF/DKIM/DMARC setup<br>
+                • No platform restrictions
+            </div>
+
+            <h3>Add EC2 Relay</h3>
+            
+            <div class="form-group">
+                <label>Relay Endpoint URL:</label>
+                <input type="url" id="ec2Url" placeholder="http://your-ec2-ip:2525/send">
+            </div>
+
+            <div class="form-group">
+                <label>Label (optional):</label>
+                <input type="text" id="ec2Label" placeholder="My EC2 Server">
+            </div>
+
+            <button class="btn btn-secondary" onclick="testEc2Relay()">Test Connection</button>
+            <button class="btn btn-primary" onclick="addEc2Relay()">Add Relay</button>
+
+            <div id="ec2Result" class="result-box"></div>
+
+            <h3>Saved EC2 Relays</h3>
+            <div id="ec2RelaysList" class="accounts-list"></div>
+        </div>
+    </div>
+
+    <footer>
+        <p>KINGMAILER v4.0 - Vercel Edition | Created by <a href="https://github.com/LUCIFER14144" target="_blank">LUCIFER14144</a></p>
+    </footer>
+
+    <script src="app.js"></script>
+</body>
+</html>

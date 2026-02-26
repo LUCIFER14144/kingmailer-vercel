@@ -1,0 +1,25 @@
+{
+  "name": "kingmailer-vercel",
+  "version": "4.0.0",
+  "description": "Professional email marketing platform with full SMTP support on Vercel",
+  "main": "public/index.html",
+  "scripts": {
+    "dev": "vercel dev",
+    "deploy": "vercel",
+    "deploy:prod": "vercel --prod"
+  },
+  "keywords": [
+    "email",
+    "smtp",
+    "marketing",
+    "bulk-email",
+    "vercel",
+    "serverless"
+  ],
+  "author": "LUCIFER14144",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/LUCIFER14144/kingmailer-vercel.git"
+  }
+}
