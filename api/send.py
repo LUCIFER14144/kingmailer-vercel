@@ -40,63 +40,19 @@ def process_spintax(text):
 
 # Template Tag Replacements
 def replace_template_tags(text, recipient_email=''):
-    """Replace all template tags with generated values"""
+    """Replace all template tags in text"""
     if not text:
         return text
     
     def gen_random_name():
-        first_names = ['James', 'John', 'Robert', 'Michael', 'William', 'David', 'Richard', 'Joseph', 'Thomas', 'Christopher',
-                      'Mary', 'Patricia', 'Jennifer', 'Linda', 'Elizabeth', 'Barbara', 'Susan', 'Jessica', 'Sarah', 'Karen',
-                      'Nancy', 'Betty', 'Helen', 'Sandra', 'Donna', 'Carol', 'Ruth', 'Sharon', 'Michelle', 'Laura']
-        last_names = ['Smith', 'Johnson', 'Williams', 'Brown', 'Jones', 'Garcia', 'Miller', 'Davis', 'Rodriguez', 'Martinez',
-                     'Hernandez', 'Lopez', 'Gonzalez', 'Wilson', 'Anderson', 'Thomas', 'Taylor', 'Moore', 'Jackson', 'White']
-        return f"{random.choice(first_names)} {random.choice(last_names)}"
+        first = ['James', 'John', 'Robert', 'Michael', 'William', 'Mary', 'Patricia', 'Jennifer', 'Linda', 'Elizabeth']
+        last = ['Smith', 'Johnson', 'Williams', 'Brown', 'Jones', 'Garcia', 'Miller', 'Davis', 'Rodriguez', 'Martinez']
+        return f"{random.choice(first)} {random.choice(last)}"
     
     def gen_company():
-        prefixes = ['Tech', 'Global', 'Digital', 'Smart', 'Innovative', 'Advanced', 'Premier', 'Elite', 'Prime', 'Strategic']
-        suffixes = ['Solutions', 'Systems', 'Corporation', 'Industries', 'Group', 'Services', 'Technologies', 'Dynamics', 'Ventures', 'Partners']
+        prefixes = ['Tech', 'Global', 'Digital', 'Smart', 'Innovative', 'Advanced', 'Premier', 'Elite']
+        suffixes = ['Solutions', 'Systems', 'Corporation', 'Industries', 'Group', 'Services', 'Technologies']
         return f"{random.choice(prefixes)} {random.choice(suffixes)}"
-    
-    def gen_us_company():
-        company_types = ['Inc.', 'LLC', 'Corp.', 'Co.', 'Ltd.']
-        business_names = ['Apple Valley', 'Cedar Creek', 'Golden Gate', 'Silver Lake', 'Mountain View', 'River Ridge', 
-                         'Sunset', 'Pioneer', 'Heritage', 'Liberty', 'Victory', 'Summit', 'Crown', 'Royal', 'Imperial']
-        business_types = ['Marketing', 'Consulting', 'Software', 'Financial', 'Medical', 'Legal', 'Real Estate', 
-                         'Insurance', 'Construction', 'Manufacturing', 'Retail', 'Healthcare', 'Education']
-        return f"{random.choice(business_names)} {random.choice(business_types)} {random.choice(company_types)}"
-    
-    def gen_address():
-        street_nums = random.randint(100, 9999)
-        street_names = ['Main St', 'Oak Ave', 'Pine St', 'Cedar Ln', 'Elm Way', 'Maple Dr', 'First St', 'Second Ave', 
-                       'Market St', 'Washington Blvd', 'Lincoln Ave', 'Jefferson St', 'Madison Dr', 'Monroe Way']
-        return f"{street_nums} {random.choice(street_names)}"
-    
-    def gen_city():
-        cities = ['New York', 'Los Angeles', 'Chicago', 'Houston', 'Phoenix', 'Philadelphia', 'San Antonio', 'San Diego',
-                 'Dallas', 'San Jose', 'Austin', 'Jacksonville', 'Fort Worth', 'Columbus', 'Charlotte', 'Seattle',
-                 'Denver', 'Boston', 'Nashville', 'Detroit', 'Portland', 'Las Vegas', 'Memphis', 'Louisville']
-        return random.choice(cities)
-    
-    def gen_state():
-        states = ['AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA', 'HI', 'ID', 'IL', 'IN', 'IA', 'KS',
-                 'KY', 'LA', 'ME', 'MD', 'MA', 'MI', 'MN', 'MS', 'MO', 'MT', 'NE', 'NV', 'NH', 'NJ', 'NM', 'NY',
-                 'NC', 'ND', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC', 'SD', 'TN', 'TX', 'UT', 'VT', 'VA', 'WA', 'WV', 'WI', 'WY']
-        return random.choice(states)
-    
-    def gen_zipcode():
-        return f"{random.randint(10000, 99999)}"
-    
-    def gen_full_address():
-        return f"{gen_address()}, {gen_city()}, {gen_state()} {gen_zipcode()}"
-    
-    def gen_tracking_number():
-        return ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
-    
-    def gen_order_number():
-        return f"ORD-{random.randint(100000, 999999)}"
-    
-    def gen_reference_id():
-        return f"REF{random.randint(10000, 99999)}"
     
     def gen_13_digit():
         timestamp = int(datetime.now().timestamp() * 1000)
@@ -104,104 +60,24 @@ def replace_template_tags(text, recipient_email=''):
         id_str = f"{timestamp}{random_suffix}"
         return id_str[:13]
     
-    def gen_phone():
-        area = random.randint(200, 999)
-        exchange = random.randint(200, 999)
-        number = random.randint(1000, 9999)
-        return f"({area}) {exchange}-{number}"
-    
-    def gen_website():
-        domains = ['com', 'net', 'org', 'info', 'biz']
-        prefixes = ['www', 'shop', 'secure', 'portal', 'app']
-        names = ['techco', 'bizpro', 'smartsys', 'digitech', 'innovate']
-        return f"https://{random.choice(prefixes)}.{random.choice(names)}.{random.choice(domains)}"
-
-    # Comprehensive replacements organized by category
     replacements = {
-        # Recipient Tags
-        'name': gen_random_name(),
-        'first_name': random.choice(['James', 'John', 'Robert', 'Michael', 'William', 'Mary', 'Patricia', 'Jennifer', 'Linda', 'Elizabeth']),
-        'last_name': random.choice(['Smith', 'Johnson', 'Williams', 'Brown', 'Jones', 'Garcia', 'Miller', 'Davis', 'Rodriguez', 'Martinez']),
-        'email': recipient_email,
-        'recipient': recipient_email,
-        'customer_name': gen_random_name(),
-        
-        # Date & Time Tags  
-        'date': datetime.now().strftime('%B %d, %Y'),
-        'short_date': datetime.now().strftime('%m/%d/%Y'),
-        'time': datetime.now().strftime('%I:%M %p'),
-        'time_24': datetime.now().strftime('%H:%M'),
-        'year': str(datetime.now().year),
-        'month': datetime.now().strftime('%B'),
-        'day': datetime.now().strftime('%d'),
-        'weekday': datetime.now().strftime('%A'),
-        'timestamp': str(int(datetime.now().timestamp())),
-        
-        # Unique Identifier Tags
-        '13_digit': gen_13_digit(),
-        'unique_id': gen_13_digit(),
-        'tracking_number': gen_tracking_number(),
-        'order_number': gen_order_number(),
-        'reference_id': gen_reference_id(),
-        'transaction_id': f"TXN{random.randint(100000, 999999)}",
-        'invoice_number': f"INV-{random.randint(10000, 99999)}",
-        'confirmation_code': ''.join(random.choices(string.ascii_uppercase + string.digits, k=8)),
-        
-        # Random String Tags
-        'random_6': ''.join(random.choices(string.ascii_letters + string.digits, k=6)),
-        'random_8': ''.join(random.choices(string.ascii_letters + string.digits, k=8)),
-        'random_10': ''.join(random.choices(string.ascii_letters + string.digits, k=10)),
-        'random_upper_4': ''.join(random.choices(string.ascii_uppercase, k=4)),
-        'random_upper_6': ''.join(random.choices(string.ascii_uppercase, k=6)),
-        'random_lower_4': ''.join(random.choices(string.ascii_lowercase, k=4)),
-        'random_lower_6': ''.join(random.choices(string.ascii_lowercase, k=6)),
-        'random_digits_4': ''.join(random.choices(string.digits, k=4)),
-        'random_digits_6': ''.join(random.choices(string.digits, k=6)),
-        
-        # Company Tags
+        'random_name': gen_random_name(),
+        'name': gen_random_name(),          # fallback when CSV has no 'name' column
         'company': gen_company(),
         'company_name': gen_company(),
-        'random_name': gen_random_name(),
-        'us_company': gen_us_company(),
-        'business_name': gen_us_company(),
-        
-        # Address Tags
-        'street_address': gen_address(),
-        'city': gen_city(),
-        'state': gen_state(),
-        'zip_code': gen_zipcode(),
-        'zipcode': gen_zipcode(),
-        'full_address': gen_full_address(),
-        'phone': gen_phone(),
-        'phone_number': gen_phone(),
-        
-        # Sender Tags  
-        'sender_name': gen_random_name(),
-        'from_name': gen_random_name(),
-        'support_name': gen_random_name(),
-        'rep_name': gen_random_name(),
-        'agent_name': gen_random_name(),
-        'manager_name': gen_random_name(),
-        
-        # Contact & Web Tags
-        'website': gen_website(),
-        'support_email': f"support@{random.choice(['company', 'business', 'service'])}.com",
-        'contact_email': f"contact@{random.choice(['firm', 'group', 'solutions'])}.com",
-        
-        # Financial Tags
-        'amount': f"${random.randint(10, 999)}.{random.randint(10, 99)}",
-        'price': f"${random.randint(5, 199)}.{random.randint(0, 99):02d}",
-        'discount': f"{random.randint(10, 50)}%",
-        'savings': f"${random.randint(10, 100)}",
-        
-        # Product Tags
-        'product_name': random.choice(['Premium Package', 'Professional Service', 'Business Solution', 'Elite Plan', 'Standard Package']),
-        'item_count': str(random.randint(1, 10)),
-        'quantity': str(random.randint(1, 5))
+        '13_digit': gen_13_digit(),
+        'unique_id': gen_13_digit(),
+        'date': datetime.now().strftime('%B %d, %Y'),
+        'time': datetime.now().strftime('%I:%M %p'),
+        'year': str(datetime.now().year),
+        'random_6': ''.join(random.choices(string.ascii_letters + string.digits, k=6)),
+        'random_8': ''.join(random.choices(string.ascii_letters + string.digits, k=8)),
+        'recipient': recipient_email,
+        'email': recipient_email
     }
     
-    # Apply all replacements
     for tag, value in replacements.items():
+        # Escape tag name to handle special characters like underscores and digits
         text = re.sub(r'\{\{' + re.escape(tag) + r'\}\}', str(value), text, flags=re.IGNORECASE)
     
     return text
