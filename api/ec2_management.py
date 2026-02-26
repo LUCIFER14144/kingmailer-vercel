@@ -208,7 +208,9 @@ def list_ec2_instances(access_key, secret_key, region):
                     'private_ip': instance.get('PrivateIpAddress', 'N/A'),
                     'state': instance['State']['Name'],
                     'instance_type': instance['InstanceType'],
-                    'launch_time': str(instance['LaunchTime'])
+                    'launch_time': str(instance['LaunchTime']),
+                    'created_at': str(instance['LaunchTime']),  # Alias for frontend compatibility
+                    'region': region  # Include region from credentials
                 })
         
         return {

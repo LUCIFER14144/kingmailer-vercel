@@ -444,8 +444,11 @@ async function refreshEc2Instances() {
         const data = await response.json();
         
         if (data.success) {
-            renderEc2Instances(data.instances);
-            showResult('ec2Result', `✅ Found ${data.instances.length} instances`, 'success');
+            // Update global ec2Instances array
+            ec2Instances = data.instances || [];
+            renderEc2Instances(ec2Instances);
+            showResult('ec2Result', `✅ Found ${ec2Instances.length} instances`, 'success');
+            console.log('EC2 instances refreshed:', ec2Instances.length);
         } else {
             showResult('ec2Result', `❌ ${data.error}`, 'error');
         }
@@ -726,6 +729,10 @@ async function sendBulkEmails() {
     
     // Get config based on method
     let config = {};
+    
+    console.log('Bulk send method:', method);
+    console.log('Available EC2 instances:', ec2Instances.length);
+    console.log('Available SMTP accounts:', smtpAccounts.length);
     
     if (method === 'smtp') {
         if (smtpAccounts.length === 0) {
