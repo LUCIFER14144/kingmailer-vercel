@@ -88,13 +88,24 @@ def replace_template_tags(text, row_data, recipient_email=''):
 
 
 def send_email_smtp(smtp_config, from_name, recipient, subject, html_body, ec2_ip=None):
-    """Send single email via SMTP (optionally noting EC2 relay)"""
+    """
+    Send single email via SMTP DIRECTLY to Gmail/Outlook servers.
+    IMPORTANT: This does NOT route through EC2! Connects directly to smtp.gmail.com.
+    Email headers will show GMAIL's IP address, not EC2 or Vercel IPs.
+    The ec2_ip parameter is unused and kept for backwards compatibility.
+    """
     try:
         is_gmail = smtp_config.get('provider') == 'gmail'
         smtp_server = 'smtp.gmail.com' if is_gmail else smtp_config.get('host')
         smtp_port = 587 if is_gmail else int(smtp_config.get('port', 587))
         smtp_user = smtp_config.get('user')
         smtp_pass = smtp_config.get('pass')
+        
+        # Debug logging
+        print(f'[SMTP SEND] → {recipient}')
+        print(f'[SMTP SERVER] {smtp_server}:{smtp_port}')
+        print(f'[SMTP AUTH] {smtp_user}')
+        print(f'[EXPECTED IP] Gmail servers (NOT EC2, NOT Vercel)')
         
         # Use sender_name from config or fallback to from_name parameter
         sender_name = smtp_config.get('sender_name') or from_name
@@ -105,14 +116,13 @@ def send_email_smtp(smtp_config, from_name, recipient, subject, html_body, ec2_i
         msg['Subject'] = subject
         msg.attach(MIMEText(html_body, 'html'))
         
-        # If ec2_ip is provided, we're routing through EC2
-        # (Note: This still uses Gmail SMTP but logs EC2 usage)
-        
+        # Direct connection to Gmail/Outlook SMTP servers (NOT through EC2 or any proxy)
         with smtplib.SMTP(smtp_server, smtp_port, timeout=30) as server:
             server.starttls()
             server.login(smtp_user, smtp_pass)
             server.send_message(msg)
         
+        print(f'[SMTP SUCCESS] Email sent to {recipient} via {smtp_server}')
         return {'success': True}
     except Exception as e:
         return {'success': False, 'error': str(e)}
@@ -148,6 +158,10 @@ def send_email_ses(aws_config, from_name, recipient, subject, html_body):
 def send_email_ec2(ec2_url, smtp_config, from_name, recipient, subject, html_body):
     """Send email via EC2 relay (JetMailer style - authenticated SMTP through EC2 IP)"""
     try:
+        print(f'[EC2 RELAY] Sending to {recipient} via {ec2_url}')
+        print(f'[EC2 RELAY] SMTP credentials: {smtp_config.get("user")}')
+        print(f'[EXPECTED IP] EC2 relay server IP (from URL: {ec2_url})')
+        
         payload = {
             'from_name': from_name,
             'to': recipient,
@@ -208,6 +222,17 @@ class handler(BaseHTTPRequestHandler):
             ses_configs = data.get('ses_configs', [])
             ec2_instances = data.get('ec2_instances', [])
             
+            # Debug logging
+            print('='*50)
+            print('BULK SEND DEBUG - Backend')
+            print(f'Method selected: {method}')
+            print(f'SMTP configs received: {len(smtp_configs)}')
+            print(f'SES configs received: {len(ses_configs)}')
+            print(f'EC2 instances received: {len(ec2_instances)}')
+            if ec2_instances:
+                print(f'EC2 instance IPs: {[i.get("public_ip") for i in ec2_instances]}')
+            print('='*50)
+            
             if not csv_data:
                 self.send_response(400)
                 self.send_header('Content-type', 'application/json')
@@ -264,10 +289,12 @@ class handler(BaseHTTPRequestHandler):
                 # Send email based on method
                 if method == 'smtp' and smtp_pool:
                     smtp_config = smtp_pool.get_next()
+                    print(f'\\n[EMAIL {index+1}] Method: SMTP → {recipient}')
                     result = send_email_smtp(smtp_config, from_name, recipient, subject, html_body)
                 
                 elif method == 'ses' and ses_pool:
-                    ses_config = ses_pool.get_next()
+                    ses_config = ses_pool.get_next()  
+                    print(f'\\n[EMAIL {index+1}] Method: SES → {recipient}')
                     result = send_email_ses(ses_config, from_name, recipient, subject, html_body)
                 
                 elif method == 'ec2' and ec2_pool:
@@ -275,6 +302,8 @@ class handler(BaseHTTPRequestHandler):
                     # Requires SMTP accounts to authenticate through Gmail/Outlook
                     ec2_instance = ec2_pool.get_next()  # type: ignore
                     smtp_config = smtp_pool.get_next() if smtp_pool else None
+                    
+                    print(f'\\n[EMAIL {index+1}] Method: EC2 RELAY → {recipient}')
                     
                     if not smtp_config:
                         result = {'success': False, 'error': 'EC2 relay requires SMTP accounts (like JetMailer)'}

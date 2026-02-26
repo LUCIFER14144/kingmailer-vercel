@@ -453,6 +453,13 @@ async function refreshEc2Instances() {
             renderEc2Instances(ec2Instances);
             showResult('ec2Result', `✅ Found ${ec2Instances.length} instances`, 'success');
             console.log('EC2 instances refreshed:', ec2Instances.length);
+            
+            // Auto-refresh if there are pending instances
+            const pendingCount = ec2Instances.filter(i => i.state === 'pending').length;
+            if (pendingCount > 0) {
+                console.log(`Auto-refresh: ${pendingCount} instances still pending`);
+                setTimeout(() => refreshEc2Instances(), 30000); // Check again in 30 seconds
+            }
         } else {
             showResult('ec2Result', `❌ ${data.error}`, 'error');
         }
@@ -584,20 +591,34 @@ function renderEc2Instances(instances) {
         return;
     }
     
-    container.innerHTML = instances.map(instance => `
+    container.innerHTML = instances.map(instance => {
+        const stateColors = {
+            'running': '#00ff9d',
+            'pending': '#f59e0b', 
+            'stopped': '#888',
+            'stopping': '#888',
+            'terminated': '#f87171'
+        };
+        const stateColor = stateColors[instance.state] || '#888';
+        const stateEmoji = instance.state === 'running' ? '✅' : instance.state === 'pending' ? '⏳' : '⚠️';
+        
+        return `
         <div class="account-card">
             <div class="account-info">
                 <strong>Instance: ${instance.instance_id}</strong><br>
                 <small>
-                    IP: ${instance.public_ip || 'Pending...'}<br>
+                    IP: <strong>${instance.public_ip || 'Pending...'}</strong><br>
                     Region: ${instance.region}<br>
-                    State: ${instance.state}<br>
+                    State: <span style="color: ${stateColor}; font-weight: bold;">${stateEmoji} ${instance.state.toUpperCase()}</span><br>
+                    ${instance.state === 'pending' ? '<span style="color: #f59e0b;">⏳ Initializing... Auto-refreshing every 30s</span><br>' : ''}
+                    ${instance.state === 'running' ? '<span style="color: #00ff9d;">✅ Ready for email relay (port 8080)</span><br>' : ''}
                     Created: ${instance.created_at}
                 </small>
             </div>
             <button class="btn btn-danger" onclick="terminateEc2Instance('${instance.instance_id}')">Terminate</button>
         </div>
-    `).join('');
+    `;
+    }).join('');
 }
 
 // Delete account
@@ -815,9 +836,13 @@ async function sendBulkEmails() {
     // Get config based on method
     let config = {};
     
-    console.log('Bulk send method:', method);
+    console.log('======= BULK SEND DEBUG =======');
+    console.log('Selected method:', method);
     console.log('Available EC2 instances:', ec2Instances.length);
     console.log('Available SMTP accounts:', smtpAccounts.length);
+    console.log('Available SES accounts:', sesAccounts.length);
+    console.log('Method will send from:', method === 'smtp' ? 'Gmail IP' : method === 'ec2' ? 'EC2 IP' : 'AWS SES IP');
+    console.log('==============================');
     
     if (method === 'smtp') {
         if (smtpAccounts.length === 0) {
@@ -836,13 +861,31 @@ async function sendBulkEmails() {
             showResult('bulkResult', 'Please create at least one EC2 instance first', 'error');
             return;
         }
+        
         // Get all running instances
         const runningInstances = ec2Instances.filter(i => i.state === 'running');
+        const pendingInstances = ec2Instances.filter(i => i.state === 'pending');
+        
+        console.log('EC2 instances - Total:', ec2Instances.length, 'Running:', runningInstances.length, 'Pending:', pendingInstances.length);
+        console.log('Instance states:', ec2Instances.map(i => `${i.instance_id}: ${i.state}`));
+        
         if (runningInstances.length === 0) {
-            showResult('bulkResult', 'No running EC2 instances available', 'error');
+            if (pendingInstances.length > 0) {
+                showResult('bulkResult', `⏳ EC2 instances are still initializing (${pendingInstances.length} pending). Please wait 2-3 minutes and try again.`, 'error');
+            } else {
+                showResult('bulkResult', `❌ No running EC2 instances available. ${ec2Instances.length} instances in state: ${ec2Instances.map(i => i.state).join(', ')}`, 'error');
+            }
             return;
         }
+        
         config.ec2_instances = runningInstances;
+        
+        // Ensure SMTP accounts are available for EC2 relay (JetMailer style requires SMTP auth)
+        if (smtpAccounts.length === 0) {
+            showResult('bulkResult', '❌ EC2 Relay requires SMTP accounts for authentication (JetMailer style). Add Gmail SMTP accounts first.', 'error');
+            return;
+        }
+        config.smtp_configs = smtpAccounts;
     }
     
     // Update stats before sending
