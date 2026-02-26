@@ -62,6 +62,7 @@ def replace_template_tags(text, recipient_email=''):
     
     replacements = {
         'random_name': gen_random_name(),
+        'name': gen_random_name(),          # fallback when CSV has no 'name' column
         'company': gen_company(),
         'company_name': gen_company(),
         '13_digit': gen_13_digit(),

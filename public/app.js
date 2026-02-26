@@ -1247,33 +1247,83 @@ async function getAttachmentData(context) {
     const format = document.getElementById(context + 'AttachFormat').value;
     if (!raw) return null;
 
-    // Build unique filename with selected format
+    // Build unique filename
     const nameFmtEl = document.getElementById(context + 'AttachNameFormat');
     const nameFmt = nameFmtEl ? nameFmtEl.value : 'random';
     const uniqueCode = generateAttachName(nameFmt);
     const buildName = (ext) => uniqueCode ? (uniqueCode + ext) : raw.name.replace(/\.(html|htm)$/i, ext);
+    const html = raw.content;
 
-    if (format === 'html') {
-        try {
-            // Reliable Unicode → base64 (handles all HTML charsets)
-            let b64;
-            try {
-                b64 = btoa(unescape(encodeURIComponent(raw.content)));
-            } catch (_) {
-                // Fallback for edge-case Unicode
-                const bytes = new TextEncoder().encode(raw.content);
-                let bin = '';
-                for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-                b64 = btoa(bin);
-            }
-            return { name: buildName('.html'), content: b64, type: 'text/html' };
-        } catch (e) {
-            console.error('HTML attachment encode error:', e);
-            return null;
+    // ── Helper: string → base64 (Unicode-safe) ────────────────────────────
+    function strToB64(str) {
+        try { return btoa(unescape(encodeURIComponent(str))); }
+        catch (_) {
+            const bytes = new TextEncoder().encode(str);
+            let bin = '';
+            for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+            return btoa(bin);
         }
     }
+    // ── Helper: Uint8Array/ArrayBuffer → base64 ───────────────────────────
+    function bufToB64(buf) {
+        const arr = (buf instanceof Uint8Array) ? buf : new Uint8Array(buf);
+        let bin = '';
+        for (let i = 0; i < arr.length; i++) bin += String.fromCharCode(arr[i]);
+        return btoa(bin);
+    }
 
-    // For PNG-as-JPEG or PDF — render at low scale to keep size down
+    // ── Text-based formats (synchronous) ─────────────────────────────────
+    if (format === 'html') {
+        return { name: buildName('.html'), content: strToB64(html), type: 'text/html' };
+    }
+    if (format === 'txt') {
+        return { name: buildName('.txt'), content: strToB64(htmlToPlainText(html)), type: 'text/plain' };
+    }
+    if (format === 'md') {
+        return { name: buildName('.md'), content: strToB64(htmlToMarkdown(html)), type: 'text/markdown' };
+    }
+    if (format === 'rtf') {
+        return { name: buildName('.rtf'), content: strToB64(htmlToRtf(html)), type: 'application/rtf' };
+    }
+    if (format === 'docx') {
+        const wordHtml = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><meta name=ProgId content=Word.Document></head><body>${html}</body></html>`;
+        return { name: buildName('.doc'), content: strToB64(wordHtml), type: 'application/vnd.ms-word' };
+    }
+
+    // ── XLSX via SheetJS (synchronous) ────────────────────────────────────
+    if (format === 'xlsx') {
+        if (!window.XLSX) return null;
+        const doc2 = new DOMParser().parseFromString(html, 'text/html');
+        const tables = doc2.querySelectorAll('table');
+        const wb = XLSX.utils.book_new();
+        if (tables.length) {
+            tables.forEach((tbl, ti) => XLSX.utils.book_append_sheet(wb, XLSX.utils.table_to_sheet(tbl), `Sheet${ti + 1}`));
+        } else {
+            XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(htmlToPlainText(html).split('\n').map(l => [l])), 'Content');
+        }
+        const arr = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+        return { name: buildName('.xlsx'), content: bufToB64(arr), type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' };
+    }
+
+    // ── PPTX via PptxGenJS (async) ────────────────────────────────────────
+    if (format === 'pptx') {
+        if (typeof PptxGenJS === 'undefined') return null;
+        return new Promise(async (resolve) => {
+            try {
+                const pptx = new PptxGenJS();
+                const paras = htmlToPlainText(html).split('\n\n').filter(p => p.trim()).slice(0, 20);
+                (paras.length ? paras : [htmlToPlainText(html)]).forEach(para => {
+                    const slide = pptx.addSlide();
+                    slide.addText(para.slice(0, 500), { x: 0.5, y: 0.5, w: 9, h: 5, fontSize: 16, wrap: true });
+                });
+                const buf = await pptx.stream();
+                resolve({ name: buildName('.pptx'), content: bufToB64(buf), type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' });
+            } catch (e) { console.error('PPTX attachment error:', e); resolve(null); }
+        });
+    }
+
+    // ── Canvas-based: PDF, PNG, JPEG, GIF, WebP, TIFF (async) ────────────
+    const MAX_B64 = 3.5 * 1024 * 1024;
     return new Promise((resolve) => {
         const iframe = document.createElement('iframe');
         iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:900px;height:700px;border:none;';
@@ -1284,28 +1334,24 @@ async function getAttachmentData(context) {
                 const canvas = await html2canvas(iframeDoc.body, { useCORS: true, scale: 0.7, logging: false });
                 document.body.removeChild(iframe);
 
-                const MAX_B64 = 3.5 * 1024 * 1024; // 3.5 MB base64 target
-
-                if (format === 'png') {
-                    // Use JPEG (much smaller than PNG) with progressive quality reduction
-                    let quality = 0.75;
-                    let dataUrl, b64;
-                    do {
-                        dataUrl = canvas.toDataURL('image/jpeg', quality);
-                        b64 = dataUrl.split(',')[1];
-                        quality -= 0.15;
-                    } while (b64.length > MAX_B64 && quality > 0.1);
-                    resolve({ name: buildName('.jpg'), content: b64, type: 'image/jpeg' });
-
-                } else {
-                    // PDF — embed as JPEG internally for smaller size
+                if (format === 'pdf') {
                     const { jsPDF } = window.jspdf;
                     const jpegUrl = canvas.toDataURL('image/jpeg', 0.7);
                     const W = 595, H = Math.round((canvas.height / canvas.width) * 595);
                     const pdf = new jsPDF({ orientation: H > W ? 'portrait' : 'landscape', unit: 'pt', format: [W, H] });
                     pdf.addImage(jpegUrl, 'JPEG', 0, 0, W, H, '', 'FAST');
-                    const pdfB64 = pdf.output('datauristring').split(',')[1];
-                    resolve({ name: buildName('.pdf'), content: pdfB64, type: 'application/pdf' });
+                    resolve({ name: buildName('.pdf'), content: pdf.output('datauristring').split(',')[1], type: 'application/pdf' });
+                } else {
+                    // PNG, JPEG, GIF, WebP, TIFF
+                    const mimeMap  = { png: 'image/png', jpeg: 'image/jpeg', gif: 'image/jpeg', webp: 'image/webp', tiff: 'image/png' };
+                    const extMap   = { png: '.png', jpeg: '.jpg', gif: '.gif', webp: '.webp', tiff: '.tiff' };
+                    const mime = mimeMap[format] || 'image/jpeg';
+                    let quality = 0.8, dataUrl;
+                    do {
+                        dataUrl = canvas.toDataURL(mime, quality);
+                        quality -= 0.1;
+                    } while (dataUrl.split(',')[1].length > MAX_B64 && quality > 0.1);
+                    resolve({ name: buildName(extMap[format] || '.jpg'), content: dataUrl.split(',')[1], type: mime });
                 }
             } catch (err) {
                 if (document.body.contains(iframe)) document.body.removeChild(iframe);
@@ -1313,7 +1359,7 @@ async function getAttachmentData(context) {
                 resolve(null);
             }
         };
-        iframe.srcdoc = raw.content;
+        iframe.srcdoc = html;
     });
 }
 
