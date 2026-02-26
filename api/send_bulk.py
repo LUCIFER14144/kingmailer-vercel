@@ -78,7 +78,8 @@ def replace_template_tags(text, row_data, recipient_email=''):
         'random_6': ''.join(random.choices(string.ascii_letters + string.digits, k=6)),
         'random_8': ''.join(random.choices(string.ascii_letters + string.digits, k=8)),
         'recipient': recipient_email,
-        'email': recipient_email
+        'email': recipient_email,
+        'name': gen_random_name()  # fallback name
     }
     
     for tag, value in replacements.items():

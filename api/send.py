@@ -73,11 +73,9 @@ def replace_template_tags(text, recipient_email=''):
         'random_8': ''.join(random.choices(string.ascii_letters + string.digits, k=8)),
         'recipient': recipient_email,
         'email': recipient_email,
-        'name': '',  # fallback, replaced below
+        'name': gen_random_name(),  # fallback name
     }
-    # Fallback for {{name}} if not replaced by CSV
-    if not re.search(r'\{\{name\}\}', text, flags=re.IGNORECASE):
-        text = re.sub(r'\{\{name\}\}', gen_random_name(), text, flags=re.IGNORECASE)
+    
     for tag, value in replacements.items():
         text = re.sub(r'\{\{' + tag + r'\}\}', str(value), text, flags=re.IGNORECASE)
     return text
