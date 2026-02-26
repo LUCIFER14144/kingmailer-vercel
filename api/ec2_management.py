@@ -126,68 +126,24 @@ echo "Step 1: Updating system packages..."
 yum update -y
 
 # Install required packages
-echo "Step 2: Installing postfix, python3, and dependencies..."
-yum install -y postfix mailx python3 python3-pip
+echo "Step 2: Installing python3 and dependencies..."
+yum install -y python3 python3-pip telnet nc
 
-# Configure postfix
-echo "Step 3: Configuring postfix..."
+# No Postfix needed - we route through authenticated SMTP instead!
+echo "Step 3: Skipping Postfix (using authenticated SMTP on ports 587/465)..."
 
-# Get instance hostname and IP
-PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
-PUBLIC_HOSTNAME=$(curl -s http://169.254.169.254/latest/meta-data/public-hostname)
-INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
-
-cat > /etc/postfix/main.cf << 'POSTFIX_EOF'
-compatibility_level = 2
-queue_directory = /var/spool/postfix
-command_directory = /usr/sbin
-daemon_directory = /usr/libexec/postfix
-data_directory = /var/lib/postfix
-mail_owner = postfix
-inet_interfaces = all
-inet_protocols = ipv4
-mydestination = \$myhostname, localhost.\$mydomain, localhost
-unknown_local_recipient_reject_code = 550
-mynetworks = 127.0.0.0/8, [::1]/128
-relay_domains = 
-smtpd_banner = \$myhostname ESMTP
-smtpd_tls_cert_file = /etc/pki/tls/certs/postfix.pem
-smtpd_tls_key_file = /etc/pki/tls/private/postfix.key
-smtpd_use_tls = yes
-smtpd_tls_session_cache_database = btree:\${data_directory}/smtpd_scache
-smtp_tls_session_cache_database = btree:\${data_directory}/smtp_scache
-
-# Important: Set proper hostname for better deliverability
-myhostname = \$PUBLIC_HOSTNAME
-myorigin = \$myhostname
-
-# Delivery settings
-smtp_connect_timeout = 30s
-smtp_helo_timeout = 30s
-maximal_queue_lifetime = 1h
-bounce_queue_lifetime = 1h
-
-# Log all SMTP transactions
-smtp_sasl_auth_enable = no
-smtpd_relay_restrictions = permit_mynetworks, reject_unauth_destination
-POSTFIX_EOF
-
-# Replace variables in config
-sed -i "s/\\$PUBLIC_HOSTNAME/$PUBLIC_HOSTNAME/g" /etc/postfix/main.cf
-
-# Start and enable postfix
-echo "Step 4: Starting postfix service..."
-systemctl enable postfix
-systemctl start postfix
-systemctl status postfix
-
-# Create email relay HTTP server
-echo "Step 5: Creating Python email relay server..."
+# Create email relay HTTP server (JetMailer-style)
+echo "Step 4: Creating Python SMTP relay server..."
 cat > /opt/email_relay_server.py << 'RELAY_EOF'
 #!/usr/bin/env python3
+"""KINGMAILER Email Relay - JetCloudMailer Style
+Routes authenticated SMTP traffic through EC2 IP without needing port 25
+Sends via Gmail/Outlook SMTP on ports 587/465 from this EC2 IP
+"""
 import json
 import smtplib
 import logging
+import socket
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -214,18 +170,18 @@ class EmailRelayHandler(BaseHTTPRequestHandler):
             self.send_header('Content-type', 'application/json')
             self.end_headers()
             
-            # Check mail queue
-            mail_queue_status = self.check_mail_queue()
-            port25_status = self.check_port25_connectivity()
+            # Test SMTP ports connectivity
+            port587_status = self.check_smtp_port(587)
+            port465_status = self.check_smtp_port(465)
             
             response = {
                 'status': 'healthy',
-                'service': 'KINGMAILER Email Relay',
+                'service': 'KINGMAILER Email Relay (JetMailer Style)',
                 'timestamp': datetime.now().isoformat(),
-                'postfix_running': self.check_postfix(),
-                'mail_queue': mail_queue_status,
-                'port_25_outbound': port25_status,
-                'warning': 'AWS blocks port 25 by default - request removal at https://aws.amazon.com/forms/ec2-email-limit-rdns-request' if port25_status == 'blocked' else None
+                'method': 'Authenticated SMTP via EC2 IP',
+                'port_587_outbound': port587_status,
+                'port_465_outbound': port465_status,
+                'info': 'No port 25 needed - uses Gmail/Outlook SMTP on 587/465'
             }
             self.wfile.write(json.dumps(response).encode())
         else:
@@ -233,30 +189,61 @@ class EmailRelayHandler(BaseHTTPRequestHandler):
             self.end_headers()
     
     def do_POST(self):
-        """Email relay endpoint"""
+        """Email relay endpoint - JetMailer style"""
         if self.path == '/relay':
             try:
                 content_length = int(self.headers['Content-Length'])
                 post_data = self.rfile.read(content_length)
                 data = json.loads(post_data.decode('utf-8'))
                 
+                # Email details
                 from_name = data.get('from_name', 'KINGMAILER')
-                from_email = data.get('from_email', 'noreply@relay.local')
                 to_email = data.get('to', '')
                 subject = data.get('subject', 'No Subject')
                 html_body = data.get('html', '')
                 
+                # SMTP credentials (REQUIRED for JetMailer approach)
+                smtp_config = data.get('smtp_config')
+                if not smtp_config:
+                    raise ValueError('SMTP config required for relay')
+                
                 if not to_email:
                     raise ValueError('Recipient email required')
                 
-                # Send email via local postfix
+                # Extract SMTP settings
+                provider = smtp_config.get('provider', 'gmail')
+                smtp_user = smtp_config.get('user')
+                smtp_pass = smtp_config.get('pass')
+                sender_name = smtp_config.get('sender_name', from_name)
+                
+                if not smtp_user or not smtp_pass:
+                    raise ValueError('SMTP username and password required')
+                
+                # Determine SMTP server and port
+                if provider == 'gmail':
+                    smtp_server = 'smtp.gmail.com'
+                    smtp_port = 587
+                elif provider == 'outlook' or provider == 'hotmail':
+                    smtp_server = 'smtp-mail.outlook.com'
+                    smtp_port = 587
+                else:
+                    smtp_server = smtp_config.get('host', 'smtp.gmail.com')
+                    smtp_port = int(smtp_config.get('port', 587))
+                
+                # Build email message
                 msg = MIMEMultipart('alternative')
-                msg['From'] = f"{from_name} <{from_email}>"
+                msg['From'] = f"{sender_name} <{smtp_user}>"
                 msg['To'] = to_email
                 msg['Subject'] = subject
                 msg.attach(MIMEText(html_body, 'html'))
                 
-                with smtplib.SMTP('localhost', 25) as server:
+                # Send via authenticated SMTP FROM THIS EC2 IP
+                # This gives you EC2 IP in headers while using Gmail's infrastructure
+                logging.info(f"Sending to {to_email} via {smtp_server}:{smtp_port} from EC2 IP")
+                
+                with smtplib.SMTP(smtp_server, smtp_port, timeout=30) as server:
+                    server.starttls()
+                    server.login(smtp_user, smtp_pass)
                     server.send_message(msg)
                 
                 logging.info(f"Email sent successfully to {to_email}")
@@ -276,52 +263,20 @@ class EmailRelayHandler(BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
     
-    def check_postfix(self):
-        """Check if postfix is running"""
+    def check_smtp_port(self, port):
+        """Test if SMTP port (587 or 465) is accessible"""
         try:
-            import subprocess
-            result = subprocess.run(['systemctl', 'is-active', 'postfix'], 
-                                    capture_output=True, text=True)
-            return result.stdout.strip() == 'active'
-        except:
-            return False
-    
-    def check_mail_queue(self):
-        """Check Postfix mail queue for stuck emails"""
-        try:
-            import subprocess
-            result = subprocess.run(['mailq'], capture_output=True, text=True, timeout=5)
-            output = result.stdout.strip()
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(3)
             
-            if 'Mail queue is empty' in output or 'empty' in output.lower():
-                return {'status': 'empty', 'count': 0}
+            # Test Gmail SMTP server
+            if port == 587:
+                result = sock.connect_ex(('smtp.gmail.com', 587))
             else:
-                # Count queued messages (rough estimate)
-                lines = output.split('\n')
-                queue_count = sum(1 for line in lines if '@' in line)
-                return {'status': 'has_mail', 'count': queue_count, 'warning': 'Emails stuck in queue - likely AWS port 25 block'}
-        except:
-            return {'status': 'unknown', 'count': 0}
-    
-    def check_port25_connectivity(self):
-        """Test if port 25 outbound is working"""
-        try:
-            import socket
-            import subprocess
+                result = sock.connect_ex(('smtp.gmail.com', 465))
             
-            # Try to connect to a known mail server on port 25
-            try:
-                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                sock.settimeout(3)
-                result = sock.connect_ex(('gmail-smtp-in.l.google.com', 25))
-                sock.close()
-                
-                if result == 0:
-                    return 'open'
-                else:
-                    return 'blocked'
-            except:
-                return 'blocked'
+            sock.close()
+            return 'open' if result == 0 else 'blocked'
         except:
             return 'unknown'
 
@@ -336,12 +291,11 @@ RELAY_EOF
 chmod +x /opt/email_relay_server.py
 
 # Create systemd service for relay server
-echo "Step 6: Creating systemd service..."
+echo "Step 5: Creating systemd service..."
 cat > /etc/systemd/system/email-relay.service << 'SERVICE_EOF'
 [Unit]
-Description=KINGMAILER Email Relay HTTP Server
-After=network.target postfix.service
-Requires=postfix.service
+Description=KINGMAILER Email Relay HTTP Server (JetMailer Style)
+After=network.target
 
 [Service]
 Type=simple
@@ -355,7 +309,7 @@ WantedBy=multi-user.target
 SERVICE_EOF
 
 # Start and enable relay service
-echo "Step 7: Starting email relay service..."
+echo "Step 6: Starting email relay service..."
 systemctl daemon-reload
 systemctl enable email-relay.service
 systemctl start email-relay.service
@@ -363,14 +317,15 @@ systemctl status email-relay.service
 
 # Configure firewall (if firewalld is running)
 if systemctl is-active --quiet firewalld; then
-    echo "Step 8: Configuring firewall..."
-    firewall-cmd --permanent --add-port=25/tcp
+    echo "Step 7: Configuring firewall..."
     firewall-cmd --permanent --add-port=587/tcp
+    firewall-cmd --permanent --add-port=465/tcp
     firewall-cmd --permanent --add-port=8080/tcp
     firewall-cmd --reload
 fi
 
-echo "=== KINGMAILER EC2 Email Relay Setup Complete ==="
+echo "=== KINGMAILER EC2 Email Relay Setup Complete (JetMailer Style) ==="
+echo \"No port 25 needed - uses authenticated SMTP on ports 587/465\"
 echo "Health Check: curl http://$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4):8080/health"
 date
             ''',

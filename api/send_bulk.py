@@ -145,15 +145,15 @@ def send_email_ses(aws_config, from_name, recipient, subject, html_body):
         return {'success': False, 'error': str(e)}
 
 
-def send_email_ec2(ec2_url, from_name, from_email, recipient, subject, html_body):
-    """Send email via EC2 relay"""
+def send_email_ec2(ec2_url, smtp_config, from_name, recipient, subject, html_body):
+    """Send email via EC2 relay (JetMailer style - authenticated SMTP through EC2 IP)"""
     try:
         payload = {
             'from_name': from_name,
-            'from_email': from_email,
             'to': recipient,
             'subject': subject,
-            'html': html_body
+            'html': html_body,
+            'smtp_config': smtp_config  # Pass SMTP credentials to relay
         }
         
         data = json.dumps(payload).encode('utf-8')
@@ -271,19 +271,22 @@ class handler(BaseHTTPRequestHandler):
                     result = send_email_ses(ses_config, from_name, recipient, subject, html_body)
                 
                 elif method == 'ec2' and ec2_pool:
-                    # EC2 Relay - Use dedicated relay server on EC2
+                    # EC2 Relay (JetMailer Style) - Route SMTP through EC2 IP
+                    # Requires SMTP accounts to authenticate through Gmail/Outlook
                     ec2_instance = ec2_pool.get_next()  # type: ignore
-                    if ec2_instance:
+                    smtp_config = smtp_pool.get_next() if smtp_pool else None
+                    
+                    if not smtp_config:
+                        result = {'success': False, 'error': 'EC2 relay requires SMTP accounts (like JetMailer)'}
+                    elif ec2_instance:
                         ec2_ip = ec2_instance.get('public_ip')  # type: ignore
                         if ec2_ip and ec2_ip != 'N/A':
-                            # Send via EC2 relay endpoint (emails will come from EC2 IP)
-                            email = from_email or 'noreply@relay.local'
+                            # Send via EC2 relay with SMTP auth (JetMailer approach)
                             relay_url = f'http://{ec2_ip}:8080/relay'
-                            result = send_email_ec2(relay_url, from_name, email, recipient, subject, html_body)
+                            result = send_email_ec2(relay_url, smtp_config, from_name, recipient, subject, html_body)
                             if result['success']:
                                 result['via_ec2_ip'] = ec2_ip
                             else:
-                                # Add more context to EC2 relay errors
                                 result['error'] = f"EC2 relay failed ({ec2_ip}): {result.get('error', 'Unknown error')}"
                         else:
                             result = {'success': False, 'error': f'EC2 instance {ec2_instance.get("instance_id")} has no public IP'}

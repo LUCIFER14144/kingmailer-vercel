@@ -532,15 +532,13 @@ async function checkEc2Health() {
                     resultHtml += `
                         <small style="color: #00ff9d;">
                             ✓ Relay endpoint ready: ${instance.relay_url}<br>
-                            ✓ Postfix: ${instance.postfix_running ? 'Running' : 'Not Running'}<br>
-                            ✓ Port 25 Outbound: ${instance.port_25_outbound || 'unknown'}<br>
+                            ✓ Method: ${instance.method || 'Authenticated SMTP'}<br>
+                            ✓ Port 587 Outbound: ${instance.port_587_outbound || 'unknown'}<br>
+                            ✓ Port 465 Outbound: ${instance.port_465_outbound || 'unknown'}<br>
                     `;
                     
-                    // Show mail queue status
-                    if (instance.mail_queue) {
-                        const queueStatus = instance.mail_queue.status === 'empty' ? 'Empty ✓' : 
-                                          `${instance.mail_queue.count || 0} emails queued ⚠️`;
-                        resultHtml += `            ✓ Mail Queue: ${queueStatus}<br>`;
+                    if (instance.info) {
+                        resultHtml += `            <small style="color: #888;">💡 ${instance.info}</small><br>`;
                     }
                     
                     resultHtml += `            ✓ Checked at: ${instance.timestamp}

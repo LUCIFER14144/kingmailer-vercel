@@ -143,15 +143,15 @@ def send_via_ses(aws_config, from_name, to_email, subject, html_body):
         return {'success': False, 'error': f'SES error: {str(e)}'}
 
 
-def send_via_ec2(ec2_url, from_name, from_email, to_email, subject, html_body):
-    """Send email via EC2 relay endpoint"""
+def send_via_ec2(ec2_url, smtp_config, from_name, to_email, subject, html_body):
+    """Send email via EC2 relay endpoint (JetMailer style - authenticated SMTP)"""
     try:
         payload = {
             'from_name': from_name,
-            'from_email': from_email,
             'to': to_email,
             'subject': subject,
-            'html': html_body
+            'html': html_body,
+            'smtp_config': smtp_config  # Pass SMTP credentials to relay
         }
         
         data = json.dumps(payload).encode('utf-8')
@@ -225,17 +225,25 @@ class handler(BaseHTTPRequestHandler):
                 result = send_via_ses(aws_config, from_name, to_email, subject, html_body)
             
             elif send_method == 'ec2':
-                # EC2 Relay Mode - Route through EC2 relay server
+                # EC2 Relay Mode (JetMailer Style) - Route SMTP through EC2 IP
+                # Requires SMTP config to authenticate via Gmail/Outlook
                 ec2_instance = data.get('ec2_instance')
+                smtp_config = data.get('smtp_config')
+                
+                if not smtp_config:
+                    self.send_response(400)
+                    self.send_header('Content-type', 'application/json')
+                    self.send_header('Access-Control-Allow-Origin', '*')
+                    self.end_headers()
+                    self.wfile.write(json.dumps({'success': False, 'error': 'EC2 relay requires SMTP config (like JetMailer)'}).encode())
+                    return
                 
                 if ec2_instance and isinstance(ec2_instance, dict):
                     ec2_ip = ec2_instance.get('public_ip')
                     if ec2_ip and ec2_ip != 'N/A':
-                        # Use EC2 relay endpoint (emails will originate from EC2 IP)
+                        # Use EC2 relay endpoint with SMTP auth
                         ec2_url = f'http://{ec2_ip}:8080/relay'
-                        if not from_email:
-                            from_email = 'noreply@relay.local'
-                        result = send_via_ec2(ec2_url, from_name, from_email, to_email, subject, html_body)
+                        result = send_via_ec2(ec2_url, smtp_config, from_name, to_email, subject, html_body)
                     else:
                         self.send_response(400)
                         self.send_header('Content-type', 'application/json')
@@ -253,9 +261,7 @@ class handler(BaseHTTPRequestHandler):
                         self.end_headers()
                         self.wfile.write(json.dumps({'success': False, 'error': 'EC2 relay URL required or instance not ready'}).encode())
                         return
-                    if not from_email:
-                        from_email = 'noreply@yourdomain.com'
-                    result = send_via_ec2(ec2_url, from_name, from_email, to_email, subject, html_body)
+                    result = send_via_ec2(ec2_url, smtp_config, from_name, to_email, subject, html_body)
             
             else:
                 result = {'success': False, 'error': f'Unknown send method: {send_method}'}

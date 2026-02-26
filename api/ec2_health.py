@@ -52,22 +52,17 @@ class handler(BaseHTTPRequestHandler):
                     with urllib.request.urlopen(req, timeout=15) as response:
                         health_data = json.loads(response.read().decode('utf-8'))
                         
-                        # Check for critical warnings
-                        mail_queue = health_data.get('mail_queue', {})
-                        port25_status = health_data.get('port_25_outbound', 'unknown')
+                        # Check for critical warnings (JetMailer Style - SMTP ports)
+                        port587_status = health_data.get('port_587_outbound', 'unknown')
+                        port465_status = health_data.get('port_465_outbound', 'unknown')
                         
                         # Determine if there are issues
                         has_warning = False
                         warning_messages = []
                         
-                        if port25_status == 'blocked':
+                        if port587_status == 'blocked' and port465_status == 'blocked':
                             has_warning = True
-                            warning_messages.append('⚠️ AWS is blocking port 25 outbound - emails will NOT be delivered!')
-                            warning_messages.append('➡️ Request removal: https://aws.amazon.com/forms/ec2-email-limit-rdns-request')
-                        
-                        if mail_queue.get('status') == 'has_mail' and mail_queue.get('count', 0) > 0:
-                            has_warning = True
-                            warning_messages.append(f'⚠️ {mail_queue.get("count")} emails stuck in queue')
+                            warning_messages.append('⚠️ SMTP ports 587/465 blocked - check AWS security group')
                         
                         result_data = {
                             'instance_id': instance_id,
@@ -75,10 +70,11 @@ class handler(BaseHTTPRequestHandler):
                             'status': 'healthy_with_warnings' if has_warning else 'healthy',
                             'healthy': True,
                             'relay_url': f'http://{public_ip}:8080/relay',
-                            'postfix_running': health_data.get('postfix_running', False),
-                            'port_25_outbound': port25_status,
-                            'mail_queue': mail_queue,
-                            'timestamp': health_data.get('timestamp')
+                            'method': health_data.get('method', 'Authenticated SMTP'),
+                            'port_587_outbound': port587_status,
+                            'port_465_outbound': port465_status,
+                            'timestamp': health_data.get('timestamp'),
+                            'info': 'JetMailer Style - No port 25 needed'
                         }
                         
                         if has_warning:
