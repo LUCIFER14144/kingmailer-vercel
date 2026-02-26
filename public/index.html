@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>KINGMAILER v4.0 - Vercel Edition</title>
     <link rel="stylesheet" href="style.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script>
         // Login check - redirect if not authenticated
         window.addEventListener('DOMContentLoaded', () => {
@@ -67,7 +69,47 @@
 
             <div class="form-group">
                 <label>HTML Body:</label>
-                <textarea id="singleHtml" rows="8" placeholder="<h1>Hello!</h1><p>Your HTML content here...</p>"></textarea>
+                <textarea id="singleHtml" rows="8" placeholder="&lt;h1&gt;Hello!&lt;/h1&gt;&lt;p&gt;Your HTML content here...&lt;/p&gt;"></textarea>
+            </div>
+
+            <!-- Placeholder Reference -->
+            <div style="margin-bottom: 15px;">
+                <button class="btn btn-secondary" onclick="togglePlaceholders('singlePlaceholders')" style="font-size: 12px; padding: 6px 12px;">📋 Show Placeholders</button>
+                <div id="singlePlaceholders" style="display:none; margin-top:10px; padding:12px; background:#2d2d2d; border-radius:8px; font-size:12px;">
+                    <strong style="color:#00ff9d;">Available Placeholders:</strong><br><br>
+                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:6px;">
+                        <span><code style="color:#667eea;">{{random_name}}</code> — Random full name</span>
+                        <span><code style="color:#667eea;">{{company}}</code> — Random company name</span>
+                        <span><code style="color:#667eea;">{{13_digit}}</code> — 13-digit unique ID</span>
+                        <span><code style="color:#667eea;">{{unique_id}}</code> — Unique identifier</span>
+                        <span><code style="color:#667eea;">{{date}}</code> — Today's date</span>
+                        <span><code style="color:#667eea;">{{time}}</code> — Current time</span>
+                        <span><code style="color:#667eea;">{{year}}</code> — Current year</span>
+                        <span><code style="color:#667eea;">{{random_6}}</code> — 6-char random string</span>
+                        <span><code style="color:#667eea;">{{random_8}}</code> — 8-char random string</span>
+                        <span><code style="color:#667eea;">{{recipient}}</code> — Recipient email</span>
+                    </div>
+                    <div style="margin-top:8px; padding-top:8px; border-top:1px solid #444;">
+                        <strong style="color:#f59e0b;">Spintax:</strong> <code style="color:#f59e0b;">{Hello|Hi|Hey} {{random_name}}</code> — randomly picks one option
+                    </div>
+                </div>
+            </div>
+
+            <!-- HTML Attachment Section -->
+            <div style="margin-bottom: 15px; padding:12px; background:#2d2d2d; border-radius:8px;">
+                <strong>📎 HTML Attachment (Optional)</strong><br>
+                <small style="color:#888;">Upload an HTML file and send it as an attachment in any format</small>
+                <div style="display:flex; gap:10px; margin-top:8px; flex-wrap:wrap; align-items:center;">
+                    <button class="btn btn-secondary" onclick="document.getElementById('singleHtmlFile').click()" style="font-size:12px;">📁 Browse HTML File</button>
+                    <input type="file" id="singleHtmlFile" accept=".html,.htm" style="display:none;" onchange="loadHtmlAttachment('single', event)">
+                    <select id="singleAttachFormat" style="padding:6px; background:#1a1a1a; color:#fff; border:1px solid #444; border-radius:4px; font-size:12px;">
+                        <option value="html">Send as HTML file</option>
+                        <option value="pdf">Convert to PDF</option>
+                        <option value="png">Convert to PNG Image</option>
+                    </select>
+                    <span id="singleAttachName" style="color:#00ff9d; font-size:12px;"></span>
+                    <button id="singleClearAttach" onclick="clearAttachment('single')" style="display:none; background:#f87171; color:#fff; border:none; border-radius:4px; padding:4px 8px; cursor:pointer; font-size:12px;">✕ Remove</button>
+                </div>
             </div>
 
             <div class="form-group">
@@ -140,7 +182,50 @@
 
             <div class="form-group">
                 <label>HTML Template:</label>
-                <textarea id="bulkHtml" rows="8" placeholder="<h1>Hi {{name}}!</h1><p>We at {{company}} have an exciting offer...</p>"></textarea>
+                <textarea id="bulkHtml" rows="8" placeholder="&lt;h1&gt;Hi {{name}}!&lt;/h1&gt;&lt;p&gt;We at {{company}} have an exciting offer...&lt;/p&gt;"></textarea>
+            </div>
+
+            <!-- Placeholder Reference -->
+            <div style="margin-bottom: 15px;">
+                <button class="btn btn-secondary" onclick="togglePlaceholders('bulkPlaceholders')" style="font-size: 12px; padding: 6px 12px;">📋 Show Placeholders</button>
+                <div id="bulkPlaceholders" style="display:none; margin-top:10px; padding:12px; background:#2d2d2d; border-radius:8px; font-size:12px;">
+                    <strong style="color:#00ff9d;">Available Placeholders — use in Subject or HTML Body:</strong><br><br>
+                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:6px;">
+                        <span><code style="color:#667eea;">{{email}}</code> — Recipient's email</span>
+                        <span><code style="color:#667eea;">{{name}}</code> — From CSV column "name"</span>
+                        <span><code style="color:#667eea;">{{company}}</code> — From CSV column "company"</span>
+                        <span><code style="color:#667eea;">{{random_name}}</code> — Random full name</span>
+                        <span><code style="color:#667eea;">{{13_digit}}</code> — 13-digit unique ID</span>
+                        <span><code style="color:#667eea;">{{unique_id}}</code> — Unique identifier</span>
+                        <span><code style="color:#667eea;">{{date}}</code> — Today's date</span>
+                        <span><code style="color:#667eea;">{{time}}</code> — Current time</span>
+                        <span><code style="color:#667eea;">{{year}}</code> — Current year</span>
+                        <span><code style="color:#667eea;">{{random_6}}</code> — 6-char random string</span>
+                        <span><code style="color:#667eea;">{{random_8}}</code> — 8-char random string</span>
+                        <span><code style="color:#667eea;">{{recipient}}</code> — Recipient email (alias)</span>
+                    </div>
+                    <div style="margin-top:8px; padding-top:8px; border-top:1px solid #444;">
+                        <strong style="color:#f59e0b;">Spintax:</strong> <code style="color:#f59e0b;">{Hello|Hi|Hey} {{name}}</code> — randomly picks one option per email<br>
+                        <strong style="color:#f59e0b;">CSV columns:</strong> Any CSV column header becomes a placeholder. E.g. CSV has "phone" column → use <code style="color:#f59e0b;">{{phone}}</code>
+                    </div>
+                </div>
+            </div>
+
+            <!-- HTML Attachment Section -->
+            <div style="margin-bottom: 15px; padding:12px; background:#2d2d2d; border-radius:8px;">
+                <strong>📎 HTML Attachment (Optional)</strong><br>
+                <small style="color:#888;">Upload an HTML file and attach it to every email in the format you choose</small>
+                <div style="display:flex; gap:10px; margin-top:8px; flex-wrap:wrap; align-items:center;">
+                    <button class="btn btn-secondary" onclick="document.getElementById('bulkHtmlFile').click()" style="font-size:12px;">📁 Browse HTML File</button>
+                    <input type="file" id="bulkHtmlFile" accept=".html,.htm" style="display:none;" onchange="loadHtmlAttachment('bulk', event)">
+                    <select id="bulkAttachFormat" style="padding:6px; background:#1a1a1a; color:#fff; border:1px solid #444; border-radius:4px; font-size:12px;">
+                        <option value="html">Send as HTML file</option>
+                        <option value="pdf">Convert to PDF</option>
+                        <option value="png">Convert to PNG Image</option>
+                    </select>
+                    <span id="bulkAttachName" style="color:#00ff9d; font-size:12px;"></span>
+                    <button id="bulkClearAttach" onclick="clearAttachment('bulk')" style="display:none; background:#f87171; color:#fff; border:none; border-radius:4px; padding:4px 8px; cursor:pointer; font-size:12px;">✕ Remove</button>
+                </div>
             </div>
 
             <div class="form-group">
@@ -170,9 +255,17 @@
                 </div>
             </div>
 
-            <button class="btn btn-primary" onclick="sendBulkEmails()">Start Bulk Sending</button>
+            <button class="btn btn-primary" id="startBulkBtn" onclick="sendBulkEmails()">▶ Start Bulk Sending</button>
+            <button class="btn" id="pauseBulkBtn" onclick="pauseBulkSend()" style="display:none; background:#f59e0b; color:#000;">⏸ Pause</button>
+            <button class="btn btn-danger" id="stopBulkBtn" onclick="stopBulkSend()" style="display:none;">⏹ Stop</button>
             
             <div id="bulkResult" class="result-box"></div>
+            
+            <!-- Real-time send log -->
+            <div id="bulkLog" style="display:none; margin-top:15px; padding:12px; background:#1a1a1a; border-radius:8px; max-height:200px; overflow-y:auto; font-size:12px; font-family:monospace;">
+                <div style="color:#888; margin-bottom:6px;">📋 Send Log (real-time):</div>
+                <div id="bulkLogContent"></div>
+            </div>
         </div>
 
         <!-- Tab: SMTP Config -->

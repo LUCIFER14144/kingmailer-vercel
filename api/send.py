@@ -7,6 +7,8 @@ from http.server import BaseHTTPRequestHandler
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
+from email import encoders
 import boto3
 from botocore.exceptions import ClientError
 import json
@@ -15,6 +17,7 @@ import random
 import string
 import urllib.request
 from datetime import datetime
+import base64
 
 
 # Spintax Processor
@@ -77,7 +80,34 @@ def replace_template_tags(text, recipient_email=''):
     return text
 
 
-def send_via_smtp(smtp_config, from_name, to_email, subject, html_body):
+def replace_csv_row_tags(text, row):
+    """Replace {{column}} placeholders with CSV row values"""
+    if not text or not row:
+        return text
+    for key, value in row.items():
+        text = re.sub(r'\{\{' + re.escape(key) + r'\}\}', str(value), text, flags=re.IGNORECASE)
+    return text
+
+
+def add_attachment_to_message(msg, attachment):
+    """Attach a base64-encoded file to a MIME message"""
+    if not attachment:
+        return
+    try:
+        file_data = base64.b64decode(attachment['content'])
+        mime_type = attachment.get('type', 'application/octet-stream')
+        filename = attachment.get('name', 'attachment')
+        main_type, sub_type = mime_type.split('/', 1) if '/' in mime_type else ('application', 'octet-stream')
+        part = MIMEBase(main_type, sub_type)
+        part.set_payload(file_data)
+        encoders.encode_base64(part)
+        part.add_header('Content-Disposition', 'attachment', filename=filename)
+        msg.attach(part)
+    except Exception:
+        pass  # Attachment errors shouldn't block the email
+
+
+def send_via_smtp(smtp_config, from_name, to_email, subject, html_body, attachment=None):
     """Send email via SMTP (Gmail or custom server)"""
     try:
         is_gmail = smtp_config.get('provider') == 'gmail'
@@ -96,12 +126,13 @@ def send_via_smtp(smtp_config, from_name, to_email, subject, html_body):
         # Use sender_name from config or fallback to from_name parameter
         sender_name = smtp_config.get('sender_name') or from_name
         
-        msg = MIMEMultipart('alternative')
+        msg = MIMEMultipart('mixed')
         msg['From'] = f"{sender_name} <{from_email}>" if sender_name else from_email
         msg['To'] = to_email
         msg['Subject'] = subject
         
         msg.attach(MIMEText(html_body, 'html'))
+        add_attachment_to_message(msg, attachment)
         
         with smtplib.SMTP(smtp_server, smtp_port, timeout=30) as server:
             server.starttls()
@@ -116,7 +147,7 @@ def send_via_smtp(smtp_config, from_name, to_email, subject, html_body):
         return {'success': False, 'error': f'SMTP error: {str(e)}'}
 
 
-def send_via_ses(aws_config, from_name, to_email, subject, html_body):
+def send_via_ses(aws_config, from_name, to_email, subject, html_body, attachment=None):
     """Send email via AWS SES"""
     try:
         ses_client = boto3.client(
@@ -129,21 +160,35 @@ def send_via_ses(aws_config, from_name, to_email, subject, html_body):
         from_email = aws_config.get('from_email', 'noreply@example.com')
         source = f"{from_name} <{from_email}>" if from_name else from_email
         
-        response = ses_client.send_email(
-            Source=source,
-            Destination={'ToAddresses': [to_email]},
-            Message={
-                'Subject': {'Data': subject},
-                'Body': {'Html': {'Data': html_body}}
-            }
-        )
+        if attachment:
+            # Use raw send for attachment support
+            msg = MIMEMultipart('mixed')
+            msg['From'] = source
+            msg['To'] = to_email
+            msg['Subject'] = subject
+            msg.attach(MIMEText(html_body, 'html'))
+            add_attachment_to_message(msg, attachment)
+            response = ses_client.send_raw_email(
+                Source=source,
+                Destinations=[to_email],
+                RawMessage={'Data': msg.as_string()}
+            )
+        else:
+            response = ses_client.send_email(
+                Source=source,
+                Destination={'ToAddresses': [to_email]},
+                Message={
+                    'Subject': {'Data': subject},
+                    'Body': {'Html': {'Data': html_body}}
+                }
+            )
         
         return {'success': True, 'message': f'Email sent via SES to {to_email}', 'message_id': response['MessageId']}
     except Exception as e:
         return {'success': False, 'error': f'SES error: {str(e)}'}
 
 
-def send_via_ec2(ec2_url, smtp_config, from_name, to_email, subject, html_body):
+def send_via_ec2(ec2_url, smtp_config, from_name, to_email, subject, html_body, attachment=None):
     """Send email via EC2 relay endpoint (JetMailer style - authenticated SMTP)"""
     try:
         payload = {
@@ -153,6 +198,8 @@ def send_via_ec2(ec2_url, smtp_config, from_name, to_email, subject, html_body):
             'html': html_body,
             'smtp_config': smtp_config  # Pass SMTP credentials to relay
         }
+        if attachment:
+            payload['attachment'] = attachment
         
         data = json.dumps(payload).encode('utf-8')
         req = urllib.request.Request(ec2_url, data=data, method='POST')
@@ -184,6 +231,8 @@ class handler(BaseHTTPRequestHandler):
             from_name = data.get('from_name', 'KINGMAILER')
             from_email = data.get('from_email', '')
             send_method = data.get('method', 'smtp')
+            csv_row = data.get('csv_row', {})
+            attachment = data.get('attachment')  # {name, content (base64), type}
             
             if not to_email:
                 self.send_response(400)
@@ -197,7 +246,12 @@ class handler(BaseHTTPRequestHandler):
             subject = process_spintax(subject)
             html_body = process_spintax(html_body)
             
-            # Replace template tags
+            # Replace CSV row placeholders first (so column values override generics)
+            if csv_row:
+                subject = replace_csv_row_tags(subject, csv_row)
+                html_body = replace_csv_row_tags(html_body, csv_row)
+            
+            # Replace standard template tags
             subject = replace_template_tags(subject, to_email)
             html_body = replace_template_tags(html_body, to_email)
             
@@ -211,7 +265,7 @@ class handler(BaseHTTPRequestHandler):
                     self.end_headers()
                     self.wfile.write(json.dumps({'success': False, 'error': 'SMTP config required'}).encode())
                     return
-                result = send_via_smtp(smtp_config, from_name, to_email, subject, html_body)
+                result = send_via_smtp(smtp_config, from_name, to_email, subject, html_body, attachment)
             
             elif send_method == 'ses':
                 aws_config = data.get('aws_config')
@@ -222,7 +276,7 @@ class handler(BaseHTTPRequestHandler):
                     self.end_headers()
                     self.wfile.write(json.dumps({'success': False, 'error': 'AWS SES config required'}).encode())
                     return
-                result = send_via_ses(aws_config, from_name, to_email, subject, html_body)
+                result = send_via_ses(aws_config, from_name, to_email, subject, html_body, attachment)
             
             elif send_method == 'ec2':
                 # EC2 Relay - Route email through EC2 IP on port 3000
@@ -233,7 +287,7 @@ class handler(BaseHTTPRequestHandler):
                     ec2_ip = ec2_instance.get('public_ip')
                     if ec2_ip and ec2_ip not in ('N/A', 'Pending...'):
                         ec2_url = f'http://{ec2_ip}:3000/relay'
-                        result = send_via_ec2(ec2_url, smtp_config, from_name, to_email, subject, html_body)
+                        result = send_via_ec2(ec2_url, smtp_config, from_name, to_email, subject, html_body, attachment)
                         if result['success']:
                             result['message'] = f'Email sent via EC2 IP {ec2_ip} to {to_email}'
                     else:
@@ -243,7 +297,7 @@ class handler(BaseHTTPRequestHandler):
                     if not ec2_url:
                         result = {'success': False, 'error': 'No EC2 instance selected or instance not ready'}
                     else:
-                        result = send_via_ec2(ec2_url, smtp_config, from_name, to_email, subject, html_body)
+                        result = send_via_ec2(ec2_url, smtp_config, from_name, to_email, subject, html_body, attachment)
             
             else:
                 result = {'success': False, 'error': f'Unknown send method: {send_method}'}

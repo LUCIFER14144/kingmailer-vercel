@@ -9,6 +9,17 @@ let sesAccounts = [];
 let ec2Instances = [];
 let inputMode = 'csv'; // 'csv' or 'simple'
 let bulkSendingActive = false;
+let bulkPaused = false;
+let bulkStopped = false;
+
+// Attachment storage
+let singleAttachmentData = null;
+let bulkAttachmentData = null;
+
+// Utility: sleep
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
 
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', function() {
@@ -793,6 +804,9 @@ async function sendSingleEmail() {
     
     showResult('singleResult', '🔄 Sending email...', 'info');
     
+    // Get attachment if any
+    const attachment = await getAttachmentData('single');
+    
     try {
         const response = await fetch('/api/send', {
             method: 'POST',
@@ -802,6 +816,7 @@ async function sendSingleEmail() {
                 subject: subject,
                 html: html,
                 method: method,
+                ...(attachment ? { attachment } : {}),
                 ...config
             })
         });
@@ -818,14 +833,14 @@ async function sendSingleEmail() {
     }
 }
 
-// Send bulk emails
+// Send bulk emails — client-side loop for real-time progress, stop, pause
 async function sendBulkEmails() {
     let csv = document.getElementById('bulkCsv').value.trim();
     const subject = document.getElementById('bulkSubject').value;
     const html = document.getElementById('bulkHtml').value;
     const method = document.getElementById('bulkMethod').value;
-    const minDelay = document.getElementById('bulkMinDelay').value;
-    const maxDelay = document.getElementById('bulkMaxDelay').value;
+    const minDelay = parseFloat(document.getElementById('bulkMinDelay').value) || 1;
+    const maxDelay = parseFloat(document.getElementById('bulkMaxDelay').value) || 3;
     
     if (!csv || !subject || !html) {
         showResult('bulkResult', 'Please fill in all fields', 'error');
@@ -838,117 +853,289 @@ async function sendBulkEmails() {
         csv = 'email\n' + emails.join('\n');
     }
     
-    // Get config based on method
-    let config = {};
+    // Parse CSV
+    const lines = csv.split('\n').filter(line => line.trim());
+    if (lines.length < 2) {
+        showResult('bulkResult', 'CSV must have a header row and at least one email', 'error');
+        return;
+    }
+    const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+    const emailIndex = headers.indexOf('email');
+    if (emailIndex === -1) {
+        showResult('bulkResult', 'CSV must have an "email" column header', 'error');
+        return;
+    }
     
-    console.log('======= BULK SEND DEBUG =======');
-    console.log('Selected method:', method);
-    console.log('Available EC2 instances:', ec2Instances.length);
-    console.log('Available SMTP accounts:', smtpAccounts.length);
-    console.log('Available SES accounts:', sesAccounts.length);
-    console.log('Method will send from:', method === 'smtp' ? 'Gmail IP' : method === 'ec2' ? 'EC2 IP' : 'AWS SES IP');
-    console.log('==============================');
+    // Build rows array from CSV
+    const rows = [];
+    for (let i = 1; i < lines.length; i++) {
+        const vals = lines[i].split(',').map(v => v.trim());
+        if (!vals[emailIndex] || !vals[emailIndex].includes('@')) continue;
+        const row = {};
+        headers.forEach((h, idx) => { row[h] = vals[idx] || ''; });
+        rows.push(row);
+    }
     
+    if (rows.length === 0) {
+        showResult('bulkResult', 'No valid email addresses found in CSV', 'error');
+        return;
+    }
+    
+    // Validate config
+    let runningInstances = [];
     if (method === 'smtp') {
         if (smtpAccounts.length === 0) {
             showResult('bulkResult', 'Please add at least one SMTP account first', 'error');
             return;
         }
-        config.smtp_configs = smtpAccounts;
     } else if (method === 'ses') {
         if (sesAccounts.length === 0) {
             showResult('bulkResult', 'Please add an AWS SES account first', 'error');
             return;
         }
-        config.aws_config = sesAccounts[0];
     } else if (method === 'ec2') {
-        if (ec2Instances.length === 0) {
-            showResult('bulkResult', '❌ Please create at least one EC2 instance first (EC2 Management tab)', 'error');
-            return;
-        }
-        
-        // Get all running instances
-        const runningInstances = ec2Instances.filter(i => i.state === 'running');
-        const pendingInstances = ec2Instances.filter(i => i.state === 'pending');
-        
-        console.log('EC2 instances - Total:', ec2Instances.length, 'Running:', runningInstances.length, 'Pending:', pendingInstances.length);
-        console.log('Instance states:', ec2Instances.map(i => `${i.instance_id}: ${i.state}`));
-        
+        runningInstances = ec2Instances.filter(i => i.state === 'running');
         if (runningInstances.length === 0) {
-            if (pendingInstances.length > 0) {
-                showResult('bulkResult', `⏳ EC2 instances still initializing (${pendingInstances.length} pending). Wait 3-5 minutes then try again.`, 'error');
-            } else {
-                showResult('bulkResult', `❌ No running EC2 instances. States: ${ec2Instances.map(i => i.state).join(', ')}`, 'error');
-            }
+            const pending = ec2Instances.filter(i => i.state === 'pending').length;
+            showResult('bulkResult', pending > 0 ?
+                `⏳ EC2 instances still initializing (${pending} pending). Wait 3-5 min.` :
+                '❌ No running EC2 instances', 'error');
             return;
         }
-        
-        config.ec2_instances = runningInstances;
-        
-        // Auto-include SMTP accounts if available (EC2 relay uses them to authenticate from EC2 IP)
-        if (smtpAccounts.length > 0) {
-            config.smtp_configs = smtpAccounts;
-            console.log('EC2 Relay: Auto-using', smtpAccounts.length, 'SMTP accounts - emails will send FROM EC2 IP');
-        } else {
-            console.log('EC2 Relay: No SMTP accounts configured - will attempt direct send from EC2');
-        }
     }
     
-    // Update stats before sending
-    updateBulkStats();
+    // Prepare attachment (convert HTML file to selected format BEFORE starting loop)
+    showResult('bulkResult', '⏳ Preparing attachment (if any)...', 'info');
+    const attachment = await getAttachmentData('bulk');
+    
+    // Set send state
     bulkSendingActive = true;
+    bulkStopped = false;
+    bulkPaused = false;
     
-    const methodNames = {
-        'smtp': 'Gmail SMTP',
-        'ec2': 'EC2 Relay',
-        'ses': 'AWS SES'
-    };
+    // Show stop/pause buttons, hide start
+    document.getElementById('startBulkBtn').style.display = 'none';
+    document.getElementById('pauseBulkBtn').style.display = 'inline-block';
+    document.getElementById('pauseBulkBtn').textContent = '⏸ Pause';
+    document.getElementById('stopBulkBtn').style.display = 'inline-block';
     
-    showResult('bulkResult', `🔄 Starting bulk send via ${methodNames[method]}... This may take a while.`, 'info');
+    // Show real-time log
+    document.getElementById('bulkLog').style.display = 'block';
+    document.getElementById('bulkLogContent').innerHTML = '';
     
-    try {
-        const response = await fetch('/api/send_bulk', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                csv_data: csv,
-                subject: subject,
-                html: html,
-                method: method,
-                min_delay: minDelay,
-                max_delay: maxDelay,
-                ...config
-            })
-        });
+    const methodNames = { smtp: 'Gmail SMTP', ec2: 'EC2 Relay', ses: 'AWS SES' };
+    showResult('bulkResult', `🔄 Bulk sending via ${methodNames[method]} — ${rows.length} emails...`, 'info');
+    updateBulkStats();
+    
+    let sent = 0;
+    let failed = 0;
+    let rotateIdx = 0;
+    
+    for (let i = 0; i < rows.length; i++) {
+        // Stop check
+        if (bulkStopped) break;
         
-        const data = await response.json();
-        
-        bulkSendingActive = false;
-        
-        if (data.success) {
-            updateBulkProgress(data.results.sent, data.results.failed, data.results.total);
-            
-            let resultMessage = `✅ Bulk send complete via ${methodNames[method]}!<br>
-                Total: ${data.results.total}<br>
-                Sent: ${data.results.sent}<br>
-                Failed: ${data.results.failed}`;
-            
-            if (data.results.skipped && data.results.skipped.length > 0) {
-                resultMessage += `<br>Skipped: ${data.results.skipped.length}`;
-            }
-            
-            if (method === 'ec2' && config.ec2_instances && config.ec2_instances[0]) {
-                resultMessage += `<br><br>🚀 Sent from EC2 IP: ${config.ec2_instances[0].public_ip}`;
-            }
-            
-            showResult('bulkResult', resultMessage, 'success');
-        } else {
-            showResult('bulkResult', `❌ ${data.error}`, 'error');
+        // Pause — wait until resumed or stopped
+        while (bulkPaused && !bulkStopped) {
+            await sleep(400);
         }
-    } catch (error) {
-        bulkSendingActive = false;
-        showResult('bulkResult', `❌ Bulk send failed: ${error.message}`, 'error');
+        if (bulkStopped) break;
+        
+        const row = rows[i];
+        const toEmail = row['email'];
+        
+        // Build payload for this email
+        const emailPayload = {
+            to: toEmail,
+            subject: subject,
+            html: html,
+            method: method,
+            csv_row: row
+        };
+        
+        if (method === 'smtp') {
+            emailPayload.smtp_config = smtpAccounts[rotateIdx % smtpAccounts.length];
+            rotateIdx++;
+        } else if (method === 'ses') {
+            emailPayload.aws_config = sesAccounts[0];
+        } else if (method === 'ec2') {
+            emailPayload.ec2_instance = runningInstances[rotateIdx % runningInstances.length];
+            if (smtpAccounts.length > 0) {
+                emailPayload.smtp_config = smtpAccounts[rotateIdx % smtpAccounts.length];
+            }
+            rotateIdx++;
+        }
+        
+        if (attachment) emailPayload.attachment = attachment;
+        
+        // Log entry for this email
+        const logLine = document.createElement('div');
+        logLine.style.color = '#aaa';
+        logLine.textContent = `[${i+1}/${rows.length}] Sending to ${toEmail}...`;
+        document.getElementById('bulkLogContent').appendChild(logLine);
+        document.getElementById('bulkLog').scrollTop = document.getElementById('bulkLog').scrollHeight;
+        
+        try {
+            const resp = await fetch('/api/send', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(emailPayload)
+            });
+            const result = await resp.json();
+            
+            if (result.success) {
+                sent++;
+                logLine.style.color = '#00ff9d';
+                logLine.textContent = `[${i+1}/${rows.length}] ✅ ${toEmail}`;
+            } else {
+                failed++;
+                logLine.style.color = '#f87171';
+                logLine.textContent = `[${i+1}/${rows.length}] ❌ ${toEmail}: ${result.error}`;
+            }
+        } catch (err) {
+            failed++;
+            logLine.style.color = '#f87171';
+            logLine.textContent = `[${i+1}/${rows.length}] ❌ ${toEmail}: ${err.message}`;
+        }
+        
+        // Update progress bar in real-time
+        updateBulkProgress(sent, failed, rows.length);
+        
+        // Delay between emails (skip on last or if stopped)
+        if (i < rows.length - 1 && !bulkStopped) {
+            const delayMs = (Math.random() * (maxDelay - minDelay) + minDelay) * 1000;
+            await sleep(delayMs);
+        }
     }
+    
+    // Wrap up
+    bulkSendingActive = false;
+    bulkPaused = false;
+    bulkStopped = false;
+    
+    document.getElementById('startBulkBtn').style.display = 'inline-block';
+    document.getElementById('pauseBulkBtn').style.display = 'none';
+    document.getElementById('stopBulkBtn').style.display = 'none';
+    
+    const stopped = sent + failed < rows.length;
+    const msg = stopped
+        ? `⏹ Stopped. Sent: ${sent} ✅ &nbsp; Failed: ${failed} ❌ &nbsp; Remaining: ${rows.length - sent - failed}`
+        : `✅ Done! Sent: ${sent} ✅ &nbsp; Failed: ${failed} ❌ &nbsp; Total: ${rows.length}`;
+    showResult('bulkResult', msg, sent > 0 ? 'success' : 'error');
+}
+
+// Pause bulk send toggle
+function pauseBulkSend() {
+    if (!bulkSendingActive) return;
+    bulkPaused = !bulkPaused;
+    document.getElementById('pauseBulkBtn').textContent = bulkPaused ? '▶ Resume' : '⏸ Pause';
+    if (bulkPaused) {
+        showResult('bulkResult', '⏸ Paused — click Resume to continue', 'info');
+    } else {
+        showResult('bulkResult', '▶ Resumed...', 'info');
+    }
+}
+
+// Stop bulk send
+function stopBulkSend() {
+    bulkStopped = true;
+    bulkPaused = false;
+    showResult('bulkResult', '⏹ Stopping... finishing current email.', 'info');
+}
+
+// Toggle placeholder reference panel
+function togglePlaceholders(divId) {
+    const div = document.getElementById(divId);
+    const btn = div.previousElementSibling;
+    if (div.style.display === 'none') {
+        div.style.display = 'block';
+        btn.textContent = '📋 Hide Placeholders';
+    } else {
+        div.style.display = 'none';
+        btn.textContent = '📋 Show Placeholders';
+    }
+}
+
+// Load HTML file for attachment
+function loadHtmlAttachment(context, event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        const data = { name: file.name, content: e.target.result };
+        if (context === 'single') {
+            singleAttachmentData = data;
+            document.getElementById('singleAttachName').textContent = `📎 ${file.name}`;
+            document.getElementById('singleClearAttach').style.display = 'inline-block';
+        } else {
+            bulkAttachmentData = data;
+            document.getElementById('bulkAttachName').textContent = `📎 ${file.name}`;
+            document.getElementById('bulkClearAttach').style.display = 'inline-block';
+        }
+    };
+    reader.readAsText(file);
+}
+
+// Remove loaded attachment
+function clearAttachment(context) {
+    if (context === 'single') {
+        singleAttachmentData = null;
+        document.getElementById('singleAttachName').textContent = '';
+        document.getElementById('singleClearAttach').style.display = 'none';
+        document.getElementById('singleHtmlFile').value = '';
+    } else {
+        bulkAttachmentData = null;
+        document.getElementById('bulkAttachName').textContent = '';
+        document.getElementById('bulkClearAttach').style.display = 'none';
+        document.getElementById('bulkHtmlFile').value = '';
+    }
+}
+
+// Convert HTML attachment to selected format and return base64 object
+async function getAttachmentData(context) {
+    const raw = context === 'single' ? singleAttachmentData : bulkAttachmentData;
+    const format = document.getElementById(context + 'AttachFormat').value;
+    if (!raw) return null;
+
+    if (format === 'html') {
+        // Base64 encode the HTML text
+        const b64 = btoa(unescape(encodeURIComponent(raw.content)));
+        const filename = raw.name.replace(/\.(html|htm)$/i, '.html');
+        return { name: filename, content: b64, type: 'text/html' };
+    }
+
+    // For PNG or PDF — render HTML in hidden iframe, capture with html2canvas
+    return new Promise((resolve) => {
+        const iframe = document.createElement('iframe');
+        iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:1200px;height:900px;border:none;';
+        document.body.appendChild(iframe);
+        iframe.onload = async function() {
+            try {
+                const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
+                const canvas = await html2canvas(iframeDoc.body, { useCORS: true, scale: 1.5, logging: false });
+                document.body.removeChild(iframe);
+
+                if (format === 'png') {
+                    const pngData = canvas.toDataURL('image/png').split(',')[1];
+                    const filename = raw.name.replace(/\.(html|htm)$/i, '.png');
+                    resolve({ name: filename, content: pngData, type: 'image/png' });
+                } else {
+                    // PDF
+                    const { jsPDF } = window.jspdf;
+                    const pdf = new jsPDF({ orientation: 'portrait', unit: 'px', format: [canvas.width, canvas.height] });
+                    pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, 0, canvas.width, canvas.height);
+                    const pdfB64 = pdf.output('datauristring').split(',')[1];
+                    const filename = raw.name.replace(/\.(html|htm)$/i, '.pdf');
+                    resolve({ name: filename, content: pdfB64, type: 'application/pdf' });
+                }
+            } catch (err) {
+                document.body.removeChild(iframe);
+                console.error('Attachment conversion error:', err);
+                resolve(null);
+            }
+        };
+        iframe.srcdoc = raw.content;
+    });
 }
 
 // Utility: Show result message
