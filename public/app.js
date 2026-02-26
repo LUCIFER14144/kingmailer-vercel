@@ -14,6 +14,7 @@ let bulkSendingActive = false;
 document.addEventListener('DOMContentLoaded', function() {
     initTabs();
     loadAccounts();
+    loadEc2Credentials(); // Load saved credentials first
     loadEc2Instances();
     
     // Show/hide custom SMTP fields
@@ -75,15 +76,56 @@ async function loadAccounts() {
 
 async function loadEc2Instances() {
     try {
+        // Get saved credentials from localStorage
+        const savedCreds = localStorage.getItem('aws_credentials');
+        if (!savedCreds) {
+            console.log('No AWS credentials found in localStorage');
+            ec2Instances = [];
+            renderEc2Instances(ec2Instances);
+            return;
+        }
+        
+        const creds = JSON.parse(savedCreds);
+        
+        // First, send credentials to backend
+        await fetch('/api/ec2_management', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                action: 'save_credentials',
+                ...creds
+            })
+        });
+        
+        // Then fetch instances
         const response = await fetch('/api/ec2_management');
         const data = await response.json();
         
         if (data.success) {
             ec2Instances = data.instances || [];
             renderEc2Instances(ec2Instances);
+            console.log('Loaded EC2 instances:', ec2Instances.length);
         }
     } catch (error) {
         console.error('Failed to load EC2 instances:', error);
+        ec2Instances = [];
+    }
+}
+
+// Load AWS credentials from localStorage
+function loadEc2Credentials() {
+    try {
+        const savedCreds = localStorage.getItem('aws_credentials');
+        if (savedCreds) {
+            const creds = JSON.parse(savedCreds);
+            document.getElementById('ec2AccessKey').value = creds.access_key || '';
+            document.getElementById('ec2SecretKey').value = creds.secret_key || '';
+            document.getElementById('ec2Region').value = creds.region || 'us-east-1';
+            document.getElementById('ec2Keypair').value = creds.keypair || '';
+            document.getElementById('ec2SecurityGroup').value = creds.security_group || '';
+        }
+    } catch (error) {
+        console.error('Failed to load AWS credentials:', error);
     }
 }
 
@@ -334,7 +376,20 @@ async function saveAwsCredentials() {
         const data = await response.json();
         
         if (data.success) {
+            // Save credentials to localStorage
+            const credentials = {
+                access_key: accessKey,
+                secret_key: secretKey,
+                region: region,
+                keypair: keypair,
+                security_group: securityGroup || ''
+            };
+            localStorage.setItem('aws_credentials', JSON.stringify(credentials));
+            
             showResult('ec2Result', '✅ AWS credentials saved successfully!', 'success');
+            
+            // Reload instances after saving credentials
+            setTimeout(() => loadEc2Instances(), 1000);
         } else {
             showResult('ec2Result', `❌ ${data.error}`, 'error');
         }

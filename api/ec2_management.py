@@ -233,15 +233,41 @@ class handler(BaseHTTPRequestHandler):
     def do_GET(self):
         """Get EC2 instances or credentials"""
         try:
-            global AWS_CREDENTIALS
+            global AWS_CREDENTIALS, EC2_INSTANCES
             
             if self.path == '/api/ec2_management':
-                # Return stored instances
-                result = {
-                    'success': True,
-                    'instances': EC2_INSTANCES,
-                    'has_credentials': AWS_CREDENTIALS is not None
-                }
+                # If credentials exist, fetch live instances from AWS
+                if AWS_CREDENTIALS:
+                    live_result = list_ec2_instances(
+                        AWS_CREDENTIALS['access_key'],
+                        AWS_CREDENTIALS['secret_key'],
+                        AWS_CREDENTIALS['region']
+                    )
+                    
+                    if live_result.get('success'):
+                        # Update in-memory instances with live data
+                        EC2_INSTANCES = live_result['instances']
+                        result = {
+                            'success': True,
+                            'instances': EC2_INSTANCES,
+                            'has_credentials': True
+                        }
+                    else:
+                        # AWS call failed, return stored instances
+                        result = {
+                            'success': True,
+                            'instances': EC2_INSTANCES,
+                            'has_credentials': True,
+                            'warning': 'Could not fetch live instances from AWS'
+                        }
+                else:
+                    # No credentials, return empty list
+                    result = {
+                        'success': True,
+                        'instances': [],
+                        'has_credentials': False,
+                        'message': 'Please save AWS credentials first'
+                    }
             elif self.path == '/api/ec2_management/credentials':
                 # Return credentials (without secret key)
                 if AWS_CREDENTIALS:
