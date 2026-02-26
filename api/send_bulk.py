@@ -180,7 +180,8 @@ class handler(BaseHTTPRequestHandler):
             post_data = self.rfile.read(content_length)
             data = json.loads(post_data.decode('utf-8'))
             
-            csv_data = data.get('csv', '')
+            # Handle both 'csv' and 'csv_data' parameters for backwards compatibility
+            csv_data = data.get('csv_data', data.get('csv', ''))
             subject_template = data.get('subject', 'No Subject')
             html_template = data.get('html', '')
             method = data.get('method', 'smtp')
