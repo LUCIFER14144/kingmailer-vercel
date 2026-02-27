@@ -179,6 +179,51 @@ function loadEc2Credentials() {
     } catch (error) {
         console.error('Failed to load AWS credentials:', error);
     }
+    renderSavedAwsCredentials();
+}
+
+function renderSavedAwsCredentials() {
+    const container = document.getElementById('savedAwsCredentialsList');
+    if (!container) return;
+    const raw = localStorage.getItem('aws_credentials');
+    if (!raw) { container.innerHTML = ''; return; }
+    const creds = JSON.parse(raw);
+    const masked = '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022' + (creds.secret_key || '').slice(-4);
+    const regionLabels = {
+        'us-east-1': 'US East (N. Virginia)',
+        'us-west-2': 'US West (Oregon)',
+        'eu-west-1': 'EU (Ireland)',
+        'ap-southeast-1': 'Asia Pacific (Singapore)',
+        'ap-south-1': 'Asia Pacific (Mumbai)'
+    };
+    container.innerHTML = `
+        <div style="background:#0d1f12;border:1px solid #1a4a25;border-radius:8px;padding:14px 16px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px;">
+                <span style="font-weight:700;color:#00ff9d;font-size:14px;">&#9989; Saved AWS Credentials</span>
+                <button onclick="deleteAwsCredentials()" style="background:#f87171;color:#fff;border:none;border-radius:4px;padding:5px 14px;cursor:pointer;font-size:12px;">&#128465; Remove</button>
+            </div>
+            <div style="font-size:13px;color:#ccc;line-height:2;">
+                <table style="border-collapse:collapse;width:100%;">
+                    <tr><td style="color:#888;padding-right:16px;white-space:nowrap;">Access Key</td><td><code style="background:#1a2a20;padding:2px 8px;border-radius:3px;font-size:12px;">${creds.access_key || '—'}</code></td></tr>
+                    <tr><td style="color:#888;padding-right:16px;">Secret Key</td><td><code style="background:#1a2a20;padding:2px 8px;border-radius:3px;font-size:12px;">${masked}</code></td></tr>
+                    <tr><td style="color:#888;padding-right:16px;">Region</td><td>${regionLabels[creds.region] || creds.region || '—'}</td></tr>
+                    <tr><td style="color:#888;padding-right:16px;">Key Pair</td><td>${creds.keypair || '—'}</td></tr>
+                    ${creds.security_group ? `<tr><td style="color:#888;padding-right:16px;">Security Group</td><td>${creds.security_group}</td></tr>` : ''}
+                </table>
+            </div>
+        </div>`;
+}
+
+function deleteAwsCredentials() {
+    if (!confirm('Remove saved AWS credentials from this browser?')) return;
+    localStorage.removeItem('aws_credentials');
+    document.getElementById('ec2AccessKey').value = '';
+    document.getElementById('ec2SecretKey').value = '';
+    document.getElementById('ec2Region').value = 'us-east-1';
+    document.getElementById('ec2Keypair').value = '';
+    document.getElementById('ec2SecurityGroup').value = '';
+    renderSavedAwsCredentials();
+    showResult('ec2Result', '\uD83D\uDDD1 AWS credentials removed.', 'info');
 }
 
 // SMTP Functions
@@ -442,8 +487,9 @@ async function saveAwsCredentials() {
             };
             localStorage.setItem('aws_credentials', JSON.stringify(credentials));
             
-            showResult('ec2Result', '✅ AWS credentials saved successfully!', 'success');
-            
+            showResult('ec2Result', '\u2705 AWS credentials saved successfully!', 'success');
+            renderSavedAwsCredentials();
+
             // Reload instances after saving credentials
             setTimeout(() => loadEc2Instances(), 1000);
         } else {
@@ -1548,7 +1594,23 @@ function syncBatchSection() {
     const methodEl = document.getElementById('bulkMethod');
     const section  = document.getElementById('smtpBatchSection');
     if (!section || !methodEl) return;
-    section.style.display = (methodEl.value === 'smtp') ? 'block' : 'none';
+    const method = methodEl.value;
+    section.style.display = (method === 'smtp' || method === 'ec2') ? 'block' : 'none';
+    // Update title + description text to match the selected method
+    const labelSpan  = document.getElementById('batchModeLabel');
+    const labelHtml  = labelSpan ? labelSpan.outerHTML : '';
+    const titleEl    = section.querySelector('.batch-section-title');
+    const descEl     = section.querySelector('small');
+    const labelInput = section.querySelector('#batchSize')?.closest('.batch-row')?.querySelector('label');
+    if (method === 'ec2') {
+        if (titleEl)    titleEl.innerHTML   = `⚙️ EC2 Batch &amp; Rotation Settings &nbsp;${labelHtml}`;
+        if (descEl)     descEl.textContent  = 'Rotate EC2 instances and SMTP accounts after every batch for better deliverability.';
+        if (labelInput) labelInput.textContent = 'Emails per batch (before rotating EC2/SMTP):';
+    } else {
+        if (titleEl)    titleEl.innerHTML   = `⚙️ SMTP Batch Settings &nbsp;${labelHtml}`;
+        if (descEl)     descEl.textContent  = 'When using SMTP with multiple accounts, the sender account rotates after every batch.';
+        if (labelInput) labelInput.textContent = 'Emails per batch (before rotating SMTP):';
+    }
 }
 
 // ── Spintax resolver ───────────────────────────────────────────────────────
