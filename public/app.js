@@ -999,6 +999,7 @@ async function sendSingleEmail() {
                 subject: subject,
                 html: html,
                 method: method,
+                include_unsubscribe: false,   // single/test sends must never have Precedence:bulk
                 ...(attachment ? { attachment } : {}),
                 ...config
             })

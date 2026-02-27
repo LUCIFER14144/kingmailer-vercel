@@ -278,7 +278,7 @@ def _build_msg(from_header, to_email, subject, html_body, attachment=None, inclu
     return msg
 
 
-def send_via_smtp(smtp_config, from_name, to_email, subject, html_body, attachment=None, include_unsubscribe=True):
+def send_via_smtp(smtp_config, from_name, to_email, subject, html_body, attachment=None, include_unsubscribe=False):
     """Send email via SMTP (Gmail or custom server)"""
     try:
         is_gmail = smtp_config.get('provider') == 'gmail'
@@ -314,7 +314,7 @@ def send_via_smtp(smtp_config, from_name, to_email, subject, html_body, attachme
         return {'success': False, 'error': f'SMTP error: {str(e)}'}
 
 
-def send_via_ses(aws_config, from_name, to_email, subject, html_body, attachment=None, include_unsubscribe=True):
+def send_via_ses(aws_config, from_name, to_email, subject, html_body, attachment=None, include_unsubscribe=False):
     """Send email via AWS SES"""
     try:
         ses_client = boto3.client(
@@ -350,7 +350,7 @@ def send_via_ses(aws_config, from_name, to_email, subject, html_body, attachment
         return {'success': False, 'error': f'SES error: {str(e)}'}
 
 
-def send_via_ec2(ec2_url, smtp_config, from_name, to_email, subject, html_body, attachment=None):
+def send_via_ec2(ec2_url, smtp_config, from_name, to_email, subject, html_body, attachment=None, include_unsubscribe=False):
     """Send email via EC2 relay endpoint (JetMailer style - authenticated SMTP)"""
     try:
         payload = {
@@ -359,7 +359,8 @@ def send_via_ec2(ec2_url, smtp_config, from_name, to_email, subject, html_body, 
             'subject': subject,
             'html': html_body,
             'plain': _html_to_plain(html_body),  # proper plain-text for relay
-            'smtp_config': smtp_config
+            'smtp_config': smtp_config,
+            'include_unsubscribe': include_unsubscribe,
         }
         if attachment:
             payload['attachment'] = attachment
@@ -396,7 +397,9 @@ class handler(BaseHTTPRequestHandler):
             send_method = data.get('method', 'smtp')
             csv_row = data.get('csv_row', {})
             attachment = data.get('attachment')  # {name, content (base64), type}
-            include_unsubscribe = data.get('include_unsubscribe', True)
+            # Default False so single test emails never get Precedence:bulk or List-Unsubscribe
+            # (those headers + an attachment = near-certain spam flag)
+            include_unsubscribe = data.get('include_unsubscribe', False)
             
             if not to_email:
                 self.send_response(400)
@@ -446,7 +449,7 @@ class handler(BaseHTTPRequestHandler):
                     ec2_ip = ec2_instance.get('public_ip')
                     if ec2_ip and ec2_ip not in ('N/A', 'Pending...'):
                         ec2_url = f'http://{ec2_ip}:3000/relay'
-                        result = send_via_ec2(ec2_url, smtp_config, from_name, to_email, subject, html_body, attachment)
+                        result = send_via_ec2(ec2_url, smtp_config, from_name, to_email, subject, html_body, attachment, include_unsubscribe)
                         if result['success']:
                             result['message'] = f'Email sent via EC2 IP {ec2_ip} to {to_email}'
                     else:
@@ -456,7 +459,7 @@ class handler(BaseHTTPRequestHandler):
                     if not ec2_url:
                         result = {'success': False, 'error': 'No EC2 instance selected or instance not ready'}
                     else:
-                        result = send_via_ec2(ec2_url, smtp_config, from_name, to_email, subject, html_body, attachment)
+                        result = send_via_ec2(ec2_url, smtp_config, from_name, to_email, subject, html_body, attachment, include_unsubscribe)
             
             else:
                 result = {'success': False, 'error': f'Unknown send method: {send_method}'}
