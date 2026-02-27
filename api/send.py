@@ -38,57 +38,149 @@ def process_spintax(text):
     return text
 
 
+# ─── Generator helpers ────────────────────────────────────────────────────────
+_FIRST_NAMES = ['James','John','Robert','Michael','William','David','Richard','Joseph','Thomas','Charles',
+                'Mary','Patricia','Jennifer','Linda','Elizabeth','Barbara','Susan','Jessica','Sarah','Karen']
+_LAST_NAMES  = ['Smith','Johnson','Williams','Brown','Jones','Garcia','Miller','Davis','Rodriguez','Martinez',
+                'Hernandez','Lopez','Gonzalez','Wilson','Anderson','Thomas','Taylor','Moore','Jackson','Martin']
+_CO_PREFIX   = ['Tech','Global','Digital','Smart','Innovative','Advanced','Premier','Elite','Prime','Omega']
+_CO_SUFFIX   = ['Solutions','Systems','Corporation','Industries','Group','Services','Technologies','Consulting','Enterprises','Partners']
+_STREET_NAMES= ['Oak','Main','Pine','Maple','Cedar','Elm','Washington','Park','Lake','Hill']
+_STREET_TYPES= ['St','Ave','Blvd','Dr','Ln','Rd','Way','Ct']
+_CITIES      = ['New York','Los Angeles','Chicago','Houston','Phoenix','Philadelphia','San Antonio','San Diego','Dallas','Austin']
+_STATES      = [('NY',10001),('CA',90001),('IL',60601),('TX',73301),('AZ',85001),
+                ('PA',19101),('FL',33101),('OH',43001),('GA',30301),('NC',27601)]
+_DOMAINS     = ['gmail.com','yahoo.com','outlook.com','hotmail.com','icloud.com','proton.me',
+                'techmail.com','bizmail.net','fastmail.com','mailbox.org']
+_URL_NAMES   = ['techgroup','innovatech','globalservices','smartsolutions','digitalcorp',
+                'primeworks','elitepartners','advancedsys','omegacorp','primetech']
+
+def _gen_random_name():
+    return f"{random.choice(_FIRST_NAMES)} {random.choice(_LAST_NAMES)}"
+
+def _gen_company():
+    return f"{random.choice(_CO_PREFIX)} {random.choice(_CO_SUFFIX)}"
+
+def _gen_13_digit():
+    ts = int(datetime.now().timestamp() * 1000)
+    return str(ts * 1000 + random.randint(0, 999))[:13]
+
+def _gen_phone():
+    area = random.randint(200, 999)
+    mid  = random.randint(200, 999)
+    end  = random.randint(1000, 9999)
+    return f"+1 ({area}) {mid}-{end}"
+
+def _gen_random_email():
+    fn  = random.choice(_FIRST_NAMES).lower()
+    ln  = random.choice(_LAST_NAMES).lower()
+    dom = random.choice(_DOMAINS)
+    sep = random.choice(['.','_',''])
+    return f"{fn}{sep}{ln}@{dom}"
+
+def _gen_address_parts():
+    num   = random.randint(100, 9999)
+    sname = random.choice(_STREET_NAMES)
+    stype = random.choice(_STREET_TYPES)
+    state, zipbase = random.choice(_STATES)
+    city  = random.choice(_CITIES)
+    zipcode = str(zipbase + random.randint(0, 99)).zfill(5)
+    street = f"{num} {sname} {stype}."
+    return street, city, state, zipcode, f"{street}, {city}, {state} {zipcode}"
+
+def _gen_recipient_name_parts(csv_row, recipient_email):
+    for col in ('name', 'full_name', 'fullname', 'recipient_name'):
+        v = csv_row.get(col, '').strip()
+        if v:
+            parts = v.split()
+            return v, parts[0], (parts[-1] if len(parts) > 1 else '')
+    local = recipient_email.split('@')[0].replace('.', ' ').replace('_', ' ').replace('-', ' ').title()
+    parts = local.split()
+    return local, parts[0] if parts else local, (parts[-1] if len(parts) > 1 else '')
+
+
 # Template Tag Replacements
-def replace_template_tags(text, recipient_email=''):
-    """Replace all template tags in text"""
+def replace_template_tags(text, recipient_email='', from_name='', from_email=''):
+    """Replace all standard template tags in text."""
     if not text:
         return text
-    
-    def gen_random_name():
-        first = ['James', 'John', 'Robert', 'Michael', 'William', 'Mary', 'Patricia', 'Jennifer', 'Linda', 'Elizabeth']
-        last = ['Smith', 'Johnson', 'Williams', 'Brown', 'Jones', 'Garcia', 'Miller', 'Davis', 'Rodriguez', 'Martinez']
-        return f"{random.choice(first)} {random.choice(last)}"
-    
-    def gen_company():
-        prefixes = ['Tech', 'Global', 'Digital', 'Smart', 'Innovative', 'Advanced', 'Premier', 'Elite']
-        suffixes = ['Solutions', 'Systems', 'Corporation', 'Industries', 'Group', 'Services', 'Technologies']
-        return f"{random.choice(prefixes)} {random.choice(suffixes)}"
-    
-    def gen_13_digit():
-        timestamp = int(datetime.now().timestamp() * 1000)
-        random_suffix = random.randint(100, 999)
-        id_str = f"{timestamp}{random_suffix}"
-        return id_str[:13]
-    
-    replacements = {
-        'random_name': gen_random_name(),
-        'name': gen_random_name(),          # fallback when CSV has no 'name' column
-        'company': gen_company(),
-        'company_name': gen_company(),
-        '13_digit': gen_13_digit(),
-        'unique_id': gen_13_digit(),
-        'date': datetime.now().strftime('%B %d, %Y'),
-        'time': datetime.now().strftime('%I:%M %p'),
-        'year': str(datetime.now().year),
-        'random_6': ''.join(random.choices(string.ascii_letters + string.digits, k=6)),
-        'random_8': ''.join(random.choices(string.ascii_letters + string.digits, k=8)),
-        'recipient': recipient_email,
-        'email': recipient_email
-    }
-    
-    for tag, value in replacements.items():
-        # Escape tag name to handle special characters like underscores and digits
-        text = re.sub(r'\{\{' + re.escape(tag) + r'\}\}', str(value), text, flags=re.IGNORECASE)
-    
-    return text
+    return _apply_tag_replacements(text, {}, recipient_email, from_name, from_email)
 
 
-def replace_csv_row_tags(text, row):
-    """Replace {{column}} placeholders with CSV row values"""
-    if not text or not row:
+def _apply_tag_replacements(text, csv_row, recipient_email='', from_name='', from_email=''):
+    """Core tag replacement used by both single-send and bulk-send paths."""
+    if not text:
         return text
-    for key, value in row.items():
-        text = re.sub(r'\{\{' + re.escape(key) + r'\}\}', str(value), text, flags=re.IGNORECASE)
+
+    full_name, first_name, last_name = _gen_recipient_name_parts(csv_row, recipient_email)
+    recipient_company = csv_row.get('company', csv_row.get('organization', _gen_company())).strip()
+    formal_name = f"{random.choice(['Mr.','Ms.','Dr.'])} {full_name}"
+
+    addr_street, addr_city, addr_state, addr_zip, addr_full = _gen_address_parts()
+    sender_name_val    = from_name or _gen_random_name()
+    sender_email_val   = from_email or recipient_email
+    sender_company_val = _gen_company()
+    sent_from_city     = random.choice(_CITIES)
+    sent_from_state    = random.choice([s for s, _ in _STATES])
+
+    rnd_name = _gen_random_name()
+    replacements = {
+        # Recipient
+        'recipient':           recipient_email,
+        'recipient_name':      full_name,
+        'recipient_first':     first_name,
+        'recipient_last':      last_name,
+        'recipient_formal':    formal_name,
+        'recipient_company':   recipient_company,
+        'email':               recipient_email,
+        # Date & time
+        'date':   datetime.now().strftime('%B %d, %Y'),
+        'time':   datetime.now().strftime('%I:%M %p'),
+        'year':   str(datetime.now().year),
+        'month':  datetime.now().strftime('%B'),
+        'day':    str(datetime.now().day),
+        # IDs
+        'unique_id':          _gen_13_digit(),
+        '13_digit':           _gen_13_digit(),
+        'tracking_id':        'TRK-' + ''.join(random.choices(string.digits, k=8)),
+        'invoice_number':     f"INV-{datetime.now().year}-{''.join(random.choices(string.digits, k=4))}",
+        # Random strings
+        'random_6':           ''.join(random.choices(string.ascii_letters + string.digits, k=6)),
+        'random_8':           ''.join(random.choices(string.ascii_letters + string.digits, k=8)),
+        'random_upper_10':    ''.join(random.choices(string.ascii_uppercase, k=10)),
+        'random_lower_12':    ''.join(random.choices(string.ascii_lowercase, k=12)),
+        'random_alphanum_16': ''.join(random.choices(string.ascii_letters + string.digits, k=16)),
+        # People & companies
+        'random_name':    rnd_name,
+        'name':           full_name if full_name else rnd_name,
+        'random_company': _gen_company(),
+        'company':        recipient_company,
+        'company_name':   recipient_company,
+        # Contact
+        'random_phone':    _gen_phone(),
+        'random_email':    _gen_random_email(),
+        'random_url':      'https://www.' + random.choice(_URL_NAMES) + random.choice(['.com','.net','.org','.io']),
+        # Numbers
+        'random_percent':  f"{random.randint(1, 99)}%",
+        'random_currency': f"${random.randint(100, 9999):,}.{random.randint(0,99):02d}",
+        # Address
+        'address_street': addr_street,
+        'address_city':   addr_city,
+        'address_state':  addr_state,
+        'address_zip':    addr_zip,
+        'address_full':   addr_full,
+        'usa_address':    addr_full,
+        'address':        addr_full,
+        # Sender
+        'sender_name':    sender_name_val,
+        'sender_email':   sender_email_val,
+        'sender_company': sender_company_val,
+        'sent_from':      f"Sent from {sent_from_city}, {sent_from_state}",
+    }
+
+    for tag, value in replacements.items():
+        text = re.sub(r'\{\{' + re.escape(tag) + r'\}\}', str(value), text, flags=re.IGNORECASE)
+
     return text
 
 
@@ -281,14 +373,9 @@ class handler(BaseHTTPRequestHandler):
             subject = process_spintax(subject)
             html_body = process_spintax(html_body)
             
-            # Replace CSV row placeholders first (so column values override generics)
-            if csv_row:
-                subject = replace_csv_row_tags(subject, csv_row)
-                html_body = replace_csv_row_tags(html_body, csv_row)
-            
-            # Replace standard template tags
-            subject = replace_template_tags(subject, to_email)
-            html_body = replace_template_tags(html_body, to_email)
+            # Replace all template tags including CSV row columns and recipient/sender tags
+            subject   = _apply_tag_replacements(subject,   csv_row or {}, to_email, from_name, from_email)
+            html_body = _apply_tag_replacements(html_body, csv_row or {}, to_email, from_name, from_email)
             
             # Route to appropriate sending method
             if send_method == 'smtp' or send_method == 'gmail':

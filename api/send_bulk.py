@@ -7,6 +7,7 @@ from http.server import BaseHTTPRequestHandler
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.utils import formatdate, make_msgid
 import boto3
 import json
 import csv
@@ -37,95 +38,235 @@ def process_spintax(text):
     return text
 
 
-# Template Tag Replacements
+# ─── Generator helpers ────────────────────────────────────────────────────────
+_FIRST_NAMES = ['James','John','Robert','Michael','William','David','Richard','Joseph','Thomas','Charles',
+                'Mary','Patricia','Jennifer','Linda','Elizabeth','Barbara','Susan','Jessica','Sarah','Karen']
+_LAST_NAMES  = ['Smith','Johnson','Williams','Brown','Jones','Garcia','Miller','Davis','Rodriguez','Martinez',
+                'Hernandez','Lopez','Gonzalez','Wilson','Anderson','Thomas','Taylor','Moore','Jackson','Martin']
+_CO_PREFIX   = ['Tech','Global','Digital','Smart','Innovative','Advanced','Premier','Elite','Prime','Omega']
+_CO_SUFFIX   = ['Solutions','Systems','Corporation','Industries','Group','Services','Technologies','Consulting','Enterprises','Partners']
+_STREET_NAMES= ['Oak','Main','Pine','Maple','Cedar','Elm','Washington','Park','Lake','Hill']
+_STREET_TYPES= ['St','Ave','Blvd','Dr','Ln','Rd','Way','Ct']
+_CITIES      = ['New York','Los Angeles','Chicago','Houston','Phoenix','Philadelphia','San Antonio','San Diego','Dallas','Austin']
+_STATES      = [('NY',10001),('CA',90001),('IL',60601),('TX',73301),('AZ',85001),
+                ('PA',19101),('FL',33101),('OH',43001),('GA',30301),('NC',27601)]
+_DOMAINS     = ['gmail.com','yahoo.com','outlook.com','hotmail.com','icloud.com','proton.me',
+                'techmail.com','bizmail.net','fastmail.com','mailbox.org']
+_URL_NAMES   = ['techgroup','innovatech','globalservices','smartsolutions','digitalcorp',
+                'primeworks','elitepartners','advancedsys','omegacorp','primetech']
+
 def gen_random_name():
-    first = ['James', 'John', 'Robert', 'Michael', 'William', 'Mary', 'Patricia', 'Jennifer', 'Linda', 'Elizabeth']
-    last = ['Smith', 'Johnson', 'Williams', 'Brown', 'Jones', 'Garcia', 'Miller', 'Davis', 'Rodriguez', 'Martinez']
-    return f"{random.choice(first)} {random.choice(last)}"
+    return f"{random.choice(_FIRST_NAMES)} {random.choice(_LAST_NAMES)}"
 
 def gen_company():
-    prefixes = ['Tech', 'Global', 'Digital', 'Smart', 'Innovative', 'Advanced', 'Premier', 'Elite']
-    suffixes = ['Solutions', 'Systems', 'Corporation', 'Industries', 'Group', 'Services', 'Technologies']
-    return f"{random.choice(prefixes)} {random.choice(suffixes)}"
+    return f"{random.choice(_CO_PREFIX)} {random.choice(_CO_SUFFIX)}"
 
 def gen_13_digit():
-    timestamp = int(datetime.now().timestamp() * 1000)
-    random_suffix = random.randint(100, 999)
-    id_str = f"{timestamp}{random_suffix}"
-    return id_str[:13]
+    ts = int(datetime.now().timestamp() * 1000)
+    return str(ts * 1000 + random.randint(0, 999))[:13]
+
+def gen_tracking_id():
+    return 'TRK-' + ''.join(random.choices(string.digits, k=8))
+
+def gen_invoice_number():
+    return f"INV-{datetime.now().year}-{''.join(random.choices(string.digits, k=4))}"
+
+def gen_phone():
+    area = random.randint(200, 999)
+    mid  = random.randint(200, 999)
+    end  = random.randint(1000, 9999)
+    return f"+1 ({area}) {mid}-{end}"
+
+def gen_random_email():
+    fn = random.choice(_FIRST_NAMES).lower()
+    ln = random.choice(_LAST_NAMES).lower()
+    dom = random.choice(_DOMAINS)
+    sep = random.choice(['.', '_', ''])
+    return f"{fn}{sep}{ln}@{dom}"
+
+def gen_random_url():
+    name = random.choice(_URL_NAMES)
+    tld  = random.choice(['.com', '.net', '.org', '.io'])
+    return f"https://www.{name}{tld}"
+
+def gen_address_parts():
+    num   = random.randint(100, 9999)
+    sname = random.choice(_STREET_NAMES)
+    stype = random.choice(_STREET_TYPES)
+    state, zipbase = random.choice(_STATES)
+    city  = random.choice(_CITIES)
+    zipcode = str(zipbase + random.randint(0, 99)).zfill(5)
+    street = f"{num} {sname} {stype}."
+    return street, city, state, zipcode, f"{street}, {city}, {state} {zipcode}"
+
+def gen_recipient_name_parts(row_data, recipient_email):
+    """Derive recipient name from CSV columns or email address."""
+    # Try explicit name columns first
+    for col in ('name', 'full_name', 'fullname', 'recipient_name'):
+        v = row_data.get(col, '').strip()
+        if v:
+            parts = v.split()
+            first = parts[0] if parts else v
+            last  = parts[-1] if len(parts) > 1 else ''
+            return v, first, last
+    # Fallback: derive from email local part
+    local = recipient_email.split('@')[0].replace('.', ' ').replace('_', ' ').replace('-', ' ').title()
+    parts = local.split()
+    first = parts[0] if parts else local
+    last  = parts[-1] if len(parts) > 1 else ''
+    return local, first, last
+
+def _html_to_plain(html):
+    """Strip HTML tags to produce a plain-text fallback."""
+    text = re.sub(r'<br\s*/?>', '\n', html, flags=re.IGNORECASE)
+    text = re.sub(r'<p[^>]*>', '\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'</p>', '\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'<li[^>]*>', '\n• ', text, flags=re.IGNORECASE)
+    text = re.sub(r'<[^>]+>', '', text)
+    text = re.sub(r'[ \t]+', ' ', text)
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    return text.strip()
 
 
-def replace_template_tags(text, row_data, recipient_email=''):
-    """Replace template tags including CSV column data"""
+def replace_template_tags(text, row_data, recipient_email='', from_name='', from_email=''):
+    """Replace all template tags including CSV column data and recipient-derived tags."""
     if not text:
         return text
-    
-    # First replace CSV column placeholders
+
+    # ── 1. CSV column placeholders first (highest priority) ──────────────────
     for key, value in row_data.items():
-        text = re.sub(r'\{\{' + key + r'\}\}', str(value), text, flags=re.IGNORECASE)
-        text = re.sub(r'\{' + key + r'\}', str(value), text, flags=re.IGNORECASE)
-    
-    # Then replace standard template tags (generate fresh for each email)
+        escaped = re.escape(key)
+        text = re.sub(r'\{\{' + escaped + r'\}\}', str(value), text, flags=re.IGNORECASE)
+        # Only match single-brace if NOT part of spintax (no pipe nearby)
+        text = re.sub(r'(?<!\{)\{' + escaped + r'\}(?!\})', str(value), text, flags=re.IGNORECASE)
+
+    # ── 2. Recipient-derived tags ─────────────────────────────────────────────
+    full_name, first_name, last_name = gen_recipient_name_parts(row_data, recipient_email)
+    recipient_company = row_data.get('company', row_data.get('organization', gen_company())).strip()
+    titles = ['Mr.', 'Ms.', 'Dr.']
+    formal_name = f"{random.choice(titles)} {full_name}"
+
+    # ── 3. Address parts ──────────────────────────────────────────────────────
+    addr_street, addr_city, addr_state, addr_zip, addr_full = gen_address_parts()
+
+    # ── 4. Sender tags ───────────────────────────────────────────────────────
+    sender_name_val    = from_name or gen_random_name()
+    sender_email_val   = from_email or recipient_email
+    sender_company_val = row_data.get('sender_company', gen_company())
+    sent_from_city     = random.choice(_CITIES)
+    sent_from_state    = random.choice([s for s, _ in _STATES])
+
+    # ── 5. Full replacements map ──────────────────────────────────────────────
+    rnd_name = gen_random_name()
     replacements = {
-        'random_name': gen_random_name(),
-        'name': gen_random_name(),          # fallback when CSV has no 'name' column
-        'company': gen_company(),
-        'company_name': gen_company(),
-        '13_digit': gen_13_digit(),
-        'unique_id': gen_13_digit(),
-        'date': datetime.now().strftime('%B %d, %Y'),
-        'time': datetime.now().strftime('%I:%M %p'),
-        'year': str(datetime.now().year),
-        'random_6': ''.join(random.choices(string.ascii_letters + string.digits, k=6)),
-        'random_8': ''.join(random.choices(string.ascii_letters + string.digits, k=8)),
-        'recipient': recipient_email,
-        'email': recipient_email
+        # Recipient
+        'recipient':           recipient_email,
+        'recipient_name':      full_name,
+        'recipient_first':     first_name,
+        'recipient_last':      last_name,
+        'recipient_formal':    formal_name,
+        'recipient_company':   recipient_company,
+        'email':               recipient_email,
+        # Date & time
+        'date':   datetime.now().strftime('%B %d, %Y'),
+        'time':   datetime.now().strftime('%I:%M %p'),
+        'year':   str(datetime.now().year),
+        'month':  datetime.now().strftime('%B'),
+        'day':    str(datetime.now().day),
+        # IDs
+        'unique_id':          gen_13_digit(),
+        '13_digit':           gen_13_digit(),
+        'tracking_id':        gen_tracking_id(),
+        'invoice_number':     gen_invoice_number(),
+        # Random strings
+        'random_6':           ''.join(random.choices(string.ascii_letters + string.digits, k=6)),
+        'random_8':           ''.join(random.choices(string.ascii_letters + string.digits, k=8)),
+        'random_upper_10':    ''.join(random.choices(string.ascii_uppercase, k=10)),
+        'random_lower_12':    ''.join(random.choices(string.ascii_lowercase, k=12)),
+        'random_alphanum_16': ''.join(random.choices(string.ascii_letters + string.digits, k=16)),
+        # People & companies
+        'random_name':    rnd_name,
+        'name':           full_name if full_name else rnd_name,
+        'random_company': gen_company(),
+        'company':        recipient_company,
+        'company_name':   recipient_company,
+        # Contact
+        'random_phone':    gen_phone(),
+        'random_email':    gen_random_email(),
+        'random_url':      gen_random_url(),
+        # Numbers
+        'random_percent':  f"{random.randint(1, 99)}%",
+        'random_currency': f"${random.randint(100, 9999):,}.{random.randint(0,99):02d}",
+        # Address
+        'address_street': addr_street,
+        'address_city':   addr_city,
+        'address_state':  addr_state,
+        'address_zip':    addr_zip,
+        'address_full':   addr_full,
+        'usa_address':    addr_full,
+        'address':        addr_full,
+        # Sender
+        'sender_name':    sender_name_val,
+        'sender_email':   sender_email_val,
+        'sender_company': sender_company_val,
+        'sent_from':      f"Sent from {sent_from_city}, {sent_from_state}",
     }
-    
+
     for tag, value in replacements.items():
-        # Escape tag name to handle special characters like underscores and digits
         text = re.sub(r'\{\{' + re.escape(tag) + r'\}\}', str(value), text, flags=re.IGNORECASE)
-    
+
     return text
 
 
 def send_email_smtp(smtp_config, from_name, recipient, subject, html_body, ec2_ip=None):
     """
-    Send single email via SMTP DIRECTLY to Gmail/Outlook servers.
-    IMPORTANT: This does NOT route through EC2! Connects directly to smtp.gmail.com.
-    Email headers will show GMAIL's IP address, not EC2 or Vercel IPs.
-    The ec2_ip parameter is unused and kept for backwards compatibility.
+    Send a properly structured email via SMTP.
+    Includes multipart/alternative (plain + HTML), Date, Message-ID headers for
+    maximum deliverability.
     """
     try:
         is_gmail = smtp_config.get('provider') == 'gmail'
-        smtp_server = 'smtp.gmail.com' if is_gmail else smtp_config.get('host')
-        smtp_port = 587 if is_gmail else int(smtp_config.get('port', 587))
-        smtp_user = smtp_config.get('user')
-        smtp_pass = smtp_config.get('pass')
-        
-        # Debug logging
+        smtp_server = 'smtp.gmail.com' if is_gmail else smtp_config.get('host', 'smtp.gmail.com')
+        smtp_port   = 587             if is_gmail else int(smtp_config.get('port', 587))
+        smtp_user   = smtp_config.get('user')
+        smtp_pass   = smtp_config.get('pass')
+
         print(f'[SMTP SEND] → {recipient}')
         print(f'[SMTP SERVER] {smtp_server}:{smtp_port}')
         print(f'[SMTP AUTH] {smtp_user}')
-        print(f'[EXPECTED IP] Gmail servers (NOT EC2, NOT Vercel)')
-        
-        # Use sender_name from config or fallback to from_name parameter
+
         sender_name = smtp_config.get('sender_name') or from_name
-        
+        from_header = f"{sender_name} <{smtp_user}>" if sender_name else smtp_user
+
+        # Build multipart/alternative (plain text + HTML) for better inbox delivery
+        # HTML-only emails are heavily penalised by spam filters
+        plain_text = _html_to_plain(html_body)
+
         msg = MIMEMultipart('alternative')
-        msg['From'] = f"{sender_name} <{smtp_user}>" if sender_name else smtp_user
-        msg['To'] = recipient
-        msg['Subject'] = subject
-        msg.attach(MIMEText(html_body, 'html'))
-        
-        # Direct connection to Gmail/Outlook SMTP servers (NOT through EC2 or any proxy)
+        msg['From']       = from_header
+        msg['To']         = recipient
+        msg['Subject']    = subject
+        msg['Date']       = formatdate(localtime=True)
+        msg['Message-ID'] = make_msgid(domain=smtp_user.split('@')[-1] if smtp_user and '@' in smtp_user else 'mail')
+        msg['X-Mailer']   = 'KINGMAILER/4.0'
+
+        # Plain text MUST come first — some spam filters prefer it
+        msg.attach(MIMEText(plain_text, 'plain', 'utf-8'))
+        msg.attach(MIMEText(html_body,  'html',  'utf-8'))
+
         with smtplib.SMTP(smtp_server, smtp_port, timeout=30) as server:
+            server.ehlo()
             server.starttls()
+            server.ehlo()
             server.login(smtp_user, smtp_pass)
             server.send_message(msg)
-        
+
         print(f'[SMTP SUCCESS] Email sent to {recipient} via {smtp_server}')
         return {'success': True}
+    except smtplib.SMTPAuthenticationError:
+        return {'success': False, 'error': 'SMTP authentication failed — check your app password'}
+    except smtplib.SMTPRecipientsRefused:
+        return {'success': False, 'error': f'Recipient address rejected: {recipient}'}
     except Exception as e:
         return {'success': False, 'error': str(e)}
 
@@ -285,8 +426,8 @@ class handler(BaseHTTPRequestHandler):
                 html_body = process_spintax(html_template)
                 
                 # Then replace template tags (including CSV columns)
-                subject = replace_template_tags(subject, row, recipient)
-                html_body = replace_template_tags(html_body, row, recipient)
+                subject   = replace_template_tags(subject,   row, recipient, from_name, from_email)
+                html_body = replace_template_tags(html_body, row, recipient, from_name, from_email)
                 
                 # Send email based on method
                 if method == 'smtp' and smtp_pool:
