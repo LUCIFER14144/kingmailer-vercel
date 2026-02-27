@@ -174,18 +174,23 @@ class EmailRelayHandler(BaseHTTPRequestHandler):
                 msg['From']="%s <%s>" % (sname,u); msg['To']=to_email; msg['Subject']=data.get('subject','')
                 msg['Date']=formatdate(localtime=True)
                 msg['Message-ID']=make_msgid(domain=_domain)
-                msg['MIME-Version']='1.0'
-                msg['List-Unsubscribe']='<mailto:unsubscribe@%s?subject=unsubscribe>' % _domain
-                msg['List-Unsubscribe-Post']='List-Unsubscribe=One-Click'
-                msg['Precedence']='bulk'
-                msg['X-Priority']='3'
+                if data.get('include_unsubscribe',True):
+                    msg['List-Unsubscribe']='<mailto:unsubscribe@%s?subject=unsubscribe>' % _domain
+                    msg['List-Unsubscribe-Post']='List-Unsubscribe=One-Click'
+                    msg['Precedence']='bulk'
                 if att:
                     try:
                         import base64 as _b64; from email.mime.base import MIMEBase; from email import encoders as _enc
                         _ac=att['content']+'='*(-len(att['content'])%4)
-                        _ap=MIMEBase(*(att.get('type','application/octet-stream')+'/x').split('/')[:2])
+                        _mt=att.get('type','') or ''
+                        _ext=att.get('name','').rsplit('.',1)[-1].lower() if '.' in att.get('name','') else ''
+                        _mime_map={'pdf':'application/pdf','png':'image/png','jpg':'image/jpeg','jpeg':'image/jpeg','gif':'image/gif','webp':'image/webp','doc':'application/msword','docx':'application/vnd.openxmlformats-officedocument.wordprocessingml.document','xls':'application/vnd.ms-excel','xlsx':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','zip':'application/zip','txt':'text/plain','csv':'text/csv'}
+                        if not _mt or _mt in ('application/octet-stream','binary/octet-stream'): _mt=_mime_map.get(_ext,'application/pdf')
+                        _main,_sub=(_mt.split('/',1)+['pdf'])[:2]
+                        _ap=MIMEBase(_main,_sub)
                         _ap.set_payload(_b64.b64decode(_ac)); _enc.encode_base64(_ap)
                         _ap.add_header('Content-Disposition','attachment',filename=att.get('name','attachment'))
+                        _ap.add_header('Content-Description',att.get('name','attachment'))
                         msg.attach(_ap)
                     except Exception as _ae: logging.warning("Attach err: %s" % _ae)
                 with smtplib.SMTP(srv,port,timeout=30) as s:
@@ -341,18 +346,23 @@ class EmailRelayHandler(BaseHTTPRequestHandler):
                 msg['Subject']=data.get('subject','')
                 msg['Date']=formatdate(localtime=True)
                 msg['Message-ID']=make_msgid(domain=_domain)
-                msg['MIME-Version']='1.0'
-                msg['List-Unsubscribe']='<mailto:unsubscribe@%s?subject=unsubscribe>' % _domain
-                msg['List-Unsubscribe-Post']='List-Unsubscribe=One-Click'
-                msg['Precedence']='bulk'
-                msg['X-Priority']='3'
+                if data.get('include_unsubscribe',True):
+                    msg['List-Unsubscribe']='<mailto:unsubscribe@%s?subject=unsubscribe>' % _domain
+                    msg['List-Unsubscribe-Post']='List-Unsubscribe=One-Click'
+                    msg['Precedence']='bulk'
                 if att:
                     try:
                         import base64 as _b64; from email.mime.base import MIMEBase; from email import encoders as _enc
                         _ac=att['content']+'='*(-len(att['content'])%4)
-                        _ap=MIMEBase(*(att.get('type','application/octet-stream')+'/x').split('/')[:2])
+                        _mt=att.get('type','') or ''
+                        _ext=att.get('name','').rsplit('.',1)[-1].lower() if '.' in att.get('name','') else ''
+                        _mime_map={'pdf':'application/pdf','png':'image/png','jpg':'image/jpeg','jpeg':'image/jpeg','gif':'image/gif','webp':'image/webp','doc':'application/msword','docx':'application/vnd.openxmlformats-officedocument.wordprocessingml.document','xls':'application/vnd.ms-excel','xlsx':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','zip':'application/zip','txt':'text/plain','csv':'text/csv'}
+                        if not _mt or _mt in ('application/octet-stream','binary/octet-stream'): _mt=_mime_map.get(_ext,'application/pdf')
+                        _main,_sub=(_mt.split('/',1)+['pdf'])[:2]
+                        _ap=MIMEBase(_main,_sub)
                         _ap.set_payload(_b64.b64decode(_ac)); _enc.encode_base64(_ap)
                         _ap.add_header('Content-Disposition','attachment',filename=att.get('name','attachment'))
+                        _ap.add_header('Content-Description',att.get('name','attachment'))
                         msg.attach(_ap)
                     except Exception as _ae: logging.warning(f'Attach err: {_ae}')
                 with smtplib.SMTP(srv,port,timeout=30) as s:
@@ -592,18 +602,23 @@ class EmailRelayHandler(BaseHTTPRequestHandler):
                 msg['From']="%s <%s>" % (sname,u); msg['To']=to_email; msg['Subject']=data.get('subject','')
                 msg['Date']=formatdate(localtime=True)
                 msg['Message-ID']=make_msgid(domain=_domain)
-                msg['MIME-Version']='1.0'
-                msg['List-Unsubscribe']='<mailto:unsubscribe@%s?subject=unsubscribe>' % _domain
-                msg['List-Unsubscribe-Post']='List-Unsubscribe=One-Click'
-                msg['Precedence']='bulk'
-                msg['X-Priority']='3'
+                if data.get('include_unsubscribe',True):
+                    msg['List-Unsubscribe']='<mailto:unsubscribe@%s?subject=unsubscribe>' % _domain
+                    msg['List-Unsubscribe-Post']='List-Unsubscribe=One-Click'
+                    msg['Precedence']='bulk'
                 if att:
                     try:
                         import base64 as _b64; from email.mime.base import MIMEBase; from email import encoders as _enc
                         _ac=att['content']+'='*(-len(att['content'])%4)
-                        _ap=MIMEBase(*(att.get('type','application/octet-stream')+'/x').split('/')[:2])
+                        _mt=att.get('type','') or ''
+                        _ext=att.get('name','').rsplit('.',1)[-1].lower() if '.' in att.get('name','') else ''
+                        _mime_map={'pdf':'application/pdf','png':'image/png','jpg':'image/jpeg','jpeg':'image/jpeg','gif':'image/gif','webp':'image/webp','doc':'application/msword','docx':'application/vnd.openxmlformats-officedocument.wordprocessingml.document','xls':'application/vnd.ms-excel','xlsx':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','zip':'application/zip','txt':'text/plain','csv':'text/csv'}
+                        if not _mt or _mt in ('application/octet-stream','binary/octet-stream'): _mt=_mime_map.get(_ext,'application/pdf')
+                        _main,_sub=(_mt.split('/',1)+['pdf'])[:2]
+                        _ap=MIMEBase(_main,_sub)
                         _ap.set_payload(_b64.b64decode(_ac)); _enc.encode_base64(_ap)
                         _ap.add_header('Content-Disposition','attachment',filename=att.get('name','attachment'))
+                        _ap.add_header('Content-Description',att.get('name','attachment'))
                         msg.attach(_ap)
                     except Exception as _ae: logging.warning("Attach err: %s" % _ae)
                 with smtplib.SMTP(srv,port,timeout=30) as s:

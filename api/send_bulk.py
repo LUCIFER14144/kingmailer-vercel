@@ -222,30 +222,79 @@ def _build_bulk_msg(from_header, smtp_user, recipient, subject, html_body, inclu
     # Determine sender domain for List-Unsubscribe
     sender_domain = smtp_user.split('@')[-1] if smtp_user and '@' in smtp_user else 'mail.com'
 
-    msg = MIMEMultipart('alternative')
-    msg['From']         = from_header
-    msg['To']           = recipient
-    msg['Subject']      = subject
-    msg['Date']         = formatdate(localtime=True)
-    msg['Message-ID']   = make_msgid(domain=sender_domain)
-    msg['MIME-Version'] = '1.0'
-    msg['X-Priority']   = '3'
+    alt = MIMEMultipart('alternative')
+    alt.attach(MIMEText(plain_text, 'plain', 'utf-8'))
+    alt.attach(MIMEText(html_body,  'html',  'utf-8'))
+    msg = alt  # overridden below if attachment passed into send_email_smtp
+
+    msg['From']       = from_header
+    msg['To']         = recipient
+    msg['Subject']    = subject
+    msg['Date']       = formatdate(localtime=True)
+    msg['Message-ID'] = make_msgid(domain=sender_domain)
 
     if include_unsubscribe:
         msg['List-Unsubscribe']      = f'<mailto:unsubscribe@{sender_domain}?subject=unsubscribe>'
         msg['List-Unsubscribe-Post'] = 'List-Unsubscribe=One-Click'
         msg['Precedence']            = 'bulk'
 
-    # Plain text MUST come before HTML in multipart/alternative
-    msg.attach(MIMEText(plain_text, 'plain', 'utf-8'))
-    msg.attach(MIMEText(html_body,  'html',  'utf-8'))
     return msg
 
 
-def send_email_smtp(smtp_config, from_name, recipient, subject, html_body, ec2_ip=None, include_unsubscribe=True):
+def _add_bulk_attachment(msg, attachment, plain_text, html_body):
+    """Wrap msg in multipart/mixed shell and add attachment with proper MIME type."""
+    import base64 as _b64
+    mixed = MIMEMultipart('mixed')
+    # Copy all headers from the alternative msg
+    for key, val in msg.items():
+        if key.lower() not in ('content-type', 'mime-version', 'content-transfer-encoding'):
+            mixed[key] = val
+    # Rebuild alternative part fresh
+    alt = MIMEMultipart('alternative')
+    alt.attach(MIMEText(plain_text, 'plain', 'utf-8'))
+    alt.attach(MIMEText(html_body,  'html',  'utf-8'))
+    mixed.attach(alt)
+    # Attachment
+    filename  = attachment.get('name', 'attachment')
+    mime_type = attachment.get('type', '')
+    if not mime_type or mime_type in ('application/octet-stream', 'binary/octet-stream'):
+        ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
+        mime_map = {
+            'pdf':  'application/pdf',
+            'png':  'image/png',
+            'jpg':  'image/jpeg',
+            'jpeg': 'image/jpeg',
+            'gif':  'image/gif',
+            'webp': 'image/webp',
+            'doc':  'application/msword',
+            'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'xls':  'application/vnd.ms-excel',
+            'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'ppt':  'application/vnd.ms-powerpoint',
+            'pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            'zip':  'application/zip',
+            'txt':  'text/plain',
+            'csv':  'text/csv',
+        }
+        mime_type = mime_map.get(ext, 'application/pdf')
+    main_type, sub_type = mime_type.split('/', 1) if '/' in mime_type else ('application', 'pdf')
+    from email.mime.base import MIMEBase
+    from email import encoders as _enc
+    raw = attachment['content'] + '=' * (-len(attachment['content']) % 4)
+    part = MIMEBase(main_type, sub_type)
+    part.set_payload(_b64.b64decode(raw))
+    _enc.encode_base64(part)
+    part.add_header('Content-Disposition', 'attachment', filename=filename)
+    part.add_header('Content-Description', filename)
+    mixed.attach(part)
+    return mixed
+
+
+def send_email_smtp(smtp_config, from_name, recipient, subject, html_body, ec2_ip=None, include_unsubscribe=True, attachment=None):
     """
     Send a fully RFC-compliant bulk email via SMTP.
     Multipart/alternative (plain + HTML), proper headers, EHLO handshake.
+    Supports optional attachment with correct MIME typing.
     """
     try:
         is_gmail = smtp_config.get('provider') == 'gmail'
@@ -261,6 +310,9 @@ def send_email_smtp(smtp_config, from_name, recipient, subject, html_body, ec2_i
         from_header = f"{sender_name} <{smtp_user}>" if sender_name else smtp_user
 
         msg = _build_bulk_msg(from_header, smtp_user, recipient, subject, html_body, include_unsubscribe)
+        if attachment:
+            plain_text = _html_to_plain(html_body)
+            msg = _add_bulk_attachment(msg, attachment, plain_text, html_body)
 
         with smtplib.SMTP(smtp_server, smtp_port, timeout=30) as server:
             server.ehlo()
@@ -306,7 +358,7 @@ def send_email_ses(aws_config, from_name, recipient, subject, html_body, include
         return {'success': False, 'error': str(e)}
 
 
-def send_email_ec2(ec2_url, smtp_config, from_name, recipient, subject, html_body, include_unsubscribe=True):
+def send_email_ec2(ec2_url, smtp_config, from_name, recipient, subject, html_body, include_unsubscribe=True, attachment=None):
     """Send email via EC2 relay (JetMailer style - authenticated SMTP through EC2 IP)"""
     try:
         print(f'[EC2 RELAY] Sending to {recipient} via {ec2_url}')
@@ -321,8 +373,11 @@ def send_email_ec2(ec2_url, smtp_config, from_name, recipient, subject, html_bod
             'subject': subject,
             'html': html_body,
             'plain': plain_text,          # plain-text alternative for relay
-            'smtp_config': smtp_config    # Pass SMTP credentials to relay
+            'smtp_config': smtp_config,   # Pass SMTP credentials to relay
+            'include_unsubscribe': include_unsubscribe,
         }
+        if attachment:
+            payload['attachment'] = attachment
         
         data = json.dumps(payload).encode('utf-8')
         req = urllib.request.Request(ec2_url, data=data, method='POST')
@@ -371,6 +426,7 @@ class handler(BaseHTTPRequestHandler):
             from_name = data.get('from_name', 'KINGMAILER')
             from_email = data.get('from_email', '')
             include_unsubscribe = data.get('include_unsubscribe', True)
+            attachment = data.get('attachment')  # {name, type, content (base64)}
             
             # Get account configs
             smtp_configs = data.get('smtp_configs', [])
@@ -445,7 +501,7 @@ class handler(BaseHTTPRequestHandler):
                 if method == 'smtp' and smtp_pool:
                     smtp_config = smtp_pool.get_next()
                     print(f'\\n[EMAIL {index+1}] Method: SMTP → {recipient}')
-                    result = send_email_smtp(smtp_config, from_name, recipient, subject, html_body, include_unsubscribe=include_unsubscribe)
+                    result = send_email_smtp(smtp_config, from_name, recipient, subject, html_body, include_unsubscribe=include_unsubscribe, attachment=attachment)
                 
                 elif method == 'ses' and ses_pool:
                     ses_config = ses_pool.get_next()  
@@ -466,7 +522,7 @@ class handler(BaseHTTPRequestHandler):
                             # Send via EC2 relay on port 3000 (user's open port)
                             relay_url = f'http://{ec2_ip}:3000/relay'
                             print(f'[EC2 RELAY] Connecting to {relay_url}')
-                            result = send_email_ec2(relay_url, smtp_config, from_name, recipient, subject, html_body, include_unsubscribe=include_unsubscribe)
+                            result = send_email_ec2(relay_url, smtp_config, from_name, recipient, subject, html_body, include_unsubscribe=include_unsubscribe, attachment=attachment)
                             if result['success']:
                                 result['via_ec2_ip'] = ec2_ip
                             else:

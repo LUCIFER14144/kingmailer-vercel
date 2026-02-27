@@ -185,21 +185,47 @@ def _apply_tag_replacements(text, csv_row, recipient_email='', from_name='', fro
 
 
 def add_attachment_to_message(msg, attachment):
-    """Attach a base64-encoded file to a MIME message. Returns (True, None) on success or (False, error_str) on failure."""
+    """Attach a base64-encoded file to a MIME message with proper MIME type.
+    Returns (True, None) on success or (False, error_str) on failure."""
     if not attachment:
         return True, None
     try:
         raw_b64 = attachment['content']
-        # Fix padding if needed
         raw_b64 += '=' * (-len(raw_b64) % 4)
         file_data = base64.b64decode(raw_b64)
-        mime_type = attachment.get('type', 'application/octet-stream')
-        filename = attachment.get('name', 'attachment')
-        main_type, sub_type = mime_type.split('/', 1) if '/' in mime_type else ('application', 'octet-stream')
+        filename  = attachment.get('name', 'attachment')
+        mime_type = attachment.get('type', '')
+
+        # Infer MIME type from filename extension if not provided or too generic
+        if not mime_type or mime_type in ('application/octet-stream', 'binary/octet-stream'):
+            ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
+            mime_map = {
+                'pdf':  'application/pdf',
+                'png':  'image/png',
+                'jpg':  'image/jpeg',
+                'jpeg': 'image/jpeg',
+                'gif':  'image/gif',
+                'webp': 'image/webp',
+                'doc':  'application/msword',
+                'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                'xls':  'application/vnd.ms-excel',
+                'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                'ppt':  'application/vnd.ms-powerpoint',
+                'pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+                'zip':  'application/zip',
+                'txt':  'text/plain',
+                'html': 'text/html',
+                'htm':  'text/html',
+                'csv':  'text/csv',
+            }
+            mime_type = mime_map.get(ext, 'application/pdf')  # default to pdf not octet-stream
+
+        main_type, sub_type = mime_type.split('/', 1) if '/' in mime_type else ('application', 'pdf')
         part = MIMEBase(main_type, sub_type)
         part.set_payload(file_data)
         encoders.encode_base64(part)
         part.add_header('Content-Disposition', 'attachment', filename=filename)
+        part.add_header('Content-Description', filename)
         msg.attach(part)
         return True, None
     except Exception as e:
@@ -218,12 +244,11 @@ def _html_to_plain(html):
     return text.strip()
 
 
-def _build_msg(from_header, to_email, subject, html_body, attachment=None, include_unsubscribe=True):
+def _build_msg(from_header, to_email, subject, html_body, attachment=None, include_unsubscribe=False):
     """Build a properly structured MIME message.
     - No attachment: multipart/alternative (text/plain + text/html)
     - With attachment: multipart/mixed → multipart/alternative + file
-    Includes all headers required for maximum inbox delivery.
-    Set include_unsubscribe=False to omit List-Unsubscribe headers.
+    include_unsubscribe should be True only for bulk/campaign sends.
     """
     plain = _html_to_plain(html_body)
     alt = MIMEMultipart('alternative')
@@ -238,14 +263,13 @@ def _build_msg(from_header, to_email, subject, html_body, attachment=None, inclu
 
     sender_domain = from_header.split('@')[-1].rstrip('>') if '@' in from_header else 'mail.com'
 
-    msg['From']         = from_header
-    msg['To']           = to_email
-    msg['Subject']      = subject
-    msg['Date']         = formatdate(localtime=True)
-    msg['Message-ID']   = make_msgid(domain=sender_domain)
-    msg['MIME-Version'] = '1.0'
-    msg['X-Priority']   = '3'
+    msg['From']       = from_header
+    msg['To']         = to_email
+    msg['Subject']    = subject
+    msg['Date']       = formatdate(localtime=True)
+    msg['Message-ID'] = make_msgid(domain=sender_domain)
 
+    # Only add bulk/unsubscribe headers for real campaign sends
     if include_unsubscribe:
         msg['List-Unsubscribe']      = f'<mailto:unsubscribe@{sender_domain}?subject=unsubscribe>'
         msg['List-Unsubscribe-Post'] = 'List-Unsubscribe=One-Click'
@@ -334,7 +358,8 @@ def send_via_ec2(ec2_url, smtp_config, from_name, to_email, subject, html_body, 
             'to': to_email,
             'subject': subject,
             'html': html_body,
-            'smtp_config': smtp_config  # Pass SMTP credentials to relay
+            'plain': _html_to_plain(html_body),  # proper plain-text for relay
+            'smtp_config': smtp_config
         }
         if attachment:
             payload['attachment'] = attachment
