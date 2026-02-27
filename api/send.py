@@ -218,6 +218,7 @@ def _build_msg(from_header, to_email, subject, html_body, attachment=None):
     """Build a properly structured MIME message.
     - No attachment: multipart/alternative (text/plain + text/html)
     - With attachment: multipart/mixed → multipart/alternative + file
+    Includes all headers required for maximum inbox delivery.
     """
     plain = _html_to_plain(html_body)
     alt = MIMEMultipart('alternative')
@@ -230,11 +231,15 @@ def _build_msg(from_header, to_email, subject, html_body, attachment=None):
     else:
         msg = alt
 
-    msg['From'] = from_header
-    msg['To'] = to_email
-    msg['Subject'] = subject
-    msg['Date'] = formatdate(localtime=True)
-    msg['Message-ID'] = make_msgid(domain=from_header.split('@')[-1].rstrip('>')  if '@' in from_header else 'mail')
+    sender_domain = from_header.split('@')[-1].rstrip('>') if '@' in from_header else 'mail.com'
+
+    msg['From']         = from_header
+    msg['To']           = to_email
+    msg['Subject']      = subject
+    msg['Date']         = formatdate(localtime=True)
+    msg['Message-ID']   = make_msgid(domain=sender_domain)
+    msg['MIME-Version'] = '1.0'
+    msg['X-Priority']   = '3'
     return msg
 
 
@@ -297,13 +302,13 @@ def send_via_ses(aws_config, from_name, to_email, subject, html_body, attachment
                 RawMessage={'Data': msg.as_string()}
             )
         else:
-            response = ses_client.send_email(
+            # Use send_raw_email even without attachments so we get multipart/alternative
+            # (plain text + HTML). send_email with Html only is a spam filter red flag.
+            msg = _build_msg(source, to_email, subject, html_body, attachment=None)
+            response = ses_client.send_raw_email(
                 Source=source,
-                Destination={'ToAddresses': [to_email]},
-                Message={
-                    'Subject': {'Data': subject, 'Charset': 'UTF-8'},
-                    'Body': {'Html': {'Data': html_body, 'Charset': 'UTF-8'}}
-                }
+                Destinations=[to_email],
+                RawMessage={'Data': msg.as_string()}
             )
         
         return {'success': True, 'message': f'Email sent via SES to {to_email}', 'message_id': response['MessageId']}

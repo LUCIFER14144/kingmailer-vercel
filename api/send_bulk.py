@@ -207,11 +207,42 @@ def replace_template_tags(text, row_data, recipient_email='', from_name='', from
     return text
 
 
+def _build_bulk_msg(from_header, smtp_user, recipient, subject, html_body):
+    """
+    Build a fully RFC-compliant multipart/alternative MIME message for bulk sending.
+    Includes all headers required by Google/Yahoo 2024 bulk sender guidelines.
+    """
+    plain_text = _html_to_plain(html_body)
+
+    # Determine sender domain for List-Unsubscribe
+    sender_domain = smtp_user.split('@')[-1] if smtp_user and '@' in smtp_user else 'mail.com'
+
+    msg = MIMEMultipart('alternative')
+    msg['From']       = from_header
+    msg['To']         = recipient
+    msg['Subject']    = subject
+    msg['Date']       = formatdate(localtime=True)
+    msg['Message-ID'] = make_msgid(domain=sender_domain)
+    msg['MIME-Version'] = '1.0'
+
+    # ── Bulk-sender headers (Google/Yahoo 2024 requirements) ──────────────────
+    # One-click unsubscribe — mandatory for >5 000 Gmail/Yahoo sends per day
+    msg['List-Unsubscribe']      = f'<mailto:unsubscribe@{sender_domain}?subject=unsubscribe>'
+    msg['List-Unsubscribe-Post'] = 'List-Unsubscribe=One-Click'
+    # Signals to inbox providers this is bulk/marketing mail
+    msg['Precedence']   = 'bulk'
+    msg['X-Priority']   = '3'           # Normal — never set 1 (high) in bulk, it's a spam signal
+
+    # Plain text MUST come before HTML in multipart/alternative
+    msg.attach(MIMEText(plain_text, 'plain', 'utf-8'))
+    msg.attach(MIMEText(html_body,  'html',  'utf-8'))
+    return msg
+
+
 def send_email_smtp(smtp_config, from_name, recipient, subject, html_body, ec2_ip=None):
     """
-    Send a properly structured email via SMTP.
-    Includes multipart/alternative (plain + HTML), Date, Message-ID headers for
-    maximum deliverability.
+    Send a fully RFC-compliant bulk email via SMTP.
+    Multipart/alternative (plain + HTML), proper headers, EHLO handshake.
     """
     try:
         is_gmail = smtp_config.get('provider') == 'gmail'
@@ -222,26 +253,11 @@ def send_email_smtp(smtp_config, from_name, recipient, subject, html_body, ec2_i
 
         print(f'[SMTP SEND] → {recipient}')
         print(f'[SMTP SERVER] {smtp_server}:{smtp_port}')
-        print(f'[SMTP AUTH] {smtp_user}')
 
         sender_name = smtp_config.get('sender_name') or from_name
         from_header = f"{sender_name} <{smtp_user}>" if sender_name else smtp_user
 
-        # Build multipart/alternative (plain text + HTML) for better inbox delivery
-        # HTML-only emails are heavily penalised by spam filters
-        plain_text = _html_to_plain(html_body)
-
-        msg = MIMEMultipart('alternative')
-        msg['From']       = from_header
-        msg['To']         = recipient
-        msg['Subject']    = subject
-        msg['Date']       = formatdate(localtime=True)
-        msg['Message-ID'] = make_msgid(domain=smtp_user.split('@')[-1] if smtp_user and '@' in smtp_user else 'mail')
-        msg['X-Mailer']   = 'KINGMAILER/4.0'
-
-        # Plain text MUST come first — some spam filters prefer it
-        msg.attach(MIMEText(plain_text, 'plain', 'utf-8'))
-        msg.attach(MIMEText(html_body,  'html',  'utf-8'))
+        msg = _build_bulk_msg(from_header, smtp_user, recipient, subject, html_body)
 
         with smtplib.SMTP(smtp_server, smtp_port, timeout=30) as server:
             server.ehlo()
@@ -261,7 +277,7 @@ def send_email_smtp(smtp_config, from_name, recipient, subject, html_body, ec2_i
 
 
 def send_email_ses(aws_config, from_name, recipient, subject, html_body):
-    """Send single email via AWS SES"""
+    """Send bulk email via AWS SES using raw MIME for multipart/alternative + proper headers."""
     try:
         ses_client = boto3.client(
             'ses',
@@ -269,19 +285,20 @@ def send_email_ses(aws_config, from_name, recipient, subject, html_body):
             aws_access_key_id=aws_config.get('access_key'),
             aws_secret_access_key=aws_config.get('secret_key')
         )
-        
+
         from_email = aws_config.get('from_email', 'noreply@example.com')
         source = f"{from_name} <{from_email}>" if from_name else from_email
-        
-        ses_client.send_email(
+        smtp_user = from_email  # use from_email as reference for domain
+
+        msg = _build_bulk_msg(source, smtp_user, recipient, subject, html_body)
+
+        # send_raw_email sends the full MIME message including plain-text alternative
+        ses_client.send_raw_email(
             Source=source,
-            Destination={'ToAddresses': [recipient]},
-            Message={
-                'Subject': {'Data': subject},
-                'Body': {'Html': {'Data': html_body}}
-            }
+            Destinations=[recipient],
+            RawMessage={'Data': msg.as_string()}
         )
-        
+
         return {'success': True}
     except Exception as e:
         return {'success': False, 'error': str(e)}
@@ -291,15 +308,18 @@ def send_email_ec2(ec2_url, smtp_config, from_name, recipient, subject, html_bod
     """Send email via EC2 relay (JetMailer style - authenticated SMTP through EC2 IP)"""
     try:
         print(f'[EC2 RELAY] Sending to {recipient} via {ec2_url}')
-        print(f'[EC2 RELAY] SMTP credentials: {smtp_config.get("user")}')
-        print(f'[EXPECTED IP] EC2 relay server IP (from URL: {ec2_url})')
-        
+        print(f'[EC2 RELAY] SMTP credentials: {smtp_config.get("user") if smtp_config else "none"}')
+
+        # Include plain-text so the EC2 relay can build multipart/alternative
+        plain_text = _html_to_plain(html_body)
+
         payload = {
             'from_name': from_name,
             'to': recipient,
             'subject': subject,
             'html': html_body,
-            'smtp_config': smtp_config  # Pass SMTP credentials to relay
+            'plain': plain_text,          # plain-text alternative for relay
+            'smtp_config': smtp_config    # Pass SMTP credentials to relay
         }
         
         data = json.dumps(payload).encode('utf-8')
