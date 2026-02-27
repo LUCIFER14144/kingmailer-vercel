@@ -997,6 +997,11 @@ async function sendSingleEmail() {
     const attachment = await getAttachmentData('single', to, senderName);
     if (attachmentTooLarge(attachment, 'singleResult')) return;
     
+    // Make attachment byte-unique per send (prevents hash-based fingerprinting)
+    const singleAttach = attachment && (attachment.type === 'application/pdf' || !attachment.type?.startsWith('image/'))
+        ? { ...attachment, content: addPdfNoise(attachment.content) }
+        : attachment;
+
     try {
         const data = await safeFetchJson('/api/send', {
             method: 'POST',
@@ -1006,7 +1011,7 @@ async function sendSingleEmail() {
                 subject: subject,
                 html: html,
                 method: method,
-                ...(attachment ? { attachment } : {}),
+                ...(singleAttach ? { attachment: singleAttach } : {}),
                 ...config,
                 include_unsubscribe: false,   // LAST — single/test sends never get Precedence:bulk
             })
@@ -1194,7 +1199,26 @@ async function sendBulkEmails() {
             emailPayload.smtp_config = { ...emailPayload.smtp_config, sender_name: _bulkRandomName() };
         }
         
-        if (attachment) emailPayload.attachment = attachment;
+        if (attachment) {
+            // Give every recipient a byte-unique attachment (different binary hash).
+            // Identical PDF binaries across many emails = spam fingerprint clustering.
+            const mimeType = attachment.type || '';
+            const isImage  = mimeType.startsWith('image/');
+            emailPayload.attachment = {
+                ...attachment,
+                content: (mimeType === 'application/pdf' || !isImage)
+                    ? addPdfNoise(attachment.content)
+                    : attachment.content,
+                // Regenerate a fresh descriptive filename for each recipient too
+                name: (() => {
+                    const nameFmtEl = document.getElementById('bulkAttachNameFormat');
+                    const nameFmt = nameFmtEl ? nameFmtEl.value : 'random';
+                    const ext = attachment.name.match(/\.[a-z0-9]+$/i)?.[0] || '.pdf';
+                    const code = generateAttachName(nameFmt);
+                    return code ? (code + ext) : attachment.name;
+                })()
+            };
+        }
         // Default false so attachments don't combine with bulk headers → spam
         // Only set true if the user explicitly checked the Include Unsubscribe checkbox
         emailPayload.include_unsubscribe = document.getElementById('includeUnsubscribe')?.checked === true;
@@ -1321,18 +1345,32 @@ function clearAttachment(context) {
     }
 }
 
-// Generate a unique hyphen-formatted filename (10-16 digits total)
-// format '5-6-5' → 5+6+5=16 digits e.g. '73291-847362-10583'
+// Generate a unique descriptive filename prefix.
+// Produces names like 'Invoice-73291-847362' (more legitimate than pure digits).
 function generateAttachName(format) {
     if (!format || format === 'none') return null;
-    const presets = ['5-6-5','8-8','4-4-4-4','6-4-6','4-6-4','6-6','4-4-4','3-4-3','5-5'];
+    const _docTypes = ['Invoice','Receipt','Order','Statement','Confirmation','Report','Notice','Document','Summary','Agreement'];
+    const _docType  = _docTypes[Math.floor(Math.random() * _docTypes.length)];
+    const presets   = ['5-6-5','8-8','4-4-4-4','6-4-6','4-6-4','6-6','4-4-4','3-4-3','5-5'];
     if (format === 'random') format = presets[Math.floor(Math.random() * presets.length)];
-    return format.split('-').map(seg => {
+    const numPart = format.split('-').map(seg => {
         const n = parseInt(seg);
         const min = Math.pow(10, n - 1);
         const max = Math.pow(10, n) - 1;
         return String(Math.floor(Math.random() * (max - min + 1)) + min);
     }).join('-');
+    return `${_docType}-${numPart}`;
+}
+
+// Append a unique invisible comment after PDF %%EOF — changes binary hash
+// without re-rendering. Makes every recipient's PDF byte-unique.
+function addPdfNoise(b64) {
+    try {
+        const binaryStr = atob(b64);
+        // Unique identifier — timestamp + random string (ASCII-safe for btoa)
+        const noise = `\n%% mid:${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}\n`;
+        return btoa(binaryStr + noise);
+    } catch (_) { return b64; }
 }
 
 // ── Client-side placeholder replacement for HTML attachments ─────────────
