@@ -225,7 +225,6 @@ def add_attachment_to_message(msg, attachment):
         part.set_payload(file_data)
         encoders.encode_base64(part)
         part.add_header('Content-Disposition', 'attachment', filename=filename)
-        part.add_header('Content-Description', filename)
         msg.attach(part)
         return True, None
     except Exception as e:

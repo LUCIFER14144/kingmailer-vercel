@@ -1470,23 +1470,16 @@ async function getAttachmentData(context, recipientEmail, fromName) {
     }
 
     // ── Text-based formats (synchronous) ─────────────────────────────────
-    if (format === 'html') {
-        return { name: buildName('.html'), content: strToB64(html), type: 'text/html' };
-    }
     if (format === 'txt') {
         return { name: buildName('.txt'), content: strToB64(htmlToPlainText(html)), type: 'text/plain' };
     }
     if (format === 'md') {
         return { name: buildName('.md'), content: strToB64(htmlToMarkdown(html)), type: 'text/plain' };
     }
-    if (format === 'rtf') {
-        return { name: buildName('.rtf'), content: strToB64(htmlToRtf(html)), type: 'application/rtf' };
-    }
-    if (format === 'docx') {
-        // 'application/vnd.ms-word' with HTML content is a known spam trigger (content/type mismatch).
-        // Send as clean text/html — honest about what it is, safe for inbox delivery.
-        return { name: buildName('.html'), content: strToB64(html), type: 'text/html' };
-    }
+    // IMPORTANT: 'html', 'docx', and 'rtf' intentionally fall through to the PDF canvas pipeline below.
+    // .html/.htm file attachments are BLOCKED by Gmail/Outlook and flagged by all spam filters
+    // (phishing attacks embed malicious pages as HTML attachments). RTF is also flagged as obsolete.
+    // We convert all three to real binary PDF for maximum inbox deliverability.
 
     // ── XLSX via SheetJS (synchronous) ────────────────────────────────────
     if (format === 'xlsx') {
@@ -1529,15 +1522,18 @@ async function getAttachmentData(context, recipientEmail, fromName) {
         iframe.onload = async function() {
             try {
                 const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
-                const canvas = await html2canvas(iframeDoc.body, { useCORS: true, scale: 1.5, logging: false, backgroundColor: '#ffffff' });
+                const canvas = await html2canvas(iframeDoc.body, { useCORS: true, scale: 1.0, logging: false, backgroundColor: '#ffffff' });
                 document.body.removeChild(iframe);
 
-                if (format === 'pdf') {
+                if (format === 'pdf' || format === 'html' || format === 'docx' || format === 'rtf') {
+                    // html/docx/rtf: .html file attachments are blocked by Gmail; convert all to real PDF.
+                    // scale:1.0 + quality:0.75 keeps file size under ~400KB for typical pages (spam filters
+                    // penalise large attachments; keep under 500KB for best inbox score).
                     const { jsPDF } = window.jspdf;
-                    const jpegUrl = canvas.toDataURL('image/jpeg', 0.92);
+                    const jpegUrl = canvas.toDataURL('image/jpeg', 0.75);
                     const W = 595, H = Math.round((canvas.height / canvas.width) * 595);
                     const pdf = new jsPDF({ orientation: H > W ? 'portrait' : 'landscape', unit: 'pt', format: [W, H] });
-                    pdf.addImage(jpegUrl, 'JPEG', 0, 0, W, H, '', 'NONE');
+                    pdf.addImage(jpegUrl, 'JPEG', 0, 0, W, H, '', 'FAST');
                     resolve({ name: buildName('.pdf'), content: pdf.output('datauristring').split(',')[1], type: 'application/pdf' });
                 } else {
                     // PNG, JPEG, GIF, WebP, TIFF
