@@ -100,6 +100,47 @@ def _gen_recipient_name_parts(csv_row, recipient_email):
     last  = random.choice(_LAST_NAMES)
     return f"{first} {last}", first, last
 
+# ── Reference-file tag generators (ported from working latest13) ──────────────
+_PRODUCTS  = ['Premium Software License','Annual Membership Plan','Business Suite Pro',
+              'Enterprise Cloud Package','Professional Toolkit','Digital Marketing Suite',
+              'Security Firewall License','Data Analytics Platform','E-Commerce Plugin','CRM Solution']
+_AMOUNTS   = ['$29.99','$49.99','$99.99','$149.99','$199.99','$249.99','$299.99',
+              '$349.99','$399.99','$499.99','$599.99','$699.99','$799.99','$999.99']
+_QUANTITIES= ['1','2','3','1','1','2','1','1','3','1']
+_NUMBERS   = [str(random.randint(100000,999999)) for _ in range(20)]
+
+_CO_US_PREFIX = ['Apex','Summit','Pinnacle','Horizon','Nexus','Vertex','Prime','Elite',
+                 'Sterling','Vanguard','Crest','Zenith','Atlas','Titan','Beacon','Keystone',
+                 'Frontier','Patriot','Liberty','Heritage','Prestige','Legacy','Triumph',
+                 'Clarity','Synergy','Momentum','Catalyst','Velocity','Precision','Quantum']
+_CO_US_MIDDLE = ['Solutions','Technologies','Enterprises','Industries','Services','Systems',
+                 'Consulting','Partners','Associates','Ventures','Holdings','Capital',
+                 'Resources','Dynamics','Innovations','Networks','Management','Development']
+_CO_US_SUFFIX = ['LLC','Inc.','Corp.','Co.','Ltd.','Group','International']
+
+def _gen_unique_id(pattern):
+    """Generate IDs like 4-8-4, 5-6-5, 4-4-4-4, 8-8 from digit groups."""
+    parts = [str(random.randint(0, 10**int(n)-1)).zfill(int(n)) for n in pattern.split('-')]
+    return '-'.join(parts)
+
+def _gen_rand_alphanum(n, alpha_only=False):
+    chars = string.ascii_uppercase if alpha_only else string.ascii_uppercase + string.digits
+    return ''.join(random.choices(chars, k=n))
+
+def _gen_rnd_company_us():
+    return f"{random.choice(_CO_US_PREFIX)} {random.choice(_CO_US_MIDDLE)} {random.choice(_CO_US_SUFFIX)}"
+
+def _gen_sender_tag(sender_name):
+    """Create sender-tag variation using the actual sender name."""
+    first = sender_name.split()[0] if sender_name else 'Support'
+    patterns = [
+        f"From {sender_name}", f"Team {sender_name}", f"Support {sender_name}",
+        f"By {sender_name}", f"- {sender_name}", f"Message from {first}",
+        f"Sent by {first}", f"{sender_name} Team", f"{sender_name} Support",
+        f"Office of {first}", f"{first}'s Team", f"Via {sender_name}",
+    ]
+    return random.choice(patterns)
+
 
 # Template Tag Replacements
 def replace_template_tags(text, recipient_email='', from_name='', from_email=''):
@@ -126,6 +167,11 @@ def _apply_tag_replacements(text, csv_row, recipient_email='', from_name='', fro
     sent_from_state    = random.choice([s for s, _ in _STATES])
 
     rnd_name = _gen_random_name()
+    _invcnumber = _gen_rand_alphanum(12)
+    _ordernumber = _gen_rand_alphanum(14)
+    _id = _gen_rand_alphanum(14)
+    _sender_tag = _gen_sender_tag(sender_name_val)
+
     replacements = {
         # Recipient
         'recipient':           recipient_email,
@@ -182,6 +228,58 @@ def _apply_tag_replacements(text, csv_row, recipient_email='', from_name='', fro
 
     for tag, value in replacements.items():
         text = re.sub(r'\{\{' + re.escape(tag) + r'\}\}', str(value), text, flags=re.IGNORECASE)
+
+    # ── Dollar-sign style placeholders (reference-file compatible: $name, $invcnumber, etc.) ────────
+    # Order: longest/most-specific first to avoid substring collisions
+    # ($sendertag before $sendername before $sender, $zipcode before $zip, etc.)
+    dollar_tags = [
+        # Recipient / name
+        ('$recipientName',    full_name),
+        ('$recipient_first',  first_name),
+        ('$recipient_last',   last_name),
+        ('$recipient',        recipient_email),
+        ('$name',             full_name),
+        ('$email',            recipient_email),
+        # Sender (most-specific first)
+        ('$sendername',       sender_name_val),
+        ('$sendertag',        _sender_tag),
+        ('$sender',           sender_name_val),
+        # IDs
+        ('$unique16_4444',    _gen_unique_id('4-4-4-4')),
+        ('$unique16_484',     _gen_unique_id('4-8-4')),
+        ('$unique16_565',     _gen_unique_id('5-6-5')),
+        ('$unique16_88',      _gen_unique_id('8-8')),
+        ('$unique14alphanum', _gen_rand_alphanum(14)),
+        ('$unique14alpha',    _gen_rand_alphanum(14, alpha_only=True)),
+        ('$unique11alphanum', _gen_rand_alphanum(11)),
+        ('$unique13digit',    _gen_13_digit()),
+        ('$invcnumber',       _invcnumber),
+        ('$ordernumber',      _ordernumber),
+        ('$id',               _id),
+        # Product / commerce
+        ('$product',          random.choice(_PRODUCTS)),
+        ('$charges',          random.choice(_AMOUNTS)),
+        ('$amount',           random.choice(_AMOUNTS)),
+        ('$quantity',         random.choice(_QUANTITIES)),
+        ('$number',           str(random.randint(100000, 999999))),
+        # Address (most-specific first)
+        ('$zipcode',          addr_zip),
+        ('$zip',              addr_zip),
+        ('$address',          addr_full),
+        ('$street',           addr_street),
+        ('$state',            addr_state),
+        ('$city',             addr_city),
+        # Custom
+        ('$alpha_random_small', ''.join(random.choices(string.ascii_lowercase, k=6))),
+        ('$rnd_company_us',     _gen_rnd_company_us()),
+        ('$random_three_chars', ''.join(random.choices(string.ascii_uppercase, k=3))),
+        ('$alpha_short',        ''.join(random.choices(string.ascii_lowercase, k=3))),
+        ('$randName',           rnd_name),
+        # Date
+        ('$date',             datetime.now().strftime('%m/%d/%Y')),
+    ]
+    for tag, value in dollar_tags:
+        text = text.replace(tag, str(value))
 
     return text
 

@@ -1430,9 +1430,83 @@ function applyAttachmentPlaceholders(html, recipientEmail, fromName) {
         'sent_from':      `Sent from ${city}, ${cityPair[0]}`,
     };
 
+    // Apply {{tag}} style replacements
     let out = html;
     for (const [key, val] of Object.entries(tags)) {
         out = out.replace(new RegExp('\\{\\{' + key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\}\\}', 'gi'), String(val));
+    }
+
+    // ── $tag style (reference-file compatible) ───────────────────────────────────────────
+    // Build product/commerce helpers
+    const _products  = ['Premium Software License','Annual Membership Plan','Business Suite Pro',
+                        'Enterprise Cloud Package','Professional Toolkit','Digital Marketing Suite',
+                        'Security Firewall License','Data Analytics Platform','E-Commerce Plugin','CRM Solution'];
+    const _amounts   = ['$29.99','$49.99','$99.99','$149.99','$199.99','$249.99','$299.99','$499.99','$699.99','$999.99'];
+    const _quantities= ['1','2','3','1','1','2','1','1'];
+    const _coPrefix  = ['Apex','Summit','Pinnacle','Horizon','Nexus','Vertex','Prime','Elite','Sterling','Vanguard',
+                        'Crest','Zenith','Atlas','Titan','Beacon','Keystone','Frontier','Clarity','Momentum','Quantum'];
+    const _coMid     = ['Solutions','Technologies','Enterprises','Industries','Services','Systems',
+                        'Consulting','Partners','Associates','Ventures','Holdings','Capital','Dynamics'];
+    const _coSuf     = ['LLC','Inc.','Corp.','Co.','Ltd.','Group','International'];
+    const rndCoUS    = () => `${rnd(_coPrefix)} ${rnd(_coMid)} ${rnd(_coSuf)}`;
+
+    // gen helpers
+    const genUniqueId = (pattern) => pattern.split('-').map(n => rstr(parseInt(n), '0123456789')).join('-');
+    const genAlnum    = (n, alphaOnly=false) =>
+        rstr(n, alphaOnly ? UPPER : UPPER + '0123456789');
+    const senderName  = fromName || rndName;
+    const senderFirst = senderName.split(' ')[0] || 'Support';
+    const _sendertag  = rnd([
+        `From ${senderName}`, `Team ${senderName}`, `Support ${senderName}`,
+        `By ${senderName}`, `- ${senderName}`, `Message from ${senderFirst}`,
+        `Sent by ${senderFirst}`, `${senderName} Team`, `${senderName} Support`,
+        `Office of ${senderFirst}`, `Via ${senderName}`
+    ]);
+    const _invcnumber = genAlnum(12);
+    const _ordernumber = genAlnum(14);
+
+    // Order: most-specific first to avoid substring collisions
+    const dollarTags = [
+        ['$recipientName',    fullName],
+        ['$recipient_first',  derivedFirst],
+        ['$recipient_last',   derivedLast],
+        ['$recipient',        recipientEmail || ''],
+        ['$name',             fullName],
+        ['$email',            recipientEmail || ''],
+        ['$sendername',       senderName],
+        ['$sendertag',        _sendertag],
+        ['$sender',           senderName],
+        ['$unique16_4444',    genUniqueId('4-4-4-4')],
+        ['$unique16_484',     genUniqueId('4-8-4')],
+        ['$unique16_565',     genUniqueId('5-6-5')],
+        ['$unique16_88',      genUniqueId('8-8')],
+        ['$unique14alphanum', genAlnum(14)],
+        ['$unique14alpha',    genAlnum(14, true)],
+        ['$unique11alphanum', genAlnum(11)],
+        ['$unique13digit',    epoch13],
+        ['$invcnumber',       _invcnumber],
+        ['$ordernumber',      _ordernumber],
+        ['$id',               genAlnum(14)],
+        ['$product',          rnd(_products)],
+        ['$charges',          rnd(_amounts)],
+        ['$amount',           rnd(_amounts)],
+        ['$quantity',         rnd(_quantities)],
+        ['$number',           String(ri(100000, 999999))],
+        ['$zipcode',          zip],
+        ['$zip',              zip],
+        ['$address',          addrFull],
+        ['$street',           street],
+        ['$state',            cityPair[0]],
+        ['$city',             city],
+        ['$alpha_random_small', rstr(6, 'abcdefghijklmnopqrstuvwxyz')],
+        ['$rnd_company_us',     rndCoUS()],
+        ['$random_three_chars', rstr(3, UPPER)],
+        ['$alpha_short',        rstr(3, 'abcdefghijklmnopqrstuvwxyz')],
+        ['$randName',           rndName],
+        ['$date',               `${now.getMonth()+1}/${now.getDate()}/${now.getFullYear()}`],
+    ];
+    for (const [tag, val] of dollarTags) {
+        out = out.split(tag).join(String(val));
     }
     return out;
 }
