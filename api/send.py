@@ -9,7 +9,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.application import MIMEApplication
 from email.mime.image import MIMEImage
-from email.utils import formatdate, formataddr
+from email.utils import formatdate, formataddr, make_msgid
 import boto3
 from botocore.exceptions import ClientError
 import json

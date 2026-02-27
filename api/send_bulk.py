@@ -9,7 +9,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.application import MIMEApplication
 from email.mime.image import MIMEImage
-from email.utils import formatdate
+from email.utils import formatdate, formataddr, make_msgid
 import boto3
 import json
 import csv
@@ -379,41 +379,58 @@ def _build_bulk_msg(from_header, smtp_user, recipient, subject, html_body, inclu
 
 
 def _add_bulk_attachment(msg, attachment, plain_text, html_body):
-    """Add attachment to an existing mixed msg. Uses MIMEApplication/MIMEImage
-    (correct classes; avoids the low-level MIMEBase+encoders that flags some scanners)."""
+    """Add attachment, converting msg from alternative to mixed structure."""
+    # If msg is multipart/alternative (no attachment yet), convert to mixed
+    if msg.get_content_subtype() == 'alternative':
+        # Save all parts from the alternative message
+        old_parts = list(msg.get_payload())
+        # Save headers
+        headers = {k: v for k, v in msg.items()}
+        # Clear the message
+        for part in old_parts:
+            msg.get_payload().remove(part)
+        # Convert to mixed
+        msg.set_type('multipart/mixed')
+        # Create new alternative part and move old parts into it
+        alt = MIMEMultipart('alternative')
+        for part in old_parts:
+            alt.attach(part)
+        # Attach alternative to the now-mixed message
+        msg.attach(alt)
+    
+    # Now add the attachment to the mixed message
     filename  = attachment.get('name', 'attachment')
     mime_type = attachment.get('type', '')
     if not mime_type or mime_type in ('application/octet-stream', 'binary/octet-stream'):
         ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
         mime_map = {
-            'pdf':  'application/pdf',
-            'png':  'image/png',
-            'jpg':  'image/jpeg',
-            'jpeg': 'image/jpeg',
-            'gif':  'image/gif',
-            'webp': 'image/webp',
-            'doc':  'application/msword',
-            'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-            'xls':  'application/vnd.ms-excel',
-            'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            'ppt':  'application/vnd.ms-powerpoint',
-            'pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-            'zip':  'application/zip',
-            'txt':  'text/plain',
-            'csv':  'text/csv',
+            'pdf':'application/pdf','png':'image/png','jpg':'image/jpeg',
+            'jpeg':'image/jpeg','gif':'image/gif','webp':'image/webp',
+            'doc':'application/msword',
+            'docx':'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'xls':'application/vnd.ms-excel',
+            'xlsx':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'ppt':'application/vnd.ms-powerpoint',
+            'pptx':'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            'zip':'application/zip','txt':'text/plain','csv':'text/csv'
         }
         mime_type = mime_map.get(ext, 'application/pdf')
     main_type, sub_type = mime_type.split('/', 1) if '/' in mime_type else ('application', 'pdf')
     raw = attachment['content'] + '=' * (-len(attachment['content']) % 4)
     file_data = base64.b64decode(raw)
+    
     if main_type == 'image':
         part = MIMEImage(file_data, _subtype=sub_type)
     else:
         part = MIMEApplication(file_data, _subtype=sub_type)
-        part.set_charset(None)
-    part.add_header('Content-Disposition', 'attachment', filename=filename)
-    if 'Content-Transfer-Encoding' not in part:
-        part.add_header('Content-Transfer-Encoding', 'base64')
+    
+    now_rfc = formatdate(localtime=True)
+    part.add_header(
+        'Content-Disposition', 'attachment',
+        filename=filename,
+        **{'creation-date': now_rfc, 'modification-date': now_rfc, 'read-date': now_rfc}
+    )
+    part['X-Attachment-Id'] = uuid.uuid4().hex
     msg.attach(part)
     return msg
 
