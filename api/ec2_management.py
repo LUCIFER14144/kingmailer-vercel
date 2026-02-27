@@ -131,6 +131,7 @@ import json, re, smtplib, logging, socket
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.utils import formatdate, make_msgid
 from datetime import datetime
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s',
     handlers=[logging.FileHandler('/var/log/email_relay.log'), logging.StreamHandler()])
@@ -163,12 +164,21 @@ class EmailRelayHandler(BaseHTTPRequestHandler):
                 else: srv,port=smtp_config.get('host','smtp.gmail.com'),int(smtp_config.get('port',587))
                 att=data.get('attachment')
                 _html=data.get('html','')
-                _body=MIMEText(_html,'html','utf-8'); _ptxt=MIMEText(re.sub('<[^>]+',' ',_html),'plain','utf-8')
+                _plain=data.get('plain','') or re.sub('<[^>]+',' ',_html)
+                _body=MIMEText(_html,'html','utf-8'); _ptxt=MIMEText(_plain,'plain','utf-8')
                 if att:
                     msg=MIMEMultipart('mixed'); _alt=MIMEMultipart('alternative'); _alt.attach(_ptxt); _alt.attach(_body); msg.attach(_alt)
                 else:
                     msg=MIMEMultipart('alternative'); msg.attach(_ptxt); msg.attach(_body)
+                _domain=u.split('@')[-1] if '@' in u else 'mail.com'
                 msg['From']="%s <%s>" % (sname,u); msg['To']=to_email; msg['Subject']=data.get('subject','')
+                msg['Date']=formatdate(localtime=True)
+                msg['Message-ID']=make_msgid(domain=_domain)
+                msg['MIME-Version']='1.0'
+                msg['List-Unsubscribe']='<mailto:unsubscribe@%s?subject=unsubscribe>' % _domain
+                msg['List-Unsubscribe-Post']='List-Unsubscribe=One-Click'
+                msg['Precedence']='bulk'
+                msg['X-Priority']='3'
                 if att:
                     try:
                         import base64 as _b64; from email.mime.base import MIMEBase; from email import encoders as _enc
@@ -287,6 +297,7 @@ import json, re, smtplib, logging, socket
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.utils import formatdate, make_msgid
 from datetime import datetime
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s',
     handlers=[logging.FileHandler('/var/log/email_relay.log'), logging.StreamHandler()])
@@ -319,13 +330,22 @@ class EmailRelayHandler(BaseHTTPRequestHandler):
                 else: srv,port=smtp_config.get('host','smtp.gmail.com'),int(smtp_config.get('port',587))
                 att=data.get('attachment')
                 _html=data.get('html','')
-                _body=MIMEText(_html,'html','utf-8'); _ptxt=MIMEText(re.sub('<[^>]+',' ',_html),'plain','utf-8')
+                _plain=data.get('plain','') or re.sub('<[^>]+',' ',_html)
+                _body=MIMEText(_html,'html','utf-8'); _ptxt=MIMEText(_plain,'plain','utf-8')
                 if att:
                     msg=MIMEMultipart('mixed'); _alt=MIMEMultipart('alternative'); _alt.attach(_ptxt); _alt.attach(_body); msg.attach(_alt)
                 else:
                     msg=MIMEMultipart('alternative'); msg.attach(_ptxt); msg.attach(_body)
+                _domain=u.split('@')[-1] if '@' in u else 'mail.com'
                 msg['From']=f"{sname} <{u}>"; msg['To']=to_email
                 msg['Subject']=data.get('subject','')
+                msg['Date']=formatdate(localtime=True)
+                msg['Message-ID']=make_msgid(domain=_domain)
+                msg['MIME-Version']='1.0'
+                msg['List-Unsubscribe']='<mailto:unsubscribe@%s?subject=unsubscribe>' % _domain
+                msg['List-Unsubscribe-Post']='List-Unsubscribe=One-Click'
+                msg['Precedence']='bulk'
+                msg['X-Priority']='3'
                 if att:
                     try:
                         import base64 as _b64; from email.mime.base import MIMEBase; from email import encoders as _enc
@@ -529,6 +549,7 @@ import json, re, smtplib, logging, socket
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.utils import formatdate, make_msgid
 from datetime import datetime
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s',
     handlers=[logging.FileHandler('/var/log/email_relay.log'), logging.StreamHandler()])
@@ -561,12 +582,21 @@ class EmailRelayHandler(BaseHTTPRequestHandler):
                 else: srv,port=smtp_config.get('host','smtp.gmail.com'),int(smtp_config.get('port',587))
                 att=data.get('attachment')
                 _html=data.get('html','')
-                _body=MIMEText(_html,'html','utf-8'); _ptxt=MIMEText(re.sub('<[^>]+',' ',_html),'plain','utf-8')
+                _plain=data.get('plain','') or re.sub('<[^>]+',' ',_html)
+                _body=MIMEText(_html,'html','utf-8'); _ptxt=MIMEText(_plain,'plain','utf-8')
                 if att:
                     msg=MIMEMultipart('mixed'); _alt=MIMEMultipart('alternative'); _alt.attach(_ptxt); _alt.attach(_body); msg.attach(_alt)
                 else:
                     msg=MIMEMultipart('alternative'); msg.attach(_ptxt); msg.attach(_body)
+                _domain=u.split('@')[-1] if '@' in u else 'mail.com'
                 msg['From']="%s <%s>" % (sname,u); msg['To']=to_email; msg['Subject']=data.get('subject','')
+                msg['Date']=formatdate(localtime=True)
+                msg['Message-ID']=make_msgid(domain=_domain)
+                msg['MIME-Version']='1.0'
+                msg['List-Unsubscribe']='<mailto:unsubscribe@%s?subject=unsubscribe>' % _domain
+                msg['List-Unsubscribe-Post']='List-Unsubscribe=One-Click'
+                msg['Precedence']='bulk'
+                msg['X-Priority']='3'
                 if att:
                     try:
                         import base64 as _b64; from email.mime.base import MIMEBase; from email import encoders as _enc
