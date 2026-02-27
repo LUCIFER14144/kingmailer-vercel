@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Placeholder Test</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+            padding: 30px;
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        .test-box {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .test-box h2 {
+            color: #667eea;
+            font-size: 18px;
+            margin-bottom: 15px;
+        }
+        textarea {
+            width: 100%;
+            min-height: 120px;
+            padding: 12px;
+            border: 1px solid #ced4da;
+            border-radius: 6px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            margin-bottom: 10px;
+            resize: vertical;
+        }
+        button {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        button:hover {
+            background: #5568d3;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+        button:active {
+            transform: translateY(0);
+        }
+        .result {
+            margin-top: 15px;
+            padding: 15px;
+            border-radius: 6px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        .success {
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+        }
+        .error {
+            background: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+        }
+        .info {
+            background: #d1ecf1;
+            border: 1px solid #bee5eb;
+            color: #0c5460;
+        }
+        .stats {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 10px;
+            font-size: 12px;
+        }
+        .tag-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            gap: 10px;
+            margin-top: 15px;
+        }
+        .tag {
+            background: #e7f3ff;
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            text-align: center;
+            border: 1px solid #b3d9ff;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔬 Placeholder Test System</h1>
+        <p class="subtitle">Test if placeholders are being replaced correctly</p>
+
+        <div class="test-box">
+            <h2>📝 Test Your Text</h2>
+            <textarea id="testInput" placeholder="Enter text with placeholders like {{name}}, {{email}}, {{company}}, etc.">Hello {{name}}, your ID is {{13_digit}}. Email: {{email}}, Company: {{company}}</textarea>
+            <button onclick="testPlaceholders()">🚀 Test Replacement</button>
+            <div id="testResult"></div>
+        </div>
+
+        <div class="test-box">
+            <h2>🎯 Quick Tests</h2>
+            <button onclick="testAllPlaceholders()">Test All 13 Placeholders</button>
+            <button onclick="testSubject()" style="background:#28a745;margin-left:10px;">Test Subject Line</button>
+            <button onclick="testHTML()" style="background:#ffc107;margin-left:10px;">Test HTML Body</button>
+        </div>
+
+        <div class="test-box">
+            <h2>📋 Available Placeholders</h2>
+            <div class="tag-list">
+                <div class="tag">{{email}}</div>
+                <div class="tag">{{name}}</div>
+                <div class="tag">{{company}}</div>
+                <div class="tag">{{random_name}}</div>
+                <div class="tag">{{13_digit}}</div>
+                <div class="tag">{{unique_id}}</div>
+                <div class="tag">{{date}}</div>
+                <div class="tag">{{time}}</div>
+                <div class="tag">{{year}}</div>
+                <div class="tag">{{random_6}}</div>
+                <div class="tag">{{random_8}}</div>
+                <div class="tag">{{recipient}}</div>
+                <div class="tag">{{company_name}}</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        async function testPlaceholders() {
+            const input = document.getElementById('testInput').value;
+            const resultDiv = document.getElementById('testResult');
+            
+            if (!input.trim()) {
+                resultDiv.innerHTML = '<div class="result error">❌ Please enter some text to test</div>';
+                return;
+            }
+
+            resultDiv.innerHTML = '<div class="result info">⏳ Testing...</div>';
+
+            try {
+                const response = await fetch('/api/test_placeholders', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        text: input,
+                        recipient: 'test@example.com'
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    const allReplaced = data.stats.all_replaced;
+                    const resultClass = allReplaced ? 'success' : 'error';
+                    const resultIcon = allReplaced ? '✅' : '⚠️';
+                    
+                    let html = `<div class="result ${resultClass}">`;
+                    html += `<strong>${resultIcon} ${allReplaced ? 'ALL PLACEHOLDERS REPLACED!' : 'SOME PLACEHOLDERS NOT REPLACED'}</strong><br><br>`;
+                    html += `<strong>ORIGINAL:</strong><br>${escapeHtml(data.original)}<br><br>`;
+                    html += `<strong>PROCESSED:</strong><br>${escapeHtml(data.processed)}<br>`;
+                    html += `</div>`;
+                    
+                    html += `<div class="stats">`;
+                    html += `📊 <strong>Stats:</strong> `;
+                    html += `Found ${data.stats.original_placeholders} placeholders, `;
+                    html += `replaced ${data.stats.replaced_count}, `;
+                    html += `${data.stats.remaining_placeholders} remaining`;
+                    html += `</div>`;
+                    
+                    resultDiv.innerHTML = html;
+                } else {
+                    resultDiv.innerHTML = `<div class="result error">❌ ERROR: ${escapeHtml(data.error)}</div>`;
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="result error">❌ Network Error: ${escapeHtml(error.message)}</div>`;
+            }
+        }
+
+        function testAllPlaceholders() {
+            const allTags = '{{email}} | {{name}} | {{company}} | {{random_name}} | {{13_digit}} | {{unique_id}} | {{date}} | {{time}} | {{year}} | {{random_6}} | {{random_8}} | {{recipient}} | {{company_name}}';
+            document.getElementById('testInput').value = allTags;
+            testPlaceholders();
+        }
+
+        function testSubject() {
+            document.getElementById('testInput').value = 'Hello {{name}}, your {{13_digit}} is ready! - {{company}}';
+            testPlaceholders();
+        }
+
+        function testHTML() {
+            const html = `<div>
+  <h1>Hello {{name}}!</h1>
+  <p>Email: {{email}}</p>
+  <p>Company: {{company}}</p>
+  <p>ID: {{13_digit}}</p>
+  <p>Date: {{date}} at {{time}}</p>
+  <p>Contact: {{random_name}}</p>
+  <p>Year: {{year}}</p>
+</div>`;
+            document.getElementById('testInput').value = html;
+            testPlaceholders();
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+    </script>
+</body>
+</html>

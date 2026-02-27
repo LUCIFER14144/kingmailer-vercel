@@ -84,8 +84,7 @@ def replace_template_tags(text, row_data, recipient_email=''):
     
     for tag, value in replacements.items():
         # Escape tag name to handle special characters like underscores and digits
-        pattern = r'\{\{' + re.escape(tag) + r'\}\}'
-        text = re.sub(pattern, str(value), text, flags=re.IGNORECASE)
+        text = re.sub(r'\{\{' + re.escape(tag) + r'\}\}', str(value), text, flags=re.IGNORECASE)
     
     return text
 

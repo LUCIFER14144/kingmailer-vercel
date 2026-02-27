@@ -1,5 +1,5 @@
 """
-Quick test endpoint to verify placeholder replacement
+Test endpoint for placeholder replacement
 """
 from http.server import BaseHTTPRequestHandler
 import json
@@ -8,7 +8,9 @@ import random
 import string
 from datetime import datetime
 
+
 def process_spintax(text):
+    """Process spintax syntax: {option1|option2|option3}"""
     if not text:
         return text
     pattern = r'\{([^{}]+)\}'
@@ -22,7 +24,9 @@ def process_spintax(text):
         iteration += 1
     return text
 
+
 def replace_template_tags(text, recipient_email=''):
+    """Replace all template tags in text"""
     if not text:
         return text
     
@@ -64,43 +68,43 @@ def replace_template_tags(text, recipient_email=''):
     
     return text
 
+
 class handler(BaseHTTPRequestHandler):
+    def do_OPTIONS(self):
+        self.send_response(200)
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'POST, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        self.end_headers()
+
     def do_POST(self):
         try:
             content_length = int(self.headers['Content-Length'])
             post_data = self.rfile.read(content_length)
             data = json.loads(post_data.decode('utf-8'))
             
-            subject = data.get('subject', '')
-            html = data.get('html', '')
-            to_email = data.get('to', 'test@example.com')
+            test_text = data.get('text', '')
+            recipient = data.get('recipient', 'test@example.com')
             
             # Process
-            subject_original = subject
-            html_original = html
+            original = test_text
+            processed = process_spintax(test_text)
+            processed = replace_template_tags(processed, recipient)
             
-            subject = process_spintax(subject)
-            html = process_spintax(html)
-            subject = replace_template_tags(subject, to_email)
-            html = replace_template_tags(html, to_email)
+            # Count replacements
+            original_placeholders = len(re.findall(r'\{\{[^}]+\}\}', original))
+            remaining_placeholders = len(re.findall(r'\{\{[^}]+\}\}', processed))
+            replaced_count = original_placeholders - remaining_placeholders
             
             result = {
                 'success': True,
-                'original': {
-                    'subject': subject_original,
-                    'html': html_original[:200] + '...' if len(html_original) > 200 else html_original
-                },
-                'processed': {
-                    'subject': subject,
-                    'html': html[:200] + '...' if len(html) > 200 else html
-                },
-                'placeholders_found': {
-                    'subject': len(re.findall(r'\{\{[^}]+\}\}', subject_original)),
-                    'html': len(re.findall(r'\{\{[^}]+\}\}', html_original))
-                },
-                'placeholders_remaining': {
-                    'subject': len(re.findall(r'\{\{[^}]+\}\}', subject)),
-                    'html': len(re.findall(r'\{\{[^}]+\}\}', html))
+                'original': original,
+                'processed': processed,
+                'stats': {
+                    'original_placeholders': original_placeholders,
+                    'remaining_placeholders': remaining_placeholders,
+                    'replaced_count': replaced_count,
+                    'all_replaced': remaining_placeholders == 0
                 }
             }
             
@@ -108,18 +112,14 @@ class handler(BaseHTTPRequestHandler):
             self.send_header('Content-type', 'application/json')
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
-            self.wfile.write(json.dumps(result, indent=2).encode())
+            self.wfile.write(json.dumps(result).encode())
             
         except Exception as e:
             self.send_response(500)
             self.send_header('Content-type', 'application/json')
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
-            self.wfile.write(json.dumps({'success': False, 'error': str(e)}).encode())
-    
-    def do_OPTIONS(self):
-        self.send_response(200)
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Access-Control-Allow-Methods', 'POST, OPTIONS')
-        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
-        self.end_headers()
+            self.wfile.write(json.dumps({
+                'success': False,
+                'error': str(e)
+            }).encode())
