@@ -18,6 +18,30 @@ let bulkAttachmentData = null;
 
 // Subject pools (multiple subjects → randomly picked per email)
 let singleSubjectPool = [];
+
+// ---------------------------------------------------------------------------
+// Random sender name generator (client-side)
+// ---------------------------------------------------------------------------
+function randomizeSenderName() {
+    const FIRST = [
+        'James','John','Robert','Michael','William','David','Richard','Joseph','Thomas','Charles',
+        'Christopher','Daniel','Matthew','Anthony','Mark','Donald','Steven','Paul','Andrew','Joshua',
+        'Kenneth','Kevin','Brian','George','Timothy','Ronald','Edward','Jason','Jeffrey','Ryan',
+        'Jacob','Gary','Nicholas','Eric','Jonathan','Stephen','Larry','Justin','Scott','Brandon',
+        'Sarah','Jennifer','Linda','Barbara','Patricia','Susan','Jessica','Karen','Lisa','Nancy',
+        'Betty','Margaret','Sandra','Ashley','Dorothy','Kimberly','Emily','Donna','Michelle','Carol',
+        'Amanda','Melissa','Deborah','Stephanie','Rebecca','Sharon','Laura','Cynthia','Kathleen','Amy'
+    ];
+    const LAST = [
+        'Smith','Johnson','Williams','Brown','Jones','Garcia','Miller','Davis','Rodriguez','Martinez',
+        'Hernandez','Lopez','Gonzalez','Wilson','Anderson','Thomas','Taylor','Moore','Jackson','Martin',
+        'Lee','Perez','Thompson','White','Harris','Sanchez','Clark','Ramirez','Lewis','Robinson',
+        'Walker','Young','Allen','King','Wright','Scott','Torres','Nguyen','Hill','Flores',
+        'Green','Adams','Nelson','Baker','Hall','Rivera','Campbell','Mitchell','Carter','Roberts'
+    ];
+    const name = FIRST[Math.floor(Math.random() * FIRST.length)] + ' ' + LAST[Math.floor(Math.random() * LAST.length)];
+    document.getElementById('smtpSenderName').value = name;
+}
 let bulkSubjectPool = [];
 
 // Body pool for bulk sending (multiple .html files → randomly picked per email)
