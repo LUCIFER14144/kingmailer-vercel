@@ -1104,6 +1104,7 @@ async function sendBulkEmails() {
         }
         
         if (attachment) emailPayload.attachment = attachment;
+        emailPayload.include_unsubscribe = document.getElementById('includeUnsubscribe')?.checked !== false;
         
         // Log entry for this email
         const logLine = document.createElement('div');

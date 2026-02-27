@@ -23,16 +23,20 @@ import base64
 
 # Spintax Processor
 def process_spintax(text):
-    """Process spintax syntax: {option1|option2|option3}"""
+    """Process spintax syntax: {option1|option2|option3}
+    IMPORTANT: only matches groups containing | so {{template_tags}} are never touched.
+    """
     if not text:
         return text
-    pattern = r'\{([^{}]+)\}'
+    # (?<!\{) and (?!\}) prevent matching {{ or }} i.e. template tag braces.
+    # [^{}]*\|[^{}]* ensures there is at least one pipe inside — real spintax only.
+    pattern = r'(?<!\{)\{([^{}]*\|[^{}]*)\}(?!\})'
     def replace_fn(match):
         options = match.group(1).split('|')
         return random.choice(options).strip()
     max_iter = 10
     iteration = 0
-    while '{' in text and '|' in text and iteration < max_iter:
+    while re.search(pattern, text) and iteration < max_iter:
         text = re.sub(pattern, replace_fn, text)
         iteration += 1
     return text
@@ -214,11 +218,12 @@ def _html_to_plain(html):
     return text.strip()
 
 
-def _build_msg(from_header, to_email, subject, html_body, attachment=None):
+def _build_msg(from_header, to_email, subject, html_body, attachment=None, include_unsubscribe=True):
     """Build a properly structured MIME message.
     - No attachment: multipart/alternative (text/plain + text/html)
     - With attachment: multipart/mixed → multipart/alternative + file
     Includes all headers required for maximum inbox delivery.
+    Set include_unsubscribe=False to omit List-Unsubscribe headers.
     """
     plain = _html_to_plain(html_body)
     alt = MIMEMultipart('alternative')
@@ -240,10 +245,16 @@ def _build_msg(from_header, to_email, subject, html_body, attachment=None):
     msg['Message-ID']   = make_msgid(domain=sender_domain)
     msg['MIME-Version'] = '1.0'
     msg['X-Priority']   = '3'
+
+    if include_unsubscribe:
+        msg['List-Unsubscribe']      = f'<mailto:unsubscribe@{sender_domain}?subject=unsubscribe>'
+        msg['List-Unsubscribe-Post'] = 'List-Unsubscribe=One-Click'
+        msg['Precedence']            = 'bulk'
+
     return msg
 
 
-def send_via_smtp(smtp_config, from_name, to_email, subject, html_body, attachment=None):
+def send_via_smtp(smtp_config, from_name, to_email, subject, html_body, attachment=None, include_unsubscribe=True):
     """Send email via SMTP (Gmail or custom server)"""
     try:
         is_gmail = smtp_config.get('provider') == 'gmail'
@@ -255,7 +266,7 @@ def send_via_smtp(smtp_config, from_name, to_email, subject, html_body, attachme
         sender_name = smtp_config.get('sender_name') or from_name
         from_header = f"{sender_name} <{smtp_user}>" if sender_name else smtp_user
 
-        msg = _build_msg(from_header, to_email, subject, html_body, attachment)
+        msg = _build_msg(from_header, to_email, subject, html_body, attachment, include_unsubscribe)
 
         if attachment:
             att_ok, att_err = add_attachment_to_message(msg, attachment)
@@ -279,7 +290,7 @@ def send_via_smtp(smtp_config, from_name, to_email, subject, html_body, attachme
         return {'success': False, 'error': f'SMTP error: {str(e)}'}
 
 
-def send_via_ses(aws_config, from_name, to_email, subject, html_body, attachment=None):
+def send_via_ses(aws_config, from_name, to_email, subject, html_body, attachment=None, include_unsubscribe=True):
     """Send email via AWS SES"""
     try:
         ses_client = boto3.client(
@@ -293,7 +304,7 @@ def send_via_ses(aws_config, from_name, to_email, subject, html_body, attachment
         source = f"{from_name} <{from_email}>" if from_name else from_email
 
         if attachment:
-            msg = _build_msg(source, to_email, subject, html_body, attachment)
+            msg = _build_msg(source, to_email, subject, html_body, attachment, include_unsubscribe)
             att_ok, att_err = add_attachment_to_message(msg, attachment)
             if not att_ok:
                 return {'success': False, 'error': f'Attachment error: {att_err}'}
@@ -303,8 +314,7 @@ def send_via_ses(aws_config, from_name, to_email, subject, html_body, attachment
             )
         else:
             # Use send_raw_email even without attachments so we get multipart/alternative
-            # (plain text + HTML). send_email with Html only is a spam filter red flag.
-            msg = _build_msg(source, to_email, subject, html_body, attachment=None)
+            msg = _build_msg(source, to_email, subject, html_body, attachment=None, include_unsubscribe=include_unsubscribe)
             response = ses_client.send_raw_email(
                 Source=source,
                 Destinations=[to_email],
@@ -361,6 +371,7 @@ class handler(BaseHTTPRequestHandler):
             send_method = data.get('method', 'smtp')
             csv_row = data.get('csv_row', {})
             attachment = data.get('attachment')  # {name, content (base64), type}
+            include_unsubscribe = data.get('include_unsubscribe', True)
             
             if not to_email:
                 self.send_response(400)
@@ -388,7 +399,7 @@ class handler(BaseHTTPRequestHandler):
                     self.end_headers()
                     self.wfile.write(json.dumps({'success': False, 'error': 'SMTP config required'}).encode())
                     return
-                result = send_via_smtp(smtp_config, from_name, to_email, subject, html_body, attachment)
+                result = send_via_smtp(smtp_config, from_name, to_email, subject, html_body, attachment, include_unsubscribe)
             
             elif send_method == 'ses':
                 aws_config = data.get('aws_config')
@@ -399,7 +410,7 @@ class handler(BaseHTTPRequestHandler):
                     self.end_headers()
                     self.wfile.write(json.dumps({'success': False, 'error': 'AWS SES config required'}).encode())
                     return
-                result = send_via_ses(aws_config, from_name, to_email, subject, html_body, attachment)
+                result = send_via_ses(aws_config, from_name, to_email, subject, html_body, attachment, include_unsubscribe)
             
             elif send_method == 'ec2':
                 # EC2 Relay - Route email through EC2 IP on port 3000

@@ -476,6 +476,13 @@
                 </div>
             </div>
 
+            <div class="form-group" style="margin-bottom:12px;">
+                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:normal;">
+                    <input type="checkbox" id="includeUnsubscribe" checked style="width:16px;height:16px;cursor:pointer;">
+                    <span>Include <strong>List-Unsubscribe</strong> header <span style="color:#888;font-size:12px;">(recommended for bulk sends — required by Gmail/Yahoo for &gt;5k/day)</span></span>
+                </label>
+            </div>
+
             <button class="btn btn-primary" id="startBulkBtn" onclick="sendBulkEmails()">▶ Start Bulk Sending</button>
             <button class="btn" id="pauseBulkBtn" onclick="pauseBulkSend()" style="display:none; background:#f59e0b; color:#000;">⏸ Pause</button>
             <button class="btn btn-danger" id="stopBulkBtn" onclick="stopBulkSend()" style="display:none;">⏹ Stop</button>

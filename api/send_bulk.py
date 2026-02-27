@@ -23,16 +23,20 @@ import string
 
 # Spintax Processor
 def process_spintax(text):
-    """Process spintax syntax: {option1|option2|option3}"""
+    """Process spintax syntax: {option1|option2|option3}
+    IMPORTANT: only matches groups containing | so {{template_tags}} are never touched.
+    """
     if not text:
         return text
-    pattern = r'\{([^{}]+)\}'
+    # (?<!\{) and (?!\}) prevent matching {{ or }} i.e. template tag braces.
+    # [^{}]*\|[^{}]* ensures there is at least one pipe inside — real spintax only.
+    pattern = r'(?<!\{)\{([^{}]*\|[^{}]*)\}(?!\})'
     def replace_fn(match):
         options = match.group(1).split('|')
         return random.choice(options).strip()
     max_iter = 10
     iteration = 0
-    while '{' in text and '|' in text and iteration < max_iter:
+    while re.search(pattern, text) and iteration < max_iter:
         text = re.sub(pattern, replace_fn, text)
         iteration += 1
     return text
@@ -207,10 +211,11 @@ def replace_template_tags(text, row_data, recipient_email='', from_name='', from
     return text
 
 
-def _build_bulk_msg(from_header, smtp_user, recipient, subject, html_body):
+def _build_bulk_msg(from_header, smtp_user, recipient, subject, html_body, include_unsubscribe=True):
     """
     Build a fully RFC-compliant multipart/alternative MIME message for bulk sending.
     Includes all headers required by Google/Yahoo 2024 bulk sender guidelines.
+    Set include_unsubscribe=False to omit List-Unsubscribe headers.
     """
     plain_text = _html_to_plain(html_body)
 
@@ -218,20 +223,18 @@ def _build_bulk_msg(from_header, smtp_user, recipient, subject, html_body):
     sender_domain = smtp_user.split('@')[-1] if smtp_user and '@' in smtp_user else 'mail.com'
 
     msg = MIMEMultipart('alternative')
-    msg['From']       = from_header
-    msg['To']         = recipient
-    msg['Subject']    = subject
-    msg['Date']       = formatdate(localtime=True)
-    msg['Message-ID'] = make_msgid(domain=sender_domain)
+    msg['From']         = from_header
+    msg['To']           = recipient
+    msg['Subject']      = subject
+    msg['Date']         = formatdate(localtime=True)
+    msg['Message-ID']   = make_msgid(domain=sender_domain)
     msg['MIME-Version'] = '1.0'
+    msg['X-Priority']   = '3'
 
-    # ── Bulk-sender headers (Google/Yahoo 2024 requirements) ──────────────────
-    # One-click unsubscribe — mandatory for >5 000 Gmail/Yahoo sends per day
-    msg['List-Unsubscribe']      = f'<mailto:unsubscribe@{sender_domain}?subject=unsubscribe>'
-    msg['List-Unsubscribe-Post'] = 'List-Unsubscribe=One-Click'
-    # Signals to inbox providers this is bulk/marketing mail
-    msg['Precedence']   = 'bulk'
-    msg['X-Priority']   = '3'           # Normal — never set 1 (high) in bulk, it's a spam signal
+    if include_unsubscribe:
+        msg['List-Unsubscribe']      = f'<mailto:unsubscribe@{sender_domain}?subject=unsubscribe>'
+        msg['List-Unsubscribe-Post'] = 'List-Unsubscribe=One-Click'
+        msg['Precedence']            = 'bulk'
 
     # Plain text MUST come before HTML in multipart/alternative
     msg.attach(MIMEText(plain_text, 'plain', 'utf-8'))
@@ -239,7 +242,7 @@ def _build_bulk_msg(from_header, smtp_user, recipient, subject, html_body):
     return msg
 
 
-def send_email_smtp(smtp_config, from_name, recipient, subject, html_body, ec2_ip=None):
+def send_email_smtp(smtp_config, from_name, recipient, subject, html_body, ec2_ip=None, include_unsubscribe=True):
     """
     Send a fully RFC-compliant bulk email via SMTP.
     Multipart/alternative (plain + HTML), proper headers, EHLO handshake.
@@ -257,7 +260,7 @@ def send_email_smtp(smtp_config, from_name, recipient, subject, html_body, ec2_i
         sender_name = smtp_config.get('sender_name') or from_name
         from_header = f"{sender_name} <{smtp_user}>" if sender_name else smtp_user
 
-        msg = _build_bulk_msg(from_header, smtp_user, recipient, subject, html_body)
+        msg = _build_bulk_msg(from_header, smtp_user, recipient, subject, html_body, include_unsubscribe)
 
         with smtplib.SMTP(smtp_server, smtp_port, timeout=30) as server:
             server.ehlo()
@@ -276,7 +279,7 @@ def send_email_smtp(smtp_config, from_name, recipient, subject, html_body, ec2_i
         return {'success': False, 'error': str(e)}
 
 
-def send_email_ses(aws_config, from_name, recipient, subject, html_body):
+def send_email_ses(aws_config, from_name, recipient, subject, html_body, include_unsubscribe=True):
     """Send bulk email via AWS SES using raw MIME for multipart/alternative + proper headers."""
     try:
         ses_client = boto3.client(
@@ -288,11 +291,10 @@ def send_email_ses(aws_config, from_name, recipient, subject, html_body):
 
         from_email = aws_config.get('from_email', 'noreply@example.com')
         source = f"{from_name} <{from_email}>" if from_name else from_email
-        smtp_user = from_email  # use from_email as reference for domain
+        smtp_user = from_email
 
-        msg = _build_bulk_msg(source, smtp_user, recipient, subject, html_body)
+        msg = _build_bulk_msg(source, smtp_user, recipient, subject, html_body, include_unsubscribe)
 
-        # send_raw_email sends the full MIME message including plain-text alternative
         ses_client.send_raw_email(
             Source=source,
             Destinations=[recipient],
@@ -304,7 +306,7 @@ def send_email_ses(aws_config, from_name, recipient, subject, html_body):
         return {'success': False, 'error': str(e)}
 
 
-def send_email_ec2(ec2_url, smtp_config, from_name, recipient, subject, html_body):
+def send_email_ec2(ec2_url, smtp_config, from_name, recipient, subject, html_body, include_unsubscribe=True):
     """Send email via EC2 relay (JetMailer style - authenticated SMTP through EC2 IP)"""
     try:
         print(f'[EC2 RELAY] Sending to {recipient} via {ec2_url}')
@@ -368,6 +370,7 @@ class handler(BaseHTTPRequestHandler):
             max_delay = int(data.get('max_delay', 5000))
             from_name = data.get('from_name', 'KINGMAILER')
             from_email = data.get('from_email', '')
+            include_unsubscribe = data.get('include_unsubscribe', True)
             
             # Get account configs
             smtp_configs = data.get('smtp_configs', [])
@@ -442,12 +445,12 @@ class handler(BaseHTTPRequestHandler):
                 if method == 'smtp' and smtp_pool:
                     smtp_config = smtp_pool.get_next()
                     print(f'\\n[EMAIL {index+1}] Method: SMTP → {recipient}')
-                    result = send_email_smtp(smtp_config, from_name, recipient, subject, html_body)
+                    result = send_email_smtp(smtp_config, from_name, recipient, subject, html_body, include_unsubscribe=include_unsubscribe)
                 
                 elif method == 'ses' and ses_pool:
                     ses_config = ses_pool.get_next()  
                     print(f'\\n[EMAIL {index+1}] Method: SES → {recipient}')
-                    result = send_email_ses(ses_config, from_name, recipient, subject, html_body)
+                    result = send_email_ses(ses_config, from_name, recipient, subject, html_body, include_unsubscribe=include_unsubscribe)
                 
                 elif method == 'ec2' and ec2_pool:
                     # EC2 Relay - Route email through EC2 IP
@@ -463,7 +466,7 @@ class handler(BaseHTTPRequestHandler):
                             # Send via EC2 relay on port 3000 (user's open port)
                             relay_url = f'http://{ec2_ip}:3000/relay'
                             print(f'[EC2 RELAY] Connecting to {relay_url}')
-                            result = send_email_ec2(relay_url, smtp_config, from_name, recipient, subject, html_body)
+                            result = send_email_ec2(relay_url, smtp_config, from_name, recipient, subject, html_body, include_unsubscribe=include_unsubscribe)
                             if result['success']:
                                 result['via_ec2_ip'] = ec2_ip
                             else:
