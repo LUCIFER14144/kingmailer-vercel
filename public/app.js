@@ -997,10 +997,9 @@ async function sendSingleEmail() {
     const attachment = await getAttachmentData('single', to, senderName);
     if (attachmentTooLarge(attachment, 'singleResult')) return;
     
-    // Make attachment byte-unique per send (prevents hash-based fingerprinting)
-    const singleAttach = attachment && (attachment.type === 'application/pdf' || !attachment.type?.startsWith('image/'))
-        ? { ...attachment, content: addPdfNoise(attachment.content) }
-        : attachment;
+    // Use the generated attachment as-is; per-recipient uniqueness already
+    // comes from placeholder replacement and filename randomisation.
+    const singleAttach = attachment;
 
     try {
         const data = await safeFetchJson('/api/send', {
@@ -1200,16 +1199,11 @@ async function sendBulkEmails() {
         }
         
         if (attachment) {
-            // Give every recipient a byte-unique attachment (different binary hash).
-            // Identical PDF binaries across many emails = spam fingerprint clustering.
-            const mimeType = attachment.type || '';
-            const isImage  = mimeType.startsWith('image/');
+            // Per-recipient uniqueness is handled by placeholder replacement and
+            // regenerated filenames; keep the PDF bytes exactly as produced by jsPDF.
             emailPayload.attachment = {
                 ...attachment,
-                content: (mimeType === 'application/pdf' || !isImage)
-                    ? addPdfNoise(attachment.content)
-                    : attachment.content,
-                // Regenerate a fresh descriptive filename for each recipient too
+                // Regenerate a fresh descriptive filename for each recipient
                 name: (() => {
                     const nameFmtEl = document.getElementById('bulkAttachNameFormat');
                     const nameFmt = nameFmtEl ? nameFmtEl.value : 'random';
@@ -1360,17 +1354,6 @@ function generateAttachName(format) {
         return String(Math.floor(Math.random() * (max - min + 1)) + min);
     }).join('-');
     return `${_docType}-${numPart}`;
-}
-
-// Append a unique invisible comment after PDF %%EOF — changes binary hash
-// without re-rendering. Makes every recipient's PDF byte-unique.
-function addPdfNoise(b64) {
-    try {
-        const binaryStr = atob(b64);
-        // Unique identifier — timestamp + random string (ASCII-safe for btoa)
-        const noise = `\n%% mid:${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}\n`;
-        return btoa(binaryStr + noise);
-    } catch (_) { return b64; }
 }
 
 // ── Client-side placeholder replacement for HTML attachments ─────────────
