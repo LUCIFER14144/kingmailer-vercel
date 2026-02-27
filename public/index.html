@@ -150,22 +150,37 @@
             <!-- Placeholder Reference -->
             <div style="margin-bottom: 15px;">
                 <button class="btn btn-secondary" onclick="togglePlaceholders('singlePlaceholders')" style="font-size: 12px; padding: 6px 12px;">📋 Show Placeholders</button>
-                <div id="singlePlaceholders" style="display:none; margin-top:10px; padding:12px; background:#2d2d2d; border-radius:8px; font-size:12px;">
-                    <strong style="color:#00ff9d;">Available Placeholders:</strong><br><br>
-                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:6px;">
-                        <span><code style="color:#667eea;">{{random_name}}</code> — Random full name</span>
-                        <span><code style="color:#667eea;">{{company}}</code> — Random company name</span>
-                        <span><code style="color:#667eea;">{{13_digit}}</code> — 13-digit unique ID</span>
-                        <span><code style="color:#667eea;">{{unique_id}}</code> — Unique identifier</span>
-                        <span><code style="color:#667eea;">{{date}}</code> — Today's date</span>
+                <div id="singlePlaceholders" style="display:none; margin-top:10px; padding:12px; background:#2d2d2d; border-radius:8px; font-size:11px; max-height:400px; overflow-y:auto;">
+                    <strong style="color:#00ff9d;">✅ Available Placeholders ({{}} and $ styles both work):</strong><br><br>
+                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:4px; margin-bottom:12px;">
+                        <span><code style="color:#667eea;">{{name}}</code> or <code style="color:#f59e0b;">$name</code> — Recipient name</span>
+                        <span><code style="color:#667eea;">{{email}}</code> or <code style="color:#f59e0b;">$email</code> — Recipient email</span>
+                        <span><code style="color:#667eea;">{{company}}</code> — Random company</span>
+                        <span><code style="color:#f59e0b;">$recipientName</code> — Full name</span>
+                        <span><code style="color:#667eea;">{{date}}</code> or <code style="color:#f59e0b;">$date</code> — Today's date</span>
                         <span><code style="color:#667eea;">{{time}}</code> — Current time</span>
-                        <span><code style="color:#667eea;">{{year}}</code> — Current year</span>
-                        <span><code style="color:#667eea;">{{random_6}}</code> — 6-char random string</span>
-                        <span><code style="color:#667eea;">{{random_8}}</code> — 8-char random string</span>
-                        <span><code style="color:#667eea;">{{recipient}}</code> — Recipient email</span>
+                        <span><code style="color:#667eea;">{{13_digit}}</code> or <code style="color:#f59e0b;">$unique13digit</code> — Unique 13-digit ID</span>
+                        <span><code style="color:#f59e0b;">$invcnumber</code> — Invoice number (12 chars)</span>
+                        <span><code style="color:#f59e0b;">$ordernumber</code> — Order number (14 chars)</span>
+                        <span><code style="color:#f59e0b;">$product</code> — Random product name</span>
+                        <span><code style="color:#f59e0b;">$amount</code> or <code style="color:#f59e0b;">$charges</code> — Price ($29.99-$999.99)</span>
+                        <span><code style="color:#f59e0b;">$quantity</code> — Quantity (1-3)</span>
+                        <span><code style="color:#f59e0b;">$unique16_484</code> — Format: 1234-12345678-1234</span>
+                        <span><code style="color:#f59e0b;">$unique16_565</code> — Format: 12345-123456-12345</span>
+                        <span><code style="color:#f59e0b;">$unique16_4444</code> — Format: 1234-1234-1234-1234</span>
+                        <span><code style="color:#f59e0b;">$unique14alphanum</code> — 14 random chars</span>
+                        <span><code style="color:#f59e0b;">$sender</code> — Sender name</span>
+                        <span><code style="color:#f59e0b;">$sendertag</code> — "From [Name]" variations</span>
+                        <span><code style="color:#f59e0b;">$address</code> — Full US address</span>
+                        <span><code style="color:#f59e0b;">$street</code>, <code style="color:#f59e0b;">$city</code>, <code style="color:#f59e0b;">$state</code>, <code style="color:#f59e0b;">$zip</code> — Address parts</span>
+                        <span><code style="color:#f59e0b;">$rnd_company_us</code> — US company name</span>
+                        <span><code style="color:#f59e0b;">$randName</code> — Random person name</span>
+                        <span><code style="color:#667eea;">{{random_6}}</code> — 6 random chars</span>
+                        <span><code style="color:#667eea;">{{random_phone}}</code> — US phone number</span>
                     </div>
-                    <div style="margin-top:8px; padding-top:8px; border-top:1px solid #444;">
-                        <strong style="color:#f59e0b;">Spintax:</strong> <code style="color:#f59e0b;">{Hello|Hi|Hey} {{random_name}}</code> — randomly picks one option
+                    <div style="padding:8px; background:#1a1a1a; border-radius:4px; margin-top:8px;">
+                        <strong style="color:#f59e0b;">💡 Spintax (randomly picks one):</strong><br>
+                        <code style="color:#888;">{Hello|Hi|Hey} $name, {thanks for your order|your invoice is ready}</code>
                     </div>
                 </div>
             </div>

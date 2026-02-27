@@ -450,15 +450,14 @@ def _build_msg(from_header, to_email, subject, html_body, attachment=None, inclu
     msg['Date']       = formatdate(localtime=True)
     msg['Message-ID'] = msg_id
     msg['Reply-To']   = from_header
+    
+    # Return-Path for proper bounce handling (required by many filters)
+    sender_email = from_header.split('<')[-1].rstrip('>') if '<' in from_header else from_header
+    msg['Return-Path'] = sender_email
 
-    # Trusted MUA identity — Apple Mail on iPhone is the most inbox-trusted client
-    msg['X-Mailer']   = 'Apple Mail (22B91)'
-    msg['User-Agent'] = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Mobile/15E148 Safari/604.1'
-
-    # Outlook legitimacy signals
-    msg['Thread-Topic'] = subject
-    if _ti:
-        msg['Thread-Index'] = _ti
+    # REMOVED: X-Mailer, User-Agent, Thread-Index, Thread-Topic
+    # Reference file comment: "REMOVED to look more natural and avoid spam flags"
+    # Over-identifying as specific clients triggers spam filters
 
     # Only add bulk/unsubscribe headers for real campaign sends
     if include_unsubscribe:

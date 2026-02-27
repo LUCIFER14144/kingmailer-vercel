@@ -364,11 +364,12 @@ def _build_bulk_msg(from_header, smtp_user, recipient, subject, html_body, inclu
     msg['Date']       = formatdate(localtime=True)
     msg['Message-ID'] = msg_id
     msg['Reply-To']   = from_header
-    msg['X-Mailer']   = 'Apple Mail (22B91)'
-    msg['User-Agent'] = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Mobile/15E148 Safari/604.1'
-    msg['Thread-Topic'] = subject
-    if _ti:
-        msg['Thread-Index'] = _ti
+    
+    # Return-Path for proper bounce handling
+    sender_email = from_header.split('<')[-1].rstrip('>') if '<' in from_header else from_header
+    msg['Return-Path'] = sender_email
+
+    # REMOVED: X-Mailer, User-Agent, Thread headers (spam trigger)
 
     if include_unsubscribe:
         msg['List-Unsubscribe']      = f'<mailto:unsubscribe@{sender_domain}?subject=unsubscribe>'
