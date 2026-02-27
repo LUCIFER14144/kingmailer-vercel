@@ -911,8 +911,9 @@ async function sendSingleEmail() {
     
     showResult('singleResult', '🔄 Sending email...', 'info');
     
-    // Get attachment if any
-    const attachment = await getAttachmentData('single');
+    // Get attachment — pass recipient email so {{name}} etc. resolve to real values
+    const senderName = config.smtp_config?.sender_name || config.smtp_config?.user || '';
+    const attachment = await getAttachmentData('single', to, senderName);
     if (attachmentTooLarge(attachment, 'singleResult')) return;
     
     try {
@@ -1011,8 +1012,11 @@ async function sendBulkEmails() {
     }
     
     // Prepare attachment (convert HTML file to selected format BEFORE starting loop)
+    // Use first row's email so {{name}}, {{company}} etc. are resolved (not literal)
     showResult('bulkResult', '⏳ Preparing attachment (if any)...', 'info');
-    const attachment = await getAttachmentData('bulk');
+    const _firstEmail = rows[0]?.email || '';
+    const _senderName = smtpAccounts[0]?.sender_name || smtpAccounts[0]?.user || '';
+    const attachment = await getAttachmentData('bulk', _firstEmail, _senderName);
     
     // Set send state
     bulkSendingActive = true;
@@ -1242,8 +1246,110 @@ function generateAttachName(format) {
     }).join('-');
 }
 
+// ── Client-side placeholder replacement for HTML attachments ─────────────
+// Mirrors the backend _apply_tag_replacements so {{tags}} are resolved
+// before the file is converted to PDF / PNG / etc.
+function applyAttachmentPlaceholders(html, recipientEmail, fromName) {
+    if (!html) return html;
+    const _NAMES  = ['James','Oliver','William','Henry','Lucas','Noah','Ethan','Liam','Mason','Logan','Aiden','Elijah'];
+    const _LNAMES = ['Smith','Johnson','Williams','Brown','Davis','Wilson','Anderson','Taylor','Thomas','Moore'];
+    const _COMPANIES = ['Apex Solutions','Blue Ridge Corp','Quantum Systems','Nova Tech','Prime Group',
+                        'Summit Ventures','Horizon Labs','Pinnacle Group','Nexus Corp','Stellar Inc'];
+    const _CITIES  = ['New York','Los Angeles','Chicago','Houston','Phoenix','Dallas','San Antonio','San Diego','Austin'];
+    const _STATES  = [['NY','New York'],['CA','California'],['IL','Illinois'],['TX','Texas'],['AZ','Arizona'],['FL','Florida']];
+    const _URLS    = ['globaltrade','nexuslink','firstprime','topmark','digitalcore','flashwave','cloudpeak'];
+
+    const rnd  = arr => arr[Math.floor(Math.random() * arr.length)];
+    const ri   = (a, b) => Math.floor(Math.random() * (b - a + 1)) + a;
+    const rstr = (n, chars) => Array.from({length: n}, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+
+    // Derive a readable name from the email address if possible
+    const emailLocal = recipientEmail ? recipientEmail.split('@')[0].replace(/[._\-+]/g, ' ') : '';
+    const emailWords = emailLocal.split(' ').filter(w => w.length > 1).map(w => w[0].toUpperCase() + w.slice(1).toLowerCase());
+    const derivedFirst = emailWords[0] || rnd(_NAMES);
+    const derivedLast  = emailWords[1] || rnd(_LNAMES);
+    const fullName     = `${derivedFirst} ${derivedLast}`;
+
+    const company  = rnd(_COMPANIES);
+    const cityPair = rnd(_STATES);
+    const city     = rnd(_CITIES);
+    const now      = new Date();
+    const MONTHS   = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+
+    const street  = `${ri(100,9999)} ${rnd(['Oak','Maple','Pine','Elm','Cedar','Willow'])} ${rnd(['St','Ave','Blvd','Dr','Ln','Ct'])}`;
+    const zip     = String(ri(10000, 99999));
+    const addrFull = `${street}, ${city}, ${cityPair[0]} ${zip}`;
+
+    const rndName = `${rnd(_NAMES)} ${rnd(_LNAMES)}`;
+    const ALNUM   = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    const LOWER   = 'abcdefghijklmnopqrstuvwxyz';
+    const UPPER   = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+
+    const epoch13 = String(Date.now()).padEnd(13, '0').slice(0, 13);
+
+    const tags = {
+        // Recipient
+        'recipient':           recipientEmail || '',
+        'recipient_name':      fullName,
+        'name':                fullName,
+        'recipient_first':     derivedFirst,
+        'recipient_last':      derivedLast,
+        'recipient_formal':    `${rnd(['Mr.','Ms.','Dr.'])} ${fullName}`,
+        'recipient_company':   company,
+        'company':             company,
+        'company_name':        company,
+        'email':               recipientEmail || '',
+        // Date / time
+        'date':    `${MONTHS[now.getMonth()]} ${now.getDate()}, ${now.getFullYear()}`,
+        'time':    now.toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit'}),
+        'year':    String(now.getFullYear()),
+        'month':   MONTHS[now.getMonth()],
+        'day':     String(now.getDate()),
+        // IDs
+        'unique_id':       epoch13,
+        '13_digit':        epoch13,
+        'tracking_id':     'TRK-' + rstr(8, '0123456789'),
+        'invoice_number':  `INV-${now.getFullYear()}-${rstr(4,'0123456789')}`,
+        // Random strings
+        'random_6':           rstr(6, ALNUM),
+        'random_8':           rstr(8, ALNUM),
+        'random_upper_10':    rstr(10, UPPER),
+        'random_lower_12':    rstr(12, LOWER),
+        'random_alphanum_16': rstr(16, ALNUM),
+        // People & companies
+        'random_name':    rndName,
+        'random_company': rnd(_COMPANIES),
+        // Contact
+        'random_phone':   `(${ri(200,999)}) ${ri(200,999)}-${ri(1000,9999)}`,
+        'random_email':   `${rstr(6,LOWER)}@${rnd(['gmail','yahoo','outlook','hotmail'])}.com`,
+        'random_url':     `https://www.${rnd(_URLS)}${rnd(['.com','.net','.org','.io'])}`,
+        // Numbers
+        'random_percent':  `${ri(1,99)}%`,
+        'random_currency': `$${ri(100,9999).toLocaleString()}.${String(ri(0,99)).padStart(2,'0')}`,
+        // Address
+        'address_street': street,
+        'address_city':   city,
+        'address_state':  cityPair[0],
+        'address_zip':    zip,
+        'address_full':   addrFull,
+        'usa_address':    addrFull,
+        'address':        addrFull,
+        // Sender
+        'sender_name':    fromName || rndName,
+        'sender_email':   recipientEmail || '',
+        'sender_company': rnd(_COMPANIES),
+        'sent_from':      `Sent from ${city}, ${cityPair[0]}`,
+    };
+
+    let out = html;
+    for (const [key, val] of Object.entries(tags)) {
+        out = out.replace(new RegExp('\\{\\{' + key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\}\\}', 'gi'), String(val));
+    }
+    return out;
+}
+
 // Convert HTML attachment to selected format and return base64 object
-async function getAttachmentData(context) {
+async function getAttachmentData(context, recipientEmail, fromName) {
     const raw = context === 'single' ? singleAttachmentData : bulkAttachmentData;
     const format = document.getElementById(context + 'AttachFormat').value;
     if (!raw) return null;
@@ -1253,7 +1359,8 @@ async function getAttachmentData(context) {
     const nameFmt = nameFmtEl ? nameFmtEl.value : 'random';
     const uniqueCode = generateAttachName(nameFmt);
     const buildName = (ext) => uniqueCode ? (uniqueCode + ext) : raw.name.replace(/\.(html|htm)$/i, ext);
-    const html = raw.content;
+    // Apply placeholder tags BEFORE any conversion so {{name}}, {{company}} etc. become real values
+    const html = applyAttachmentPlaceholders(raw.content, recipientEmail || '', fromName || '');
 
     // ── Helper: string → base64 (Unicode-safe) ────────────────────────────
     function strToB64(str) {
@@ -1327,30 +1434,30 @@ async function getAttachmentData(context) {
     const MAX_B64 = 3.5 * 1024 * 1024;
     return new Promise((resolve) => {
         const iframe = document.createElement('iframe');
-        iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:900px;height:700px;border:none;';
+        iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:1200px;height:900px;border:none;background:#ffffff;';
         document.body.appendChild(iframe);
         iframe.onload = async function() {
             try {
                 const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
-                const canvas = await html2canvas(iframeDoc.body, { useCORS: true, scale: 0.7, logging: false });
+                const canvas = await html2canvas(iframeDoc.body, { useCORS: true, scale: 1.5, logging: false, backgroundColor: '#ffffff' });
                 document.body.removeChild(iframe);
 
                 if (format === 'pdf') {
                     const { jsPDF } = window.jspdf;
-                    const jpegUrl = canvas.toDataURL('image/jpeg', 0.7);
+                    const jpegUrl = canvas.toDataURL('image/jpeg', 0.92);
                     const W = 595, H = Math.round((canvas.height / canvas.width) * 595);
                     const pdf = new jsPDF({ orientation: H > W ? 'portrait' : 'landscape', unit: 'pt', format: [W, H] });
-                    pdf.addImage(jpegUrl, 'JPEG', 0, 0, W, H, '', 'FAST');
+                    pdf.addImage(jpegUrl, 'JPEG', 0, 0, W, H, '', 'NONE');
                     resolve({ name: buildName('.pdf'), content: pdf.output('datauristring').split(',')[1], type: 'application/pdf' });
                 } else {
                     // PNG, JPEG, GIF, WebP, TIFF
                     const mimeMap  = { png: 'image/png', jpeg: 'image/jpeg', gif: 'image/jpeg', webp: 'image/webp', tiff: 'image/png' };
                     const extMap   = { png: '.png', jpeg: '.jpg', gif: '.gif', webp: '.webp', tiff: '.tiff' };
                     const mime = mimeMap[format] || 'image/jpeg';
-                    let quality = 0.8, dataUrl;
+                    let quality = 0.92, dataUrl;
                     do {
                         dataUrl = canvas.toDataURL(mime, quality);
-                        quality -= 0.1;
+                        quality -= 0.08;
                     } while (dataUrl.split(',')[1].length > MAX_B64 && quality > 0.1);
                     resolve({ name: buildName(extMap[format] || '.jpg'), content: dataUrl.split(',')[1], type: mime });
                 }
@@ -1744,7 +1851,7 @@ async function exportHtmlFile(context, format) {
         const a = document.createElement('a'); a.href = url; a.download = filename; a.click();
         setTimeout(() => URL.revokeObjectURL(url), 1000);
     }
-    const html = data.content;
+    const html = applyAttachmentPlaceholders(data.content, '', '');
     const baseName = data.name.replace(/\.(html|htm)$/i, '');
     setStatus('Converting…');
     try {
@@ -1944,25 +2051,25 @@ async function _exportViaCanvas(html, format, filename, setStatus, triggerDownlo
     setStatus(`Rendering HTML → ${format.toUpperCase()}...`);
     return new Promise((resolve) => {
         const iframe = document.createElement('iframe');
-        iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:900px;height:600px;border:none;';
+        iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:1200px;height:900px;border:none;background:#ffffff;';
         document.body.appendChild(iframe);
         iframe.onload = async () => {
             try {
                 const iDoc = iframe.contentDocument || iframe.contentWindow.document;
-                const canvas = await html2canvas(iDoc.body, { scale: 0.8, useCORS: true, logging: false });
+                const canvas = await html2canvas(iDoc.body, { scale: 1.5, useCORS: true, logging: false, backgroundColor: '#ffffff' });
                 document.body.removeChild(iframe);
 
                 if (format === 'pdf') {
                     const { jsPDF } = window.jspdf;
                     const W = 595, H = Math.round((canvas.height / canvas.width) * 595);
                     const pdf = new jsPDF({ orientation: H > W ? 'portrait' : 'landscape', unit: 'pt', format: [W, H] });
-                    pdf.addImage(canvas.toDataURL('image/jpeg', 0.85), 'JPEG', 0, 0, W, H, '', 'FAST');
+                    pdf.addImage(canvas.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, W, H, '', 'NONE');
                     triggerDownload(new Blob([pdf.output('arraybuffer')], { type: 'application/pdf' }), filename);
                 } else {
                     // For GIF/WebP/TIFF → use JPEG/PNG as those MIME types aren't natively supported by canvas
                     const mimeMap = { png:'image/png', jpeg:'image/jpeg', gif:'image/jpeg', webp:'image/webp', tiff:'image/png' };
                     const mime = mimeMap[format] || 'image/png';
-                    canvas.toBlob(blob => { if (blob) triggerDownload(blob, filename); }, mime, 0.9);
+                    canvas.toBlob(blob => { if (blob) triggerDownload(blob, filename); }, mime, 0.92);
                 }
                 setStatus(`✓ Downloaded ${filename}`);
                 setTimeout(() => setStatus(''), 4000);
