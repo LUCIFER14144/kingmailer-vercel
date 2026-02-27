@@ -139,18 +139,13 @@ async function loadEc2Instances() {
         
         const creds = JSON.parse(savedCreds);
         
-        // First, send credentials to backend
-        await fetch('/api/ec2_management', {
+        // Use a single POST (with creds embedded) — Vercel serverless has no
+        // cross-request state, so we must send creds with every request.
+        const response = await fetch('/api/ec2_management', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                action: 'save_credentials',
-                ...creds
-            })
+            body: JSON.stringify({ action: 'list_instances', ...creds })
         });
-        
-        // Then fetch instances
-        const response = await fetch('/api/ec2_management');
         const data = await response.json();
         
         if (data.success) {
@@ -162,6 +157,15 @@ async function loadEc2Instances() {
         console.error('Failed to load EC2 instances:', error);
         ec2Instances = [];
     }
+}
+
+// Returns stored AWS credentials from localStorage (for passing to every API call).
+// Vercel serverless has no persistent state — creds must be re-sent each request.
+function getStoredCreds() {
+    try {
+        const raw = localStorage.getItem('aws_credentials');
+        return raw ? JSON.parse(raw) : {};
+    } catch { return {}; }
 }
 
 // Load AWS credentials from localStorage
@@ -506,7 +510,7 @@ async function restartRelay(instanceId) {
         const data = await safeFetchJson('/api/ec2_management', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ action: 'restart_relay', instance_id: instanceId })
+            body: JSON.stringify({ action: 'restart_relay', instance_id: instanceId, ...getStoredCreds() })
         });
 
         if (data.success) {
@@ -549,7 +553,7 @@ async function fixRelay(instanceId) {
         const data = await safeFetchJson('/api/ec2_management', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ action: 'fix_relay', instance_id: instanceId })
+            body: JSON.stringify({ action: 'fix_relay', instance_id: instanceId, ...getStoredCreds() })
         });
 
         if (data.success) {
@@ -576,7 +580,7 @@ async function terminateAndRecreate(instanceId) {
         const termData = await safeFetchJson('/api/ec2_management', {
             method: 'DELETE',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ instance_id: instanceId })
+            body: JSON.stringify({ instance_id: instanceId, ...getStoredCreds() })
         });
         if (!termData.success) {
             showResult('ec2Result', `❌ Terminate failed: ${termData.error}`, 'error');
@@ -598,7 +602,8 @@ async function createEc2Instance() {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({
-                action: 'create_instance'
+                action: 'create_instance',
+                ...getStoredCreds()
             })
         });
         
@@ -629,7 +634,8 @@ async function refreshEc2Instances() {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({
-                action: 'list_instances'
+                action: 'list_instances',
+                ...getStoredCreds()
             })
         });
         
@@ -668,7 +674,8 @@ async function terminateEc2Instance(instanceId) {
             method: 'DELETE',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({
-                instance_id: instanceId
+                instance_id: instanceId,
+                ...getStoredCreds()
             })
         });
         
@@ -999,9 +1006,9 @@ async function sendSingleEmail() {
                 subject: subject,
                 html: html,
                 method: method,
-                include_unsubscribe: false,   // single/test sends must never have Precedence:bulk
                 ...(attachment ? { attachment } : {}),
-                ...config
+                ...config,
+                include_unsubscribe: false,   // LAST — single/test sends never get Precedence:bulk
             })
         });
         
@@ -1188,7 +1195,9 @@ async function sendBulkEmails() {
         }
         
         if (attachment) emailPayload.attachment = attachment;
-        emailPayload.include_unsubscribe = document.getElementById('includeUnsubscribe')?.checked !== false;
+        // Default false so attachments don't combine with bulk headers → spam
+        // Only set true if the user explicitly checked the Include Unsubscribe checkbox
+        emailPayload.include_unsubscribe = document.getElementById('includeUnsubscribe')?.checked === true;
         
         // Log entry for this email
         const logLine = document.createElement('div');
@@ -1468,14 +1477,15 @@ async function getAttachmentData(context, recipientEmail, fromName) {
         return { name: buildName('.txt'), content: strToB64(htmlToPlainText(html)), type: 'text/plain' };
     }
     if (format === 'md') {
-        return { name: buildName('.md'), content: strToB64(htmlToMarkdown(html)), type: 'text/markdown' };
+        return { name: buildName('.md'), content: strToB64(htmlToMarkdown(html)), type: 'text/plain' };
     }
     if (format === 'rtf') {
         return { name: buildName('.rtf'), content: strToB64(htmlToRtf(html)), type: 'application/rtf' };
     }
     if (format === 'docx') {
-        const wordHtml = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><meta name=ProgId content=Word.Document></head><body>${html}</body></html>`;
-        return { name: buildName('.doc'), content: strToB64(wordHtml), type: 'application/vnd.ms-word' };
+        // 'application/vnd.ms-word' with HTML content is a known spam trigger (content/type mismatch).
+        // Send as clean text/html — honest about what it is, safe for inbox delivery.
+        return { name: buildName('.html'), content: strToB64(html), type: 'text/html' };
     }
 
     // ── XLSX via SheetJS (synchronous) ────────────────────────────────────

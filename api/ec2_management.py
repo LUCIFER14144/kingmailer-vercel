@@ -11,8 +11,10 @@ from botocore.exceptions import ClientError
 import time
 
 # In-memory storage for EC2 instances and credentials
+# NOTE: Vercel is serverless — each request is a fresh Python process.
+# Credentials must be passed in every request body; we restore them here.
 EC2_INSTANCES = []
-AWS_CREDENTIALS = None
+AWS_CREDENTIALS = {}
 
 
 def get_latest_amazon_linux_ami(ec2_client):
@@ -764,7 +766,7 @@ class handler(BaseHTTPRequestHandler):
             
             if self.path == '/api/ec2_management':
                 # If credentials exist, fetch live instances from AWS
-                if AWS_CREDENTIALS:
+                if AWS_CREDENTIALS.get('access_key'):
                     live_result = list_ec2_instances(
                         AWS_CREDENTIALS['access_key'],
                         AWS_CREDENTIALS['secret_key'],
@@ -797,7 +799,7 @@ class handler(BaseHTTPRequestHandler):
                     }
             elif self.path == '/api/ec2_management/credentials':
                 # Return credentials (without secret key)
-                if AWS_CREDENTIALS:
+                if AWS_CREDENTIALS.get('access_key'):
                     result = {
                         'success': True,
                         'credentials': {
@@ -835,7 +837,15 @@ class handler(BaseHTTPRequestHandler):
             content_length = int(self.headers.get('Content-Length', 0))
             body = self.rfile.read(content_length).decode('utf-8')
             data = json.loads(body)
-            
+
+            # ── Stateless serverless fix ──────────────────────────────────
+            # Vercel creates a fresh process per request; credentials are lost.
+            # Any request body may include credentials — restore them now so
+            # every action (create, list, restart, fix, terminate) works.
+            for _k in ('access_key', 'secret_key', 'region', 'keypair', 'security_group'):
+                if data.get(_k):
+                    AWS_CREDENTIALS[_k] = data[_k]
+
             action = data.get('action')
             
             if action == 'save_credentials':
@@ -855,7 +865,7 @@ class handler(BaseHTTPRequestHandler):
             
             elif action == 'create_instance':
                 # Create EC2 instance
-                if not AWS_CREDENTIALS:
+                if not AWS_CREDENTIALS.get('access_key'):
                     result = {
                         'success': False,
                         'error': 'Please save AWS credentials first'
@@ -898,7 +908,7 @@ class handler(BaseHTTPRequestHandler):
                 instance_id = data.get('instance_id')
                 if not instance_id:
                     result = {'success': False, 'error': 'instance_id required'}
-                elif not AWS_CREDENTIALS:
+                elif not AWS_CREDENTIALS.get('access_key'):
                     result = {'success': False, 'error': 'AWS credentials not configured'}
                 else:
                     result = restart_relay_via_ssm(
@@ -912,7 +922,7 @@ class handler(BaseHTTPRequestHandler):
                 instance_id = data.get('instance_id')
                 if not instance_id:
                     result = {'success': False, 'error': 'instance_id required'}
-                elif not AWS_CREDENTIALS:
+                elif not AWS_CREDENTIALS.get('access_key'):
                     result = {'success': False, 'error': 'AWS credentials not configured'}
                 else:
                     result = fix_relay_instance(
@@ -924,7 +934,7 @@ class handler(BaseHTTPRequestHandler):
 
             elif action == 'list_instances':
                 # List all EC2 instances from AWS
-                if not AWS_CREDENTIALS:
+                if not AWS_CREDENTIALS.get('access_key'):
                     result = {
                         'success': False,
                         'error': 'Please save AWS credentials first'
@@ -961,12 +971,17 @@ class handler(BaseHTTPRequestHandler):
             content_length = int(self.headers.get('Content-Length', 0))
             body = self.rfile.read(content_length).decode('utf-8')
             data = json.loads(body)
-            
+
+            # Restore credentials from request body (serverless stateless fix)
+            for _k in ('access_key', 'secret_key', 'region', 'keypair', 'security_group'):
+                if data.get(_k):
+                    AWS_CREDENTIALS[_k] = data[_k]
+
             instance_id = data.get('instance_id')
             
             if not instance_id:
                 result = {'success': False, 'error': 'Instance ID required'}
-            elif not AWS_CREDENTIALS:
+            elif not AWS_CREDENTIALS.get('access_key'):
                 result = {'success': False, 'error': 'AWS credentials not configured'}
             else:
                 result = terminate_ec2_instance(
@@ -999,3 +1014,4 @@ class handler(BaseHTTPRequestHandler):
         self.send_header('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type')
         self.end_headers()
+
