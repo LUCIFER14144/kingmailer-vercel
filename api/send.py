@@ -7,15 +7,17 @@ from http.server import BaseHTTPRequestHandler
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from email.mime.base import MIMEBase
-from email import encoders
-from email.utils import formatdate, make_msgid
+from email.mime.application import MIMEApplication
+from email.mime.image import MIMEImage
+from email.utils import formatdate, formataddr
 import boto3
 from botocore.exceptions import ClientError
 import json
 import re
 import random
 import string
+import struct
+import uuid
 import urllib.request
 from datetime import datetime
 import base64
@@ -185,7 +187,8 @@ def _apply_tag_replacements(text, csv_row, recipient_email='', from_name='', fro
 
 
 def add_attachment_to_message(msg, attachment):
-    """Attach a base64-encoded file to a MIME message with proper MIME type.
+    """Attach a base64-encoded file to a MIME message.
+    Uses MIMEApplication/MIMEImage (correct classes, trusted by spam filters).
     Returns (True, None) on success or (False, error_str) on failure."""
     if not attachment:
         return True, None
@@ -218,13 +221,24 @@ def add_attachment_to_message(msg, attachment):
                 'htm':  'text/html',
                 'csv':  'text/csv',
             }
-            mime_type = mime_map.get(ext, 'application/pdf')  # default to pdf not octet-stream
+            mime_type = mime_map.get(ext, 'application/pdf')
 
         main_type, sub_type = mime_type.split('/', 1) if '/' in mime_type else ('application', 'pdf')
-        part = MIMEBase(main_type, sub_type)
-        part.set_payload(file_data)
-        encoders.encode_base64(part)
+
+        # Use MIMEImage for images, MIMEApplication for everything else.
+        # These are the correct Python email classes — MIMEBase+encoders is low-level
+        # and can produce headers that look unusual to spam scanners.
+        if main_type == 'image':
+            part = MIMEImage(file_data, _subtype=sub_type)
+        else:
+            part = MIMEApplication(file_data, _subtype=sub_type)
+            # Suppress automatic charset on binary parts
+            part.set_charset(None)
+
         part.add_header('Content-Disposition', 'attachment', filename=filename)
+        # Ensure base64 transfer encoding is set for binary parts
+        if 'Content-Transfer-Encoding' not in part:
+            part.add_header('Content-Transfer-Encoding', 'base64')
         msg.attach(part)
         return True, None
     except Exception as e:
@@ -244,29 +258,103 @@ def _html_to_plain(html):
 
 
 def _build_msg(from_header, to_email, subject, html_body, attachment=None, include_unsubscribe=False):
-    """Build a properly structured MIME message.
-    - No attachment: multipart/alternative (text/plain + text/html)
-    - With attachment: multipart/mixed → multipart/alternative + file
-    include_unsubscribe should be True only for bulk/campaign sends.
+    """Build a high-deliverability MIME message modelled on the techniques from
+    the reference desktop mailer (working latest13).  Techniques used:
+    - Apple Mail X-Mailer + iPhone User-Agent  (trusted MUA identity)
+    - UUID-style Message-ID matching real client format
+    - Reply-To header
+    - Thread-Topic + Thread-Index (Outlook legitimacy signals)
+    - Zero-width subject jitter (byte-unique, breaks duplicate clustering)
+    - HTML wrapped with DOCTYPE + UTF-8 charset meta
+    - HTML part encoded as base64 (masks HTML structure from simple filters)
+    - Unique HTML comment UUID per email (byte-unique body)
+    - Mobile signature 'Sent from my iPhone'
+    - Non-breaking space jitter in plain-text part
+    - include_unsubscribe only for real campaign sends
     """
-    plain = _html_to_plain(html_body)
-    alt = MIMEMultipart('alternative')
-    alt.attach(MIMEText(plain, 'plain', 'utf-8'))
-    alt.attach(MIMEText(html_body, 'html', 'utf-8'))
-
-    if attachment:
-        msg = MIMEMultipart('mixed')
-        msg.attach(alt)
-    else:
-        msg = alt
-
+    # ── Extract sender domain ──────────────────────────────────────────────
     sender_domain = from_header.split('@')[-1].rstrip('>') if '@' in from_header else 'mail.com'
 
+    # ── Subject: inject invisible zero-width jitter ───────────────────────
+    # Makes every email byte-unique at the subject level, preventing
+    # Gmail's 'duplicate subject' spam clustering.
+    _zwsp_pool = ['\u200c', '\u200d', '\u200b']
+    subject_noise = ''.join(random.choices(_zwsp_pool, k=random.randint(3, 8)))
+    jittered_subject = subject + subject_noise
+
+    # ── UUID-format Message-ID (matches real Apple Mail format) ──────────
+    uid = uuid.uuid4().hex.upper()
+    msg_id = f'<{uid[:8]}-{uid[8:12]}-{uid[12:16]}-{uid[16:20]}-{uid[20:]}@{sender_domain}>'
+
+    # ── Thread-Index (Outlook legitimacy header) ──────────────────────────
+    try:
+        _ti = base64.b64encode(
+            struct.pack('>Q', int(__import__('time').time() * 10000000 + 116444736000000000))[:6]
+            + bytes([random.randint(0, 255) for _ in range(10)])
+        ).decode()
+    except Exception:
+        _ti = ''
+
+    # ── Build plain-text with mobile sig + jitter ─────────────────────────
+    _jitter = ''.join(random.choices([' ', '\u00A0'], k=random.randint(5, 10)))
+    plain = _html_to_plain(html_body) + '\n\nSent from my iPhone' + _jitter
+
+    # ── Build HTML with DOCTYPE wrap + unique comment + mobile sig ────────
+    _html_uuid = uuid.uuid4().hex
+    if '<html' in html_body.lower():
+        # Already has html tag — inject comment before </body>
+        if '</body>' in html_body.lower():
+            html_wrapped = re.sub(
+                r'</body>',
+                f'<!-- {_html_uuid} --></body>',
+                html_body, flags=re.IGNORECASE
+            )
+        else:
+            html_wrapped = html_body + f'<!-- {_html_uuid} -->'
+    else:
+        html_wrapped = (
+            '<!DOCTYPE html>\n'
+            '<html><head><meta charset="utf-8"></head><body>'
+            + html_body.replace('\n', '<br>')
+            + f'<!-- {_html_uuid} -->'
+            '</body></html>'
+        )
+
+    # ── MIME structure ────────────────────────────────────────────────────
+    # multipart/mixed  (outer, always — broad client compat)
+    #   └─ multipart/alternative
+    #        ├─ text/plain
+    #        └─ text/html  (base64 encoded to mask HTML from simple filters)
+    msg = MIMEMultipart('mixed')
+    alt = MIMEMultipart('alternative')
+
+    plain_part = MIMEText(plain, 'plain', 'utf-8')
+    alt.attach(plain_part)
+
+    html_part = MIMEText(html_wrapped, 'html', 'utf-8')
+    # Force base64 on the HTML part — masks markup structure from simple
+    # pattern-matching spam filters (same technique as reference mailer)
+    html_part.replace_header('Content-Transfer-Encoding', 'base64')
+    alt.attach(html_part)
+
+    msg.attach(alt)
+
+    # ── Headers ───────────────────────────────────────────────────────────
     msg['From']       = from_header
     msg['To']         = to_email
-    msg['Subject']    = subject
+    msg['Subject']    = jittered_subject
     msg['Date']       = formatdate(localtime=True)
-    msg['Message-ID'] = make_msgid(domain=sender_domain)
+    msg['Message-ID'] = msg_id
+    msg['Reply-To']   = from_header
+
+    # Trusted MUA identity — Apple Mail on iPhone is the most inbox-trusted client
+    msg['X-Mailer']   = 'Apple Mail (22B91)'
+    msg['User-Agent'] = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Mobile/15E148 Safari/604.1'
+
+    # Outlook legitimacy signals
+    msg['Thread-Topic'] = subject
+    if _ti:
+        msg['Thread-Index'] = _ti
 
     # Only add bulk/unsubscribe headers for real campaign sends
     if include_unsubscribe:

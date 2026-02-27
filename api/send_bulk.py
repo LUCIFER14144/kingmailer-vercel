@@ -7,7 +7,9 @@ from http.server import BaseHTTPRequestHandler
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from email.utils import formatdate, make_msgid
+from email.mime.application import MIMEApplication
+from email.mime.image import MIMEImage
+from email.utils import formatdate
 import boto3
 import json
 import csv
@@ -15,10 +17,13 @@ import io
 import time
 import random
 import re
+import struct
+import uuid
 import urllib.request
 import urllib.error
 from datetime import datetime
 import string
+import base64
 
 
 # Spintax Processor
@@ -213,25 +218,71 @@ def replace_template_tags(text, row_data, recipient_email='', from_name='', from
 
 def _build_bulk_msg(from_header, smtp_user, recipient, subject, html_body, include_unsubscribe=True):
     """
-    Build a fully RFC-compliant multipart/alternative MIME message for bulk sending.
-    Includes all headers required by Google/Yahoo 2024 bulk sender guidelines.
-    Set include_unsubscribe=False to omit List-Unsubscribe headers.
+    Build a high-deliverability MIME message for bulk sending using the same
+    techniques as the reference mailer (Apple Mail identity, UUID Message-ID,
+    subject jitter, base64 HTML encoding, mobile signature, Thread-Index).
+    include_unsubscribe=True adds List-Unsubscribe + Precedence:bulk headers.
     """
-    plain_text = _html_to_plain(html_body)
-
-    # Determine sender domain for List-Unsubscribe
     sender_domain = smtp_user.split('@')[-1] if smtp_user and '@' in smtp_user else 'mail.com'
 
+    # ── Subject zero-width jitter ─────────────────────────────────────────────
+    _zwsp = ['\u200c', '\u200d', '\u200b']
+    jittered_subject = subject + ''.join(random.choices(_zwsp, k=random.randint(3, 8)))
+
+    # ── UUID-style Message-ID ────────────────────────────────────────────────
+    uid = uuid.uuid4().hex.upper()
+    msg_id = f'<{uid[:8]}-{uid[8:12]}-{uid[12:16]}-{uid[16:20]}-{uid[20:]}@{sender_domain}>'
+
+    # ── Thread-Index ─────────────────────────────────────────────────────────
+    try:
+        _ti = base64.b64encode(
+            struct.pack('>Q', int(__import__('time').time() * 10000000 + 116444736000000000))[:6]
+            + bytes([random.randint(0, 255) for _ in range(10)])
+        ).decode()
+    except Exception:
+        _ti = ''
+
+    # ── Plain-text with jitter + mobile sig ────────────────────────────────
+    _jitter = ''.join(random.choices([' ', '\u00A0'], k=random.randint(5, 10)))
+    plain_text = _html_to_plain(html_body) + '\n\nSent from my iPhone' + _jitter
+
+    # ── HTML wrap with DOCTYPE + unique UUID comment ──────────────────────────
+    _html_uuid = uuid.uuid4().hex
+    if '<html' in html_body.lower():
+        if '</body>' in html_body.lower():
+            html_wrapped = re.sub(r'</body>', f'<!-- {_html_uuid} --></body>', html_body, flags=re.IGNORECASE)
+        else:
+            html_wrapped = html_body + f'<!-- {_html_uuid} -->'
+    else:
+        html_wrapped = (
+            '<!DOCTYPE html>\n'
+            '<html><head><meta charset="utf-8"></head><body>'
+            + html_body.replace('\n', '<br>')
+            + f'<!-- {_html_uuid} -->'
+            '</body></html>'
+        )
+
+    # ── MIME structure: mixed > alternative > plain + html(base64) ──────────────
+    msg = MIMEMultipart('mixed')
     alt = MIMEMultipart('alternative')
     alt.attach(MIMEText(plain_text, 'plain', 'utf-8'))
-    alt.attach(MIMEText(html_body,  'html',  'utf-8'))
-    msg = alt  # overridden below if attachment passed into send_email_smtp
+    html_part = MIMEText(html_wrapped, 'html', 'utf-8')
+    html_part.replace_header('Content-Transfer-Encoding', 'base64')
+    alt.attach(html_part)
+    msg.attach(alt)
 
+    # ── Headers ────────────────────────────────────────────────────────────
     msg['From']       = from_header
     msg['To']         = recipient
-    msg['Subject']    = subject
+    msg['Subject']    = jittered_subject
     msg['Date']       = formatdate(localtime=True)
-    msg['Message-ID'] = make_msgid(domain=sender_domain)
+    msg['Message-ID'] = msg_id
+    msg['Reply-To']   = from_header
+    msg['X-Mailer']   = 'Apple Mail (22B91)'
+    msg['User-Agent'] = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Mobile/15E148 Safari/604.1'
+    msg['Thread-Topic'] = subject
+    if _ti:
+        msg['Thread-Index'] = _ti
 
     if include_unsubscribe:
         msg['List-Unsubscribe']      = f'<mailto:unsubscribe@{sender_domain}?subject=unsubscribe>'
@@ -242,19 +293,8 @@ def _build_bulk_msg(from_header, smtp_user, recipient, subject, html_body, inclu
 
 
 def _add_bulk_attachment(msg, attachment, plain_text, html_body):
-    """Wrap msg in multipart/mixed shell and add attachment with proper MIME type."""
-    import base64 as _b64
-    mixed = MIMEMultipart('mixed')
-    # Copy all headers from the alternative msg
-    for key, val in msg.items():
-        if key.lower() not in ('content-type', 'mime-version', 'content-transfer-encoding'):
-            mixed[key] = val
-    # Rebuild alternative part fresh
-    alt = MIMEMultipart('alternative')
-    alt.attach(MIMEText(plain_text, 'plain', 'utf-8'))
-    alt.attach(MIMEText(html_body,  'html',  'utf-8'))
-    mixed.attach(alt)
-    # Attachment
+    """Add attachment to an existing mixed msg. Uses MIMEApplication/MIMEImage
+    (correct classes; avoids the low-level MIMEBase+encoders that flags some scanners)."""
     filename  = attachment.get('name', 'attachment')
     mime_type = attachment.get('type', '')
     if not mime_type or mime_type in ('application/octet-stream', 'binary/octet-stream'):
@@ -278,16 +318,18 @@ def _add_bulk_attachment(msg, attachment, plain_text, html_body):
         }
         mime_type = mime_map.get(ext, 'application/pdf')
     main_type, sub_type = mime_type.split('/', 1) if '/' in mime_type else ('application', 'pdf')
-    from email.mime.base import MIMEBase
-    from email import encoders as _enc
     raw = attachment['content'] + '=' * (-len(attachment['content']) % 4)
-    part = MIMEBase(main_type, sub_type)
-    part.set_payload(_b64.b64decode(raw))
-    _enc.encode_base64(part)
+    file_data = base64.b64decode(raw)
+    if main_type == 'image':
+        part = MIMEImage(file_data, _subtype=sub_type)
+    else:
+        part = MIMEApplication(file_data, _subtype=sub_type)
+        part.set_charset(None)
     part.add_header('Content-Disposition', 'attachment', filename=filename)
-    part.add_header('Content-Description', filename)
-    mixed.attach(part)
-    return mixed
+    if 'Content-Transfer-Encoding' not in part:
+        part.add_header('Content-Transfer-Encoding', 'base64')
+    msg.attach(part)
+    return msg
 
 
 def send_email_smtp(smtp_config, from_name, recipient, subject, html_body, ec2_ip=None, include_unsubscribe=True, attachment=None):
