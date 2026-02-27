@@ -340,10 +340,12 @@ def _build_bulk_msg(from_header, smtp_user, recipient, subject, html_body, inclu
         else:
             html_wrapped = html_body + f'<!-- {_html_uuid} -->'
     else:
+        # Build from scratch — add mobile signature to HTML too (matching reference)
         html_wrapped = (
             '<!DOCTYPE html>\n'
             '<html><head><meta charset="utf-8"></head><body>'
             + html_body.replace('\n', '<br>')
+            + '<br>Sent from my iPhone'
             + f'<!-- {_html_uuid} -->'
             '</body></html>'
         )
@@ -419,18 +421,23 @@ def _add_bulk_attachment(msg, attachment, plain_text, html_body):
     raw = attachment['content'] + '=' * (-len(attachment['content']) % 4)
     file_data = base64.b64decode(raw)
     
+    # Match reference file attachment handling EXACTLY
     if main_type == 'image':
         part = MIMEImage(file_data, _subtype=sub_type)
-    else:
+    elif main_type == 'application':
         part = MIMEApplication(file_data, _subtype=sub_type)
+    else:
+        part = MIMEApplication(file_data)
     
-    now_rfc = formatdate(localtime=True)
-    part.add_header(
-        'Content-Disposition', 'attachment',
-        filename=filename,
-        **{'creation-date': now_rfc, 'modification-date': now_rfc, 'read-date': now_rfc}
-    )
-    part['X-Attachment-Id'] = uuid.uuid4().hex
+    # Basic Content-Disposition (matching reference file)
+    part.add_header('Content-Disposition', 'attachment', filename=filename)
+    
+    # CRITICAL: Reference file pattern (lines 3285-3288)
+    if main_type != 'text':
+        part.set_charset(None)
+        if 'Content-Transfer-Encoding' not in part:
+            part.add_header('Content-Transfer-Encoding', 'base64')
+    
     msg.attach(part)
     return msg
 
