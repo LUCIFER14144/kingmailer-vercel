@@ -100,21 +100,10 @@ def gen_address_parts():
     return street, city, state, zipcode, f"{street}, {city}, {state} {zipcode}"
 
 def gen_recipient_name_parts(row_data, recipient_email):
-    """Derive recipient name from CSV columns or email address."""
-    # Try explicit name columns first
-    for col in ('name', 'full_name', 'fullname', 'recipient_name'):
-        v = row_data.get(col, '').strip()
-        if v:
-            parts = v.split()
-            first = parts[0] if parts else v
-            last  = parts[-1] if len(parts) > 1 else ''
-            return v, first, last
-    # Fallback: derive from email local part
-    local = recipient_email.split('@')[0].replace('.', ' ').replace('_', ' ').replace('-', ' ').title()
-    parts = local.split()
-    first = parts[0] if parts else local
-    last  = parts[-1] if len(parts) > 1 else ''
-    return local, first, last
+    """Always generate a random name — only email comes from CSV."""
+    first = random.choice(_FIRST_NAMES)
+    last  = random.choice(_LAST_NAMES)
+    return f"{first} {last}", first, last
 
 def _html_to_plain(html):
     """Strip HTML tags to produce a plain-text fallback."""
@@ -140,9 +129,9 @@ def replace_template_tags(text, row_data, recipient_email='', from_name='', from
         # Only match single-brace if NOT part of spintax (no pipe nearby)
         text = re.sub(r'(?<!\{)\{' + escaped + r'\}(?!\})', str(value), text, flags=re.IGNORECASE)
 
-    # ── 2. Recipient-derived tags ─────────────────────────────────────────────
+    # ── 2. Recipient-derived tags (all auto-generated — only email comes from CSV) ─
     full_name, first_name, last_name = gen_recipient_name_parts(row_data, recipient_email)
-    recipient_company = row_data.get('company', row_data.get('organization', gen_company())).strip()
+    recipient_company = gen_company()
     titles = ['Mr.', 'Ms.', 'Dr.']
     formal_name = f"{random.choice(titles)} {full_name}"
 
@@ -184,9 +173,9 @@ def replace_template_tags(text, row_data, recipient_email='', from_name='', from
         'random_upper_10':    ''.join(random.choices(string.ascii_uppercase, k=10)),
         'random_lower_12':    ''.join(random.choices(string.ascii_lowercase, k=12)),
         'random_alphanum_16': ''.join(random.choices(string.ascii_letters + string.digits, k=16)),
-        # People & companies
+        # People & companies (all randomly generated)
         'random_name':    rnd_name,
-        'name':           full_name if full_name else rnd_name,
+        'name':           full_name,
         'random_company': gen_company(),
         'company':        recipient_company,
         'company_name':   recipient_company,

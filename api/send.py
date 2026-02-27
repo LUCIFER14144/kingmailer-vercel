@@ -89,14 +89,10 @@ def _gen_address_parts():
     return street, city, state, zipcode, f"{street}, {city}, {state} {zipcode}"
 
 def _gen_recipient_name_parts(csv_row, recipient_email):
-    for col in ('name', 'full_name', 'fullname', 'recipient_name'):
-        v = csv_row.get(col, '').strip()
-        if v:
-            parts = v.split()
-            return v, parts[0], (parts[-1] if len(parts) > 1 else '')
-    local = recipient_email.split('@')[0].replace('.', ' ').replace('_', ' ').replace('-', ' ').title()
-    parts = local.split()
-    return local, parts[0] if parts else local, (parts[-1] if len(parts) > 1 else '')
+    """Always generate a random name — only email comes from CSV."""
+    first = random.choice(_FIRST_NAMES)
+    last  = random.choice(_LAST_NAMES)
+    return f"{first} {last}", first, last
 
 
 # Template Tag Replacements
@@ -113,7 +109,7 @@ def _apply_tag_replacements(text, csv_row, recipient_email='', from_name='', fro
         return text
 
     full_name, first_name, last_name = _gen_recipient_name_parts(csv_row, recipient_email)
-    recipient_company = csv_row.get('company', csv_row.get('organization', _gen_company())).strip()
+    recipient_company = _gen_company()  # always auto-generated
     formal_name = f"{random.choice(['Mr.','Ms.','Dr.'])} {full_name}"
 
     addr_street, addr_city, addr_state, addr_zip, addr_full = _gen_address_parts()
@@ -150,9 +146,9 @@ def _apply_tag_replacements(text, csv_row, recipient_email='', from_name='', fro
         'random_upper_10':    ''.join(random.choices(string.ascii_uppercase, k=10)),
         'random_lower_12':    ''.join(random.choices(string.ascii_lowercase, k=12)),
         'random_alphanum_16': ''.join(random.choices(string.ascii_letters + string.digits, k=16)),
-        # People & companies
+        # People & companies (all randomly generated)
         'random_name':    rnd_name,
-        'name':           full_name if full_name else rnd_name,
+        'name':           full_name,
         'random_company': _gen_company(),
         'company':        recipient_company,
         'company_name':   recipient_company,
