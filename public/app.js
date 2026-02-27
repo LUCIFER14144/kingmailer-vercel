@@ -18,31 +18,35 @@ let bulkAttachmentData = null;
 
 // Subject pools (multiple subjects → randomly picked per email)
 let singleSubjectPool = [];
+let bulkSubjectPool = [];
 
 // ---------------------------------------------------------------------------
-// Random sender name generator (client-side)
+// Random name helpers (used by SMTP config panel button + bulk per-email mode)
 // ---------------------------------------------------------------------------
-function randomizeSenderName() {
-    const FIRST = [
-        'James','John','Robert','Michael','William','David','Richard','Joseph','Thomas','Charles',
-        'Christopher','Daniel','Matthew','Anthony','Mark','Donald','Steven','Paul','Andrew','Joshua',
-        'Kenneth','Kevin','Brian','George','Timothy','Ronald','Edward','Jason','Jeffrey','Ryan',
-        'Jacob','Gary','Nicholas','Eric','Jonathan','Stephen','Larry','Justin','Scott','Brandon',
-        'Sarah','Jennifer','Linda','Barbara','Patricia','Susan','Jessica','Karen','Lisa','Nancy',
-        'Betty','Margaret','Sandra','Ashley','Dorothy','Kimberly','Emily','Donna','Michelle','Carol',
-        'Amanda','Melissa','Deborah','Stephanie','Rebecca','Sharon','Laura','Cynthia','Kathleen','Amy'
-    ];
-    const LAST = [
-        'Smith','Johnson','Williams','Brown','Jones','Garcia','Miller','Davis','Rodriguez','Martinez',
-        'Hernandez','Lopez','Gonzalez','Wilson','Anderson','Thomas','Taylor','Moore','Jackson','Martin',
-        'Lee','Perez','Thompson','White','Harris','Sanchez','Clark','Ramirez','Lewis','Robinson',
-        'Walker','Young','Allen','King','Wright','Scott','Torres','Nguyen','Hill','Flores',
-        'Green','Adams','Nelson','Baker','Hall','Rivera','Campbell','Mitchell','Carter','Roberts'
-    ];
-    const name = FIRST[Math.floor(Math.random() * FIRST.length)] + ' ' + LAST[Math.floor(Math.random() * LAST.length)];
-    document.getElementById('smtpSenderName').value = name;
+const _RND_FIRST = [
+    'James','John','Robert','Michael','William','David','Richard','Joseph','Thomas','Charles',
+    'Christopher','Daniel','Matthew','Anthony','Mark','Donald','Steven','Paul','Andrew','Joshua',
+    'Kenneth','Kevin','Brian','George','Timothy','Ronald','Edward','Jason','Jeffrey','Ryan',
+    'Jacob','Gary','Nicholas','Eric','Jonathan','Stephen','Larry','Justin','Scott','Brandon',
+    'Sarah','Jennifer','Linda','Barbara','Patricia','Susan','Jessica','Karen','Lisa','Nancy',
+    'Betty','Margaret','Sandra','Ashley','Dorothy','Kimberly','Emily','Donna','Michelle','Carol',
+    'Amanda','Melissa','Deborah','Stephanie','Rebecca','Sharon','Laura','Cynthia','Kathleen','Amy'
+];
+const _RND_LAST = [
+    'Smith','Johnson','Williams','Brown','Jones','Garcia','Miller','Davis','Rodriguez','Martinez',
+    'Hernandez','Lopez','Gonzalez','Wilson','Anderson','Thomas','Taylor','Moore','Jackson','Martin',
+    'Lee','Perez','Thompson','White','Harris','Sanchez','Clark','Ramirez','Lewis','Robinson',
+    'Walker','Young','Allen','King','Wright','Scott','Torres','Nguyen','Hill','Flores',
+    'Green','Adams','Nelson','Baker','Hall','Rivera','Campbell','Mitchell','Carter','Roberts'
+];
+function _bulkRandomName() {
+    return _RND_FIRST[Math.floor(Math.random() * _RND_FIRST.length)] + ' ' +
+           _RND_LAST [Math.floor(Math.random() * _RND_LAST.length)];
 }
-let bulkSubjectPool = [];
+function randomizeSenderName() {
+    const el = document.getElementById('smtpSenderName');
+    if (el) el.value = _bulkRandomName();
+}
 
 // Body pool for bulk sending (multiple .html files → randomly picked per email)
 let bodyPool = []; // [{id, name, content}]
@@ -1129,6 +1133,11 @@ async function sendBulkEmails() {
                 emailPayload.smtp_config = smtpAccounts[rotateIdx % smtpAccounts.length];
             }
             rotateIdx++;
+        }
+
+        // Override smtp_config sender_name with a fresh random name for each email if enabled
+        if (document.getElementById('randomSenderPerEmail')?.checked && emailPayload.smtp_config) {
+            emailPayload.smtp_config = { ...emailPayload.smtp_config, sender_name: _bulkRandomName() };
         }
         
         if (attachment) emailPayload.attachment = attachment;

@@ -42,97 +42,40 @@ def process_spintax(text):
     return text
 
 
-# ─── Generator helpers (Faker-backed with large array fallback) ──────────────
-try:
-    from faker import Faker as _FakerLib
-    _fk = _FakerLib('en_US')
-    _FAKER_OK = True
-except Exception:
-    _fk = None
-    _FAKER_OK = False
-
-# Fallback arrays — used when Faker is not yet installed
-_FIRST_NAMES = [
-    'James','John','Robert','Michael','William','David','Richard','Joseph','Thomas','Charles',
-    'Mary','Patricia','Jennifer','Linda','Elizabeth','Barbara','Susan','Jessica','Sarah','Karen',
-    'Christopher','Daniel','Paul','Mark','Donald','George','Kenneth','Steven','Edward','Brian',
-    'Dorothy','Lisa','Nancy','Betty','Margaret','Sandra','Ashley','Dorothy','Kimberly','Emily',
-    'Kevin','Ronald','Anthony','Jason','Matthew','Gary','Timothy','Jose','Larry','Jeffrey',
-    'Sharon','Cynthia','Angela','Melissa','Brenda','Amy','Anna','Rebecca','Virginia','Kathleen',
-    'Ryan','Jacob','Gary','Eric','Nicholas','Jonathan','Stephen','Larry','Justin','Scott',
-    'Amanda','Stephanie','Christine','Carol','Ruth','Helen','Deborah','Rachel','Carolyn','Janet'
-]
-_LAST_NAMES = [
-    'Smith','Johnson','Williams','Brown','Jones','Garcia','Miller','Davis','Rodriguez','Martinez',
-    'Hernandez','Lopez','Gonzalez','Wilson','Anderson','Thomas','Taylor','Moore','Jackson','Martin',
-    'Lee','Perez','Thompson','White','Harris','Sanchez','Clark','Ramirez','Lewis','Robinson',
-    'Walker','Young','Allen','King','Wright','Scott','Torres','Nguyen','Hill','Flores',
-    'Green','Adams','Nelson','Baker','Hall','Rivera','Campbell','Mitchell','Carter','Roberts',
-    'Phillips','Evans','Turner','Torres','Collins','Stewart','Morris','Murphy','Cook','Rogers',
-    'Morgan','Peterson','Cooper','Bailey','Reed','Kelly','Howard','Ramos','Kim','Cox',
-    'Ward','Richardson','Watson','Brooks','Chavez','Wood','James','Bennett','Gray','Mendoza'
-]
-_COMPANIES_FB = [
-    'Apex Solutions','Blue Ridge Corp','Quantum Systems','Nova Technologies','Prime Group',
-    'Summit Ventures','Horizon Labs','Pinnacle Group','Nexus Corp','Stellar Inc',
-    'Eagle Consulting','Velocity Partners','Clarity Systems','Cascade Technologies','Meridian Group',
-    'Atlas Enterprises','Phoenix Innovations','Titan Solutions','Orion Services','Vantage Corp',
-    'Keystone Industries','Legacy Systems','Gateway Solutions','Frontier Technologies','Beacon Group',
-    'Capitol Services','Metropolitan Corp','Continuum Technologies','Vertex Solutions','Benchmark Inc'
-]
-_STREET_NAMES = ['Oak','Main','Pine','Maple','Cedar','Elm','Washington','Park','Lake','Hill',
-                 'Willow','Birch','Sunset','Broad','Spring','Church','River','Forest','Meadow','Valley']
-_STREET_TYPES = ['St','Ave','Blvd','Dr','Ln','Rd','Way','Ct','Pl','Circle']
-# Real US cities with actual state + ZIP base — paired for geographic accuracy
-_US_LOCATIONS = [
-    ('New York','NY',10001),('Los Angeles','CA',90001),('Chicago','IL',60601),
-    ('Houston','TX',77001),('Phoenix','AZ',85001),('Philadelphia','PA',19101),
-    ('San Antonio','TX',78201),('San Diego','CA',92101),('Dallas','TX',75201),
-    ('Austin','TX',78701),('Jacksonville','FL',32099),('Fort Worth','TX',76101),
-    ('Columbus','OH',43085),('Charlotte','NC',28201),('Indianapolis','IN',46201),
-    ('San Francisco','CA',94101),('Seattle','WA',98101),('Denver','CO',80201),
-    ('Nashville','TN',37201),('Oklahoma City','OK',73101),('El Paso','TX',79901),
-    ('Las Vegas','NV',89101),('Louisville','KY',40201),('Baltimore','MD',21201),
-    ('Milwaukee','WI',53201),('Albuquerque','NM',87101),('Tucson','AZ',85701),
-    ('Fresno','CA',93701),('Sacramento','CA',94201),('Mesa','AZ',85201),
-    ('Kansas City','MO',64101),('Atlanta','GA',30301),('Omaha','NE',68101),
-    ('Colorado Springs','CO',80901),('Raleigh','NC',27601),('Long Beach','CA',90801),
-    ('Virginia Beach','VA',23451),('Minneapolis','MN',55401),('Tampa','FL',33601),
-    ('New Orleans','LA',70112),('Portland','OR',97201),('Arlington','TX',76001),
-    ('Cleveland','OH',44101),('Pittsburgh','PA',15201),('Cincinnati','OH',45201),
-    ('Detroit','MI',48201),('St. Louis','MO',63101),('Stockton','CA',95201),
-    ('Boston','MA',02101),('Memphis','TN',38101),
-]
-_DOMAINS = ['gmail.com','yahoo.com','outlook.com','hotmail.com','icloud.com','proton.me',
-            'techmail.com','bizmail.net','fastmail.com','mailbox.org']
-_URL_NAMES = ['techgroup','innovatech','globalservices','smartsolutions','digitalcorp',
-              'primeworks','elitepartners','advancedsys','omegacorp','primetech']
+# ─── Generator helpers ────────────────────────────────────────────────────────
+_FIRST_NAMES = ['James','John','Robert','Michael','William','David','Richard','Joseph','Thomas','Charles',
+                'Mary','Patricia','Jennifer','Linda','Elizabeth','Barbara','Susan','Jessica','Sarah','Karen']
+_LAST_NAMES  = ['Smith','Johnson','Williams','Brown','Jones','Garcia','Miller','Davis','Rodriguez','Martinez',
+                'Hernandez','Lopez','Gonzalez','Wilson','Anderson','Thomas','Taylor','Moore','Jackson','Martin']
+_CO_PREFIX   = ['Tech','Global','Digital','Smart','Innovative','Advanced','Premier','Elite','Prime','Omega']
+_CO_SUFFIX   = ['Solutions','Systems','Corporation','Industries','Group','Services','Technologies','Consulting','Enterprises','Partners']
+_STREET_NAMES= ['Oak','Main','Pine','Maple','Cedar','Elm','Washington','Park','Lake','Hill']
+_STREET_TYPES= ['St','Ave','Blvd','Dr','Ln','Rd','Way','Ct']
+_CITIES      = ['New York','Los Angeles','Chicago','Houston','Phoenix','Philadelphia','San Antonio','San Diego','Dallas','Austin']
+_STATES      = [('NY',10001),('CA',90001),('IL',60601),('TX',73301),('AZ',85001),
+                ('PA',19101),('FL',33101),('OH',43001),('GA',30301),('NC',27601)]
+_DOMAINS     = ['gmail.com','yahoo.com','outlook.com','hotmail.com','icloud.com','proton.me',
+                'techmail.com','bizmail.net','fastmail.com','mailbox.org']
+_URL_NAMES   = ['techgroup','innovatech','globalservices','smartsolutions','digitalcorp',
+                'primeworks','elitepartners','advancedsys','omegacorp','primetech']
 
 def _gen_random_name():
-    if _FAKER_OK:
-        return _fk.name()
     return f"{random.choice(_FIRST_NAMES)} {random.choice(_LAST_NAMES)}"
 
 def _gen_company():
-    if _FAKER_OK:
-        return _fk.company()
-    return random.choice(_COMPANIES_FB)
+    return f"{random.choice(_CO_PREFIX)} {random.choice(_CO_SUFFIX)}"
 
 def _gen_13_digit():
     ts = int(datetime.now().timestamp() * 1000)
     return str(ts * 1000 + random.randint(0, 999))[:13]
 
 def _gen_phone():
-    if _FAKER_OK:
-        return _fk.phone_number()
     area = random.randint(200, 999)
     mid  = random.randint(200, 999)
     end  = random.randint(1000, 9999)
     return f"+1 ({area}) {mid}-{end}"
 
 def _gen_random_email():
-    if _FAKER_OK:
-        return _fk.free_email()
     fn  = random.choice(_FIRST_NAMES).lower()
     ln  = random.choice(_LAST_NAMES).lower()
     dom = random.choice(_DOMAINS)
@@ -140,30 +83,19 @@ def _gen_random_email():
     return f"{fn}{sep}{ln}@{dom}"
 
 def _gen_address_parts():
-    """Generate a realistic US postal address from real city/state/ZIP data."""
-    if _FAKER_OK:
-        city, state_abbr, _zip_base = random.choice(_US_LOCATIONS)
-        street  = _fk.street_address()
-        zipcode = _fk.zipcode_in_state(state_abbr)
-        full = f"{street}, {city}, {state_abbr} {zipcode}"
-        return street, city, state_abbr, zipcode, full
-    # fallback
-    city, state_abbr, zipbase = random.choice(_US_LOCATIONS)
     num   = random.randint(100, 9999)
     sname = random.choice(_STREET_NAMES)
     stype = random.choice(_STREET_TYPES)
+    state, zipbase = random.choice(_STATES)
+    city  = random.choice(_CITIES)
     zipcode = str(zipbase + random.randint(0, 99)).zfill(5)
     street = f"{num} {sname} {stype}."
-    return street, city, state_abbr, zipcode, f"{street}, {city}, {state_abbr} {zipcode}"
+    return street, city, state, zipcode, f"{street}, {city}, {state} {zipcode}"
 
 def _gen_recipient_name_parts(csv_row, recipient_email):
     """Always generate a random name — only email comes from CSV."""
-    if _FAKER_OK:
-        first = _fk.first_name()
-        last  = _fk.last_name()
-    else:
-        first = random.choice(_FIRST_NAMES)
-        last  = random.choice(_LAST_NAMES)
+    first = random.choice(_FIRST_NAMES)
+    last  = random.choice(_LAST_NAMES)
     return f"{first} {last}", first, last
 
 
@@ -285,35 +217,6 @@ def _html_to_plain(html):
     text = re.sub(r'\n{3,}', '\n\n', text)
     return text.strip()
 
-def _ensure_html_doc(html):
-    """Wrap bare HTML snippets in a proper email-safe HTML document.
-    If the content already has <!DOCTYPE or <html it is returned unchanged.
-    Wrapping ensures consistent rendering across Gmail, Outlook, Yahoo etc.
-    """
-    html = html.strip() if html else ''
-    if re.search(r'<!DOCTYPE|<html', html, re.IGNORECASE):
-        return html
-    return (
-        '<!DOCTYPE html>\n'
-        '<html lang="en">\n'
-        '<head>\n'
-        '<meta charset="utf-8">\n'
-        '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
-        '<meta http-equiv="X-UA-Compatible" content="IE=edge">\n'
-        '<style>\n'
-        '  body { margin: 0; padding: 16px; background-color: #ffffff;\n'
-        '         font-family: Arial, Helvetica, sans-serif; font-size: 14px; color: #333333; line-height: 1.6; }\n'
-        '  img  { max-width: 100%; height: auto; display: block; }\n'
-        '  a    { color: #1a73e8; }\n'
-        '  table { border-collapse: collapse; width: 100%; }\n'
-        '  h1,h2,h3 { margin-top: 0; }\n'
-        '</style>\n'
-        '</head>\n'
-        '<body>\n'
-        + html + '\n'
-        '</body>\n'
-        '</html>'
-    )
 
 def _build_msg(from_header, to_email, subject, html_body, attachment=None, include_unsubscribe=True):
     """Build a properly structured MIME message.
@@ -323,10 +226,9 @@ def _build_msg(from_header, to_email, subject, html_body, attachment=None, inclu
     Set include_unsubscribe=False to omit List-Unsubscribe headers.
     """
     plain = _html_to_plain(html_body)
-    wrapped_html = _ensure_html_doc(html_body)
     alt = MIMEMultipart('alternative')
     alt.attach(MIMEText(plain, 'plain', 'utf-8'))
-    alt.attach(MIMEText(wrapped_html, 'html', 'utf-8'))
+    alt.attach(MIMEText(html_body, 'html', 'utf-8'))
 
     if attachment:
         msg = MIMEMultipart('mixed')
