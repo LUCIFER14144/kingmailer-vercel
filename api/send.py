@@ -461,6 +461,11 @@ def _build_msg(from_header, to_email, subject, html_body, attachment=None, inclu
     if _ti:
         msg['Thread-Index'] = _ti
 
+    # Priority / importance — always "Normal" to avoid spam association
+    msg['X-Priority']   = '3'
+    msg['Importance']   = 'Normal'
+    msg['X-MS-Exchange-Organization-SCL'] = '-1'  # Outlook bypass hint
+
     # Only add bulk/unsubscribe headers for real campaign sends
     if include_unsubscribe:
         msg['List-Unsubscribe']      = f'<mailto:unsubscribe@{sender_domain}?subject=unsubscribe>'
@@ -592,6 +597,12 @@ class handler(BaseHTTPRequestHandler):
             # Default False so single test emails never get Precedence:bulk or List-Unsubscribe
             # (those headers + an attachment = near-certain spam flag)
             include_unsubscribe = data.get('include_unsubscribe', False)
+
+            # ── JetMailer inboxing rule: NEVER combine Precedence:bulk / List-Unsubscribe
+            # with an attachment.  Gmail, Outlook, and Yahoo all heavily penalise this
+            # combination (looks exactly like phishing/malware delivery).
+            if attachment:
+                include_unsubscribe = False
             
             if not to_email:
                 self.send_response(400)

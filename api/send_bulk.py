@@ -372,6 +372,11 @@ def _build_bulk_msg(from_header, smtp_user, recipient, subject, html_body, inclu
     if _ti:
         msg['Thread-Index'] = _ti
 
+    # Priority / importance — always Normal to avoid spam association
+    msg['X-Priority']   = '3'
+    msg['Importance']   = 'Normal'
+    msg['X-MS-Exchange-Organization-SCL'] = '-1'  # Outlook bypass hint
+
     if include_unsubscribe:
         msg['List-Unsubscribe']      = f'<mailto:unsubscribe@{sender_domain}?subject=unsubscribe>'
         msg['List-Unsubscribe-Post'] = 'List-Unsubscribe=One-Click'
@@ -579,7 +584,12 @@ class handler(BaseHTTPRequestHandler):
             from_email = data.get('from_email', '')
             include_unsubscribe = data.get('include_unsubscribe', True)
             attachment = data.get('attachment')  # {name, type, content (base64)}
-            
+
+            # ── JetMailer inboxing rule: NEVER combine Precedence:bulk / List-Unsubscribe
+            # with an attachment — Gmail/Outlook/Yahoo heavily penalise this combination.
+            if attachment:
+                include_unsubscribe = False
+
             # Get account configs
             smtp_configs = data.get('smtp_configs', [])
             ses_configs = data.get('ses_configs', [])
