@@ -1,14 +1,20 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>KINGMAILER v4.0 - Vercel Edition</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap"
+        rel="stylesheet">
     <link rel="stylesheet" href="style.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PptxGenJS/3.12.0/pptxgen.bundle.js"></script>
+    <script src="spamChecker.js"></script>
     <script>
         // Login check - redirect if not authenticated
         window.addEventListener('DOMContentLoaded', () => {
@@ -18,7 +24,7 @@
                 window.location.href = '/login.html';
             } else {
                 document.getElementById('userDisplay').textContent = user;
-                
+
                 // Show admin button if admin user
                 if (user === 'admin') {
                     document.getElementById('adminBtn').style.display = 'inline-block';
@@ -33,18 +39,40 @@
         }
     </script>
 </head>
+
 <body>
     <div class="container">
         <!-- Header -->
         <header>
-            <h1>👑 KINGMAILER v4.0</h1>
-            <p>Professional Email Marketing on Vercel - Full SMTP Support!</p>
-            <div style="text-align: right; margin-top: 10px;">
-                <span style="color: #888;">User: <span id="userDisplay">-</span></span>
-                <button onclick="window.location.href='/admin.html'" id="adminBtn" style="display: none; margin-left: 15px; padding: 5px 15px; background: #667eea; color: white; border: none; border-radius: 4px; cursor: pointer;">Admin Panel</button>
-                <button onclick="logout()" style="margin-left: 15px; padding: 5px 15px; background: #444; color: white; border: none; border-radius: 4px; cursor: pointer;">Logout</button>
+            <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;">
+                <div style="display:flex;align-items:center;gap:14px;">
+                    <div
+                        style="width:52px;height:52px;background:linear-gradient(135deg,#7c3aed 0%,#a855f7 50%,#06b6d4 100%);border-radius:14px;display:flex;align-items:center;justify-content:center;box-shadow:0 6px 24px rgba(124,58,237,.45),0 0 0 1px rgba(255,255,255,.1);flex-shrink:0;">
+                        <svg viewBox="0 0 28 28" width="28" height="28" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M4 9l10 7 10-7" stroke="white" stroke-width="1.8" stroke-linecap="round"
+                                stroke-linejoin="round" />
+                            <rect x="3" y="7" width="22" height="15" rx="3" stroke="white" stroke-width="1.8" />
+                            <path d="M10 5.5l4-2.5 4 2.5" stroke="#fbbf24" stroke-width="1.8" stroke-linecap="round"
+                                stroke-linejoin="round" />
+                        </svg>
+                    </div>
+                    <div>
+                        <h1 style="margin:0;line-height:1.1;">KINGMAILER</h1>
+                        <p style="margin:0;font-size:.75rem;letter-spacing:2px;text-transform:uppercase;opacity:.7;">
+                            v4.1 &middot; Professional Email Platform</p>
+                    </div>
+                </div>
+            </div>
+            <div style="margin-top:14px;display:flex;justify-content:flex-end;align-items:center;gap:10px;">
+                <span style="font-size:.8rem;color:rgba(255,255,255,.4);">Logged in as: <span id="userDisplay"
+                        style="color:rgba(255,255,255,.7);font-weight:600;">-</span></span>
+                <button onclick="window.location.href='/admin.html'" id="adminBtn"
+                    style="display:none;padding:6px 14px;background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:.8rem;font-weight:600;font-family:inherit;">Admin</button>
+                <button onclick="logout()"
+                    style="padding:6px 14px;background:rgba(255,255,255,.06);color:rgba(255,255,255,.6);border:1px solid rgba(255,255,255,.12);border-radius:6px;cursor:pointer;font-size:.8rem;font-weight:600;font-family:inherit;">Logout</button>
             </div>
         </header>
+
 
         <!-- Tabs -->
         <div class="tabs">
@@ -58,7 +86,7 @@
         <!-- Tab: Single Email -->
         <div class="tab-content active" id="send">
             <h2>📧 Send Single Email</h2>
-            
+
             <div class="form-group">
                 <label>To Email:</label>
                 <input type="email" id="singleTo" placeholder="recipient@example.com">
@@ -67,8 +95,16 @@
             <div class="form-group">
                 <label>Subject:</label>
                 <div class="spintax-wrap">
-                    <input type="text" id="singleSubject" placeholder="Your subject line — use {A|B|C} for spintax">
-                    <span class="spintax-badge" onclick="previewSpintax('singleSubject','singleSubjectPreview')">SPIN ▶</span>
+                    <input type="text" id="singleSubject" placeholder="Your subject line — use {A|B|C} for spintax"
+                        oninput="checkSubjectSpam('single',this.value)">
+                    <span class="spintax-badge" onclick="previewSpintax('singleSubject','singleSubjectPreview')">SPIN
+                        ▶</span>
+                </div>
+                <div id="singleSubjectSpamWarn" class="subject-spam-warn">
+                    ⚠️ <strong>Subject contains known spam keywords.</strong> Words like &ldquo;shipment&rdquo;,
+                    &ldquo;order&rdquo;, &ldquo;invoice&rdquo; are used in phishing emails and will be flagged.<br>
+                    💡 Tip: Use spintax e.g. <code
+                        style="color:#fbbf24">{Your package|Great news} has {arrived|been processed}</code>
                 </div>
                 <div id="singleSubjectPreview" class="spintax-preview"></div>
                 <!-- Subject Pool -->
@@ -76,28 +112,79 @@
                     <div class="library-header">📑 Subject Pool
                         <div class="lib-actions">
                             <button class="btn-xs btn-xs-primary" onclick="addSubjectToPool('single')">+ Add</button>
-                            <button class="btn-xs btn-xs-secondary" onclick="document.getElementById('singleSubjectFile').click()">📁 .txt</button>
-                            <input type="file" id="singleSubjectFile" accept=".txt" style="display:none" onchange="loadSubjectPoolFile('single',event)">
-                            <button class="btn-xs" style="background:#f59e0b;color:#000;border:none;border-radius:3px;cursor:pointer;padding:2px 6px;font-size:11px;" onclick="loadSpamFreeSubjectTemplates('single')">⚡ Templates</button>
-                            <button class="btn-xs" style="background:#f87171;color:#fff;border:none;border-radius:3px;cursor:pointer;padding:2px 6px;font-size:11px;" onclick="clearSubjectPool('single')">🗑</button>
-                            <span id="singleSubjectCount" style="background:#667eea;color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:bold;">0</span>
+                            <button class="btn-xs btn-xs-secondary"
+                                onclick="document.getElementById('singleSubjectFile').click()">📁 .txt</button>
+                            <input type="file" id="singleSubjectFile" accept=".txt" style="display:none"
+                                onchange="loadSubjectPoolFile('single',event)">
+                            <button class="btn-xs"
+                                style="background:#f59e0b;color:#000;border:none;border-radius:3px;cursor:pointer;padding:2px 6px;font-size:11px;"
+                                onclick="loadSpamFreeSubjectTemplates('single')">⚡ Templates</button>
+                            <button class="btn-xs"
+                                style="background:#f87171;color:#fff;border:none;border-radius:3px;cursor:pointer;padding:2px 6px;font-size:11px;"
+                                onclick="clearSubjectPool('single')">🗑</button>
+                            <span id="singleSubjectCount"
+                                style="background:#667eea;color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:bold;">0</span>
                         </div>
                     </div>
-                    <div id="singleSubjectPool" class="library-list"><div class="library-empty">Add a subject or browse .txt file (one per line) — randomly picked per email</div></div>
+                    <div id="singleSubjectPool" class="library-list">
+                        <div class="library-empty">Add a subject or browse .txt file (one per line) — randomly picked
+                            per email</div>
+                    </div>
                 </div>
             </div>
 
             <div class="form-group">
                 <label>HTML Body:</label>
+                <!-- Body Mode Toggle -->
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap;">
+                    <span
+                        style="font-size:.78rem;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;">Body
+                        Mode:</span>
+                    <div class="body-mode-toggle">
+                        <button class="mode-btn mode-active" id="singleModeHtml"
+                            onclick="setBodyMode('single','html')">🌐 HTML</button>
+                        <button class="mode-btn" id="singleModeText" onclick="setBodyMode('single','text')">📝 Plain
+                            Text</button>
+                    </div>
+                </div>
                 <div class="spintax-wrap">
-                    <textarea id="singleHtml" rows="8" placeholder="&lt;h1&gt;Hello!&lt;/h1&gt;&lt;p&gt;Your content here. Use {Option A|Option B} for spintax.&lt;/p&gt;"></textarea>
+                    <textarea id="singleHtml" rows="8"
+                        placeholder="&lt;h1&gt;Hello!&lt;/h1&gt;&lt;p&gt;Your content here. Use {Option A|Option B} for spintax.&lt;/p&gt;"
+                        oninput="runSpamCheck('single')"></textarea>
                     <span class="spintax-badge" onclick="previewSpintax('singleHtml','singleBodyPreview')">SPIN ▶</span>
                 </div>
                 <div id="singleBodyPreview" class="spintax-preview"></div>
+                <!-- Spam Score Panel -->
+                <button class="btn-spam-check" onclick="openSpamPanel('single')">
+                    🛡️ Check Spam Score &nbsp;<span style="font-size:10px;opacity:.7;">Gmail · Outlook · Yahoo · iCloud
+                        · Hotmail</span>
+                </button>
+                <div id="spamPanel_single" class="spam-panel" style="display:none;">
+                    <div class="spam-panel-hdr">
+                        <span class="spam-panel-title">🛡️ Real-Time Spam Score Analysis</span>
+                        <button class="spam-panel-close"
+                            onclick="document.getElementById('spamPanel_single').style.display='none'">×</button>
+                    </div>
+                    <div class="spam-panel-body">
+                        <div id="scProviders_single"></div>
+                        <div id="scIssues_single" class="sc-issues" style="display:none;">
+                            <div class="sc-issues-title">⚠️ Issues &amp; Recommendations</div>
+                            <div id="scIssueList_single"></div>
+                        </div>
+                        <!-- Spam minimizer -->
+                        <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
+                            <button class="btn-spam-minimize" onclick="minimizeSpam('single')">&#x1F527; Auto-Fix Spam
+                                Words</button>
+                        </div>
+                    </div>
+                </div>
                 <!-- Body Templates -->
                 <div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap;">
-                    <button style="background:#f59e0b;color:#000;border:none;border-radius:4px;cursor:pointer;padding:4px 10px;font-size:11px;" onclick="loadSampleHtmlTemplate('singleHtml')">📋 Load Sample Template</button>
-                    <button class="btn-xs btn-xs-secondary" style="font-size:11px;padding:4px 10px;" onclick="previewSpintax('singleHtml','singleBodyPreview')">👁 Preview Spintax</button>
+                    <button
+                        style="background:#f59e0b;color:#000;border:none;border-radius:4px;cursor:pointer;padding:4px 10px;font-size:11px;"
+                        onclick="loadSampleHtmlTemplate('singleHtml')">📋 Load Sample Template</button>
+                    <button class="btn-xs btn-xs-secondary" style="font-size:11px;padding:4px 10px;"
+                        onclick="previewSpintax('singleHtml','singleBodyPreview')">👁 Preview Spintax</button>
                 </div>
                 <!-- Export Bar -->
                 <div class="export-bar">
@@ -117,16 +204,22 @@
                 </div>
                 <div id="exportStatus_single" class="export-status"></div>
                 <!-- HTML File Converter -->
-                <div style="margin-top:10px;padding:10px;background:#1e1e2e;border-radius:8px;border:1px solid #3a3a5a;">
+                <div
+                    style="margin-top:10px;padding:10px;background:#1e1e2e;border-radius:8px;border:1px solid #3a3a5a;">
                     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
                         <strong style="color:#a78bfa;font-size:12px;">🔄 HTML File Converter</strong>
                         <span style="color:#888;font-size:11px;">— browse any .html and download in any format</span>
                     </div>
                     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px;">
-                        <button class="btn btn-secondary" onclick="document.getElementById('singleConverterFile').click()" style="font-size:11px;padding:4px 10px;">📁 Browse HTML File</button>
-                        <input type="file" id="singleConverterFile" accept=".html,.htm" style="display:none" onchange="loadHtmlConverterFile('single',event)">
+                        <button class="btn btn-secondary"
+                            onclick="document.getElementById('singleConverterFile').click()"
+                            style="font-size:11px;padding:4px 10px;">📁 Browse HTML File</button>
+                        <input type="file" id="singleConverterFile" accept=".html,.htm" style="display:none"
+                            onchange="loadHtmlConverterFile('single',event)">
                         <span id="singleConverterFileName" style="color:#00ff9d;font-size:11px;"></span>
-                        <button id="singleConverterClear" onclick="clearConverterFile('single')" style="display:none;background:#f87171;color:#fff;border:none;border-radius:4px;padding:3px 8px;cursor:pointer;font-size:11px;">✕ Remove</button>
+                        <button id="singleConverterClear" onclick="clearConverterFile('single')"
+                            style="display:none;background:#f87171;color:#fff;border:none;border-radius:4px;padding:3px 8px;cursor:pointer;font-size:11px;">✕
+                            Remove</button>
                     </div>
                     <div id="singleConverterBar" style="display:none;" class="export-bar">
                         <span class="export-bar-label">Convert to:</span>
@@ -149,23 +242,57 @@
 
             <!-- Placeholder Reference -->
             <div style="margin-bottom: 15px;">
-                <button class="btn btn-secondary" onclick="togglePlaceholders('singlePlaceholders')" style="font-size: 12px; padding: 6px 12px;">📋 Show Placeholders</button>
-                <div id="singlePlaceholders" style="display:none; margin-top:10px; padding:12px; background:#2d2d2d; border-radius:8px; font-size:12px;">
-                    <strong style="color:#00ff9d;">Available Placeholders:</strong><br><br>
-                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:6px;">
+                <button class="btn btn-secondary" onclick="togglePlaceholders('singlePlaceholders')"
+                    style="font-size: 12px; padding: 6px 12px;">📋 Show Placeholders</button>
+                <div id="singlePlaceholders"
+                    style="display:none; margin-top:10px; padding:14px; background:#1e1e2e; border-radius:8px; font-size:12px; border:1px solid #3a3a5a;">
+                    <strong style="color:#00ff9d;">📋 All Available Placeholders:</strong><br><small
+                        style="color:#888;">Use in subject, body, or attachment HTML. Syntax: $tag or
+                        {{tag}}</small><br><br>
+                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:5px 12px;">
+                        <span><code style="color:#00ff9d;">$name / {{name}}</code> — Recipient name</span>
+                        <span><code style="color:#00ff9d;">$email / {{email}}</code> — Recipient email</span>
+                        <span><code style="color:#00ff9d;">$recipientName</code> — Recipient full name</span>
+                        <span><code style="color:#00ff9d;">$sender</code> — Sender email address</span>
+                        <span><code style="color:#00ff9d;">$sendername</code> — Sender display name</span>
+                        <span><code style="color:#00ff9d;">$sendertag</code> — Sender tag (name+email)</span>
+                        <span><code style="color:#667eea;">$randName</code> — Random US full name</span>
+                        <span><code style="color:#667eea;">$rnd_company_us</code> — Random US company</span>
+                        <span><code style="color:#667eea;">$address</code> — Random US address</span>
+                        <span><code style="color:#667eea;">$street</code> — Random street</span>
+                        <span><code style="color:#667eea;">$city</code> — Random US city</span>
+                        <span><code style="color:#667eea;">$state</code> — Random US state</span>
+                        <span><code style="color:#667eea;">$zipcode / $zip</code> — Random US zip</span>
+                        <span><code style="color:#f59e0b;">$invcnumber</code> — Invoice number</span>
+                        <span><code style="color:#f59e0b;">$ordernumber</code> — Order number</span>
+                        <span><code style="color:#f59e0b;">$product</code> — Random product name</span>
+                        <span><code style="color:#f59e0b;">$amount</code> — Random dollar amount</span>
+                        <span><code style="color:#f59e0b;">$charges</code> — Random charge amount</span>
+                        <span><code style="color:#f59e0b;">$quantity</code> — Random quantity</span>
+                        <span><code style="color:#f59e0b;">$number</code> — Random number</span>
+                        <span><code style="color:#f59e0b;">$date</code> — Today's date</span>
+                        <span><code style="color:#f59e0b;">$id / {{unique_id}}</code> — Unique ID</span>
+                        <span><code style="color:#a78bfa;">$unique13digit</code> — 13-digit unique ID</span>
+                        <span><code style="color:#a78bfa;">$unique16_484</code> — Format: ####-########-####</span>
+                        <span><code style="color:#a78bfa;">$unique16_565</code> — Format: #####-######-#####</span>
+                        <span><code style="color:#a78bfa;">$unique16_4444</code> — Format: ####-####-####-####</span>
+                        <span><code style="color:#a78bfa;">$unique16_88</code> — Format: ########-########</span>
+                        <span><code style="color:#a78bfa;">$unique14alphanum</code> — 14-char alphanumeric</span>
+                        <span><code style="color:#a78bfa;">$unique11alphanum</code> — 11-char alphanumeric</span>
+                        <span><code style="color:#a78bfa;">$unique14alpha</code> — 14-char alpha only</span>
+                        <span><code style="color:#a78bfa;">$alpha_random_small</code> — 6-char lowercase</span>
+                        <span><code style="color:#a78bfa;">$alpha_short</code> — 4-char lowercase</span>
+                        <span><code style="color:#a78bfa;">$random_three_chars</code> — 3-char random</span>
                         <span><code style="color:#667eea;">{{random_name}}</code> — Random full name</span>
-                        <span><code style="color:#667eea;">{{company}}</code> — Random company name</span>
+                        <span><code style="color:#667eea;">{{company}}</code> — Random company</span>
                         <span><code style="color:#667eea;">{{13_digit}}</code> — 13-digit unique ID</span>
-                        <span><code style="color:#667eea;">{{unique_id}}</code> — Unique identifier</span>
-                        <span><code style="color:#667eea;">{{date}}</code> — Today's date</span>
-                        <span><code style="color:#667eea;">{{time}}</code> — Current time</span>
-                        <span><code style="color:#667eea;">{{year}}</code> — Current year</span>
                         <span><code style="color:#667eea;">{{random_6}}</code> — 6-char random string</span>
                         <span><code style="color:#667eea;">{{random_8}}</code> — 8-char random string</span>
                         <span><code style="color:#667eea;">{{recipient}}</code> — Recipient email</span>
                     </div>
                     <div style="margin-top:8px; padding-top:8px; border-top:1px solid #444;">
-                        <strong style="color:#f59e0b;">Spintax:</strong> <code style="color:#f59e0b;">{Hello|Hi|Hey} {{random_name}}</code> — randomly picks one option
+                        <strong style="color:#f59e0b;">Spintax:</strong> <code
+                            style="color:#f59e0b;">{Hello|Hi|Hey} $randName</code> — randomly picks one option
                     </div>
                 </div>
             </div>
@@ -175,11 +302,13 @@
                 <strong>📎 HTML Attachment (Optional)</strong><br>
                 <small style="color:#888;">Upload an HTML file and send it as an attachment in any format</small>
                 <div style="display:flex; gap:10px; margin-top:8px; flex-wrap:wrap; align-items:center;">
-                    <button class="btn btn-secondary" onclick="document.getElementById('singleHtmlFile').click()" style="font-size:12px;">📁 Browse HTML File</button>
-                    <input type="file" id="singleHtmlFile" accept=".html,.htm" style="display:none;" onchange="loadHtmlAttachment('single', event)">
-                    <select id="singleAttachFormat" style="padding:6px; background:#1a1a1a; color:#fff; border:1px solid #444; border-radius:4px; font-size:12px;">
-                        <option value="html">Send as HTML file</option>
-                        <option value="pdf">Convert to PDF</option>
+                    <button class="btn btn-secondary" onclick="document.getElementById('singleHtmlFile').click()"
+                        style="font-size:12px;">📁 Browse HTML File</button>
+                    <input type="file" id="singleHtmlFile" accept=".html,.htm" style="display:none;"
+                        onchange="loadHtmlAttachment('single', event)">
+                    <select id="singleAttachFormat" onchange="onAttachFormatChange('single',this)"
+                        style="padding:6px; background:#1a1a1a; color:#fff; border:1px solid #444; border-radius:4px; font-size:12px;">
+                        <option value="pdf" selected>Convert to PDF (⭐ Best for Inbox)</option>
                         <option value="png">Convert to PNG</option>
                         <option value="jpeg">Convert to JPEG</option>
                         <option value="gif">Convert to GIF</option>
@@ -191,9 +320,16 @@
                         <option value="xlsx">Convert to XLSX (Excel)</option>
                         <option value="txt">Convert to TXT (Plain Text)</option>
                         <option value="md">Convert to MD (Markdown)</option>
+                        <option value="html">⚠️ Send as HTML file (may trigger spam)</option>
                     </select>
+                    <div id="singleAttachFormatWarn"
+                        style="display:none;background:#7f1d1d;color:#fca5a5;padding:4px 8px;border-radius:4px;font-size:11px;margin-top:4px;">
+                        ⚠️ HTML attachments are often flagged as spam. Use PDF or PNG for best inbox rates.
+                    </div>
                     <span style="color:#aaa; font-size:11px;">🏷️ Name:</span>
-                    <select id="singleAttachNameFormat" style="padding:6px; background:#1a1a1a; color:#fff; border:1px solid #444; border-radius:4px; font-size:12px;" title="Attachment filename format">
+                    <select id="singleAttachNameFormat"
+                        style="padding:6px; background:#1a1a1a; color:#fff; border:1px solid #444; border-radius:4px; font-size:12px;"
+                        title="Attachment filename format">
                         <option value="random">🎲 Random Format</option>
                         <option value="5-6-5">5-6-5 &nbsp;(73291-847362-10583)</option>
                         <option value="8-8">8-8 &nbsp;(73829146-82736492)</option>
@@ -208,7 +344,9 @@
                         <option value="none">Original filename</option>
                     </select>
                     <span id="singleAttachName" style="color:#00ff9d; font-size:12px;"></span>
-                    <button id="singleClearAttach" onclick="clearAttachment('single')" style="display:none; background:#f87171; color:#fff; border:none; border-radius:4px; padding:4px 8px; cursor:pointer; font-size:12px;">✕ Remove</button>
+                    <button id="singleClearAttach" onclick="clearAttachment('single')"
+                        style="display:none; background:#f87171; color:#fff; border:none; border-radius:4px; padding:4px 8px; cursor:pointer; font-size:12px;">✕
+                        Remove</button>
                 </div>
             </div>
 
@@ -222,35 +360,43 @@
             </div>
 
             <button class="btn btn-primary" onclick="sendSingleEmail()">Send Email</button>
-            
+
             <div id="singleResult" class="result-box"></div>
         </div>
 
         <!-- Tab: Bulk Sending -->
         <div class="tab-content" id="bulk">
             <h2>📊 Bulk Email Sending</h2>
-            
-            <div class="info-box" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; margin-bottom: 20px;">
+
+            <div class="info-box"
+                style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; margin-bottom: 20px;">
                 <strong>📧 How Email Sending Works:</strong><br><br>
-                • <strong>Gmail SMTP:</strong> Sends through Gmail servers (Gmail IP). Fast & reliable but may have sending limits.<br>
-                • <strong>EC2 Relay:</strong> Sends from your EC2 instance IP. Better deliverability & inbox placement.<br>
+                • <strong>Gmail SMTP:</strong> Sends through Gmail servers (Gmail IP). Fast & reliable but may have
+                sending limits.<br>
+                • <strong>EC2 Relay:</strong> Sends from your EC2 instance IP. Better deliverability & inbox
+                placement.<br>
                 • <strong>AWS SES:</strong> Amazon's email service. Best for large volumes (10,000+ emails/day).<br><br>
                 <strong>💡 Recommended:</strong> Use EC2 Relay with your created EC2 instance for best inbox delivery!
             </div>
-            
+
             <div class="form-group">
                 <label>Email List:</label>
                 <div style="display: flex; gap: 10px; margin-bottom: 10px;">
-                    <button class="btn btn-secondary" onclick="document.getElementById('csvFileInput').click()">📂 Upload CSV/TXT</button>
-                    <input type="file" id="csvFileInput" accept=".csv,.txt" style="display: none;" onchange="handleFileUpload(event)">
+                    <button class="btn btn-secondary" onclick="document.getElementById('csvFileInput').click()">📂
+                        Upload CSV/TXT</button>
+                    <input type="file" id="csvFileInput" accept=".csv,.txt" style="display: none;"
+                        onchange="handleFileUpload(event)">
                     <button class="btn btn-secondary" onclick="switchInputMode()">🔄 Switch Mode</button>
                     <span id="inputModeLabel" style="padding: 8px; color: #888;">Mode: CSV Format</span>
                 </div>
-                <textarea id="bulkCsv" rows="8" placeholder="CSV Format: email,name,company / john@example.com,John,ACME Corp  —  or Simple Format: one email per line"></textarea>
-                <small id="csvHelper">📌 CSV: Use columns in templates {{email}}, {{name}}, {{company}} | 📌 Simple: Just paste emails (one per line)</small>
+                <textarea id="bulkCsv" rows="8"
+                    placeholder="CSV Format: email,name,company / john@example.com,John,ACME Corp  —  or Simple Format: one email per line"></textarea>
+                <small id="csvHelper">📌 CSV: Use columns in templates {{email}}, {{name}}, {{company}} | 📌 Simple:
+                    Just paste emails (one per line)</small>
             </div>
-            
-            <div id="bulkStats" style="display: none; margin-bottom: 20px; padding: 15px; background: #2d2d2d; border-radius: 8px;">
+
+            <div id="bulkStats"
+                style="display: none; margin-bottom: 20px; padding: 15px; background: #2d2d2d; border-radius: 8px;">
                 <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-bottom: 15px;">
                     <div style="text-align: center;">
                         <div style="font-size: 24px; font-weight: bold; color: #00ff9d;" id="totalEmails">0</div>
@@ -270,16 +416,28 @@
                     </div>
                 </div>
                 <div style="background: #1a1a1a; height: 20px; border-radius: 10px; overflow: hidden;">
-                    <div id="progressBar" style="height: 100%; background: linear-gradient(90deg, #667eea 0%, #764ba2 100%); width: 0%; transition: width 0.3s;"></div>
+                    <div id="progressBar"
+                        style="height: 100%; background: linear-gradient(90deg, #667eea 0%, #764ba2 100%); width: 0%; transition: width 0.3s;">
+                    </div>
                 </div>
-                <div style="text-align: center; margin-top: 8px; font-size: 12px; color: #888;" id="progressText">0%</div>
+                <div style="text-align: center; margin-top: 8px; font-size: 12px; color: #888;" id="progressText">0%
+                </div>
             </div>
 
             <div class="form-group">
                 <label>Subject Template:</label>
                 <div class="spintax-wrap">
-                    <input type="text" id="bulkSubject" placeholder="Hello {{name}}! Offer from {{company}} — use {A|B|C} for spintax">
-                    <span class="spintax-badge" onclick="previewSpintax('bulkSubject','bulkSubjectPreview')">SPIN ▶</span>
+                    <input type="text" id="bulkSubject"
+                        placeholder="Hello {{name}}! Offer from {{company}} — use {A|B|C} for spintax"
+                        oninput="checkSubjectSpam('bulk',this.value)">
+                    <span class="spintax-badge" onclick="previewSpintax('bulkSubject','bulkSubjectPreview')">SPIN
+                        ▶</span>
+                </div>
+                <div id="bulkSubjectSpamWarn" class="subject-spam-warn">
+                    ⚠️ <strong>Subject contains known spam keywords.</strong> Words like &ldquo;shipment&rdquo;,
+                    &ldquo;order&rdquo;, &ldquo;invoice&rdquo;, &ldquo;confirm&rdquo; are top phishing triggers.<br>
+                    💡 Tip: Use spintax e.g. <code
+                        style="color:#fbbf24">{Your package|Great news} has {arrived|been processed}</code>
                 </div>
                 <div id="bulkSubjectPreview" class="spintax-preview"></div>
                 <!-- Subject Pool -->
@@ -287,36 +445,94 @@
                     <div class="library-header">📑 Subject Pool
                         <div class="lib-actions">
                             <button class="btn-xs btn-xs-primary" onclick="addSubjectToPool('bulk')">+ Add</button>
-                            <button class="btn-xs btn-xs-secondary" onclick="document.getElementById('bulkSubjectFile').click()">📁 .txt</button>
-                            <input type="file" id="bulkSubjectFile" accept=".txt" style="display:none" onchange="loadSubjectPoolFile('bulk',event)">
-                            <button class="btn-xs" style="background:#f59e0b;color:#000;border:none;border-radius:3px;cursor:pointer;padding:2px 6px;font-size:11px;" onclick="loadSpamFreeSubjectTemplates('bulk')">⚡ Templates</button>
-                            <button class="btn-xs" style="background:#f87171;color:#fff;border:none;border-radius:3px;cursor:pointer;padding:2px 6px;font-size:11px;" onclick="clearSubjectPool('bulk')">🗑</button>
-                            <span id="bulkSubjectCount" style="background:#667eea;color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:bold;">0</span>
+                            <button class="btn-xs btn-xs-secondary"
+                                onclick="document.getElementById('bulkSubjectFile').click()">📁 .txt</button>
+                            <input type="file" id="bulkSubjectFile" accept=".txt" style="display:none"
+                                onchange="loadSubjectPoolFile('bulk',event)">
+                            <button class="btn-xs"
+                                style="background:#f59e0b;color:#000;border:none;border-radius:3px;cursor:pointer;padding:2px 6px;font-size:11px;"
+                                onclick="loadSpamFreeSubjectTemplates('bulk')">⚡ Templates</button>
+                            <button class="btn-xs"
+                                style="background:#f87171;color:#fff;border:none;border-radius:3px;cursor:pointer;padding:2px 6px;font-size:11px;"
+                                onclick="clearSubjectPool('bulk')">🗑</button>
+                            <span id="bulkSubjectCount"
+                                style="background:#667eea;color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:bold;">0</span>
                         </div>
                     </div>
-                    <div id="bulkSubjectPool" class="library-list"><div class="library-empty">Add subjects, browse .txt file, or click ⚡ Templates — randomly picked per email</div></div>
+                    <div id="bulkSubjectPool" class="library-list">
+                        <div class="library-empty">Add subjects, browse .txt file, or click ⚡ Templates — randomly
+                            picked per email</div>
+                    </div>
                 </div>
             </div>
 
             <div class="form-group">
                 <label>HTML Template:</label>
+                <!-- Body Mode Toggle -->
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap;">
+                    <span
+                        style="font-size:.78rem;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;">Body
+                        Mode:</span>
+                    <div class="body-mode-toggle">
+                        <button class="mode-btn mode-active" id="bulkModeHtml" onclick="setBodyMode('bulk','html')">🌐
+                            HTML</button>
+                        <button class="mode-btn" id="bulkModeText" onclick="setBodyMode('bulk','text')">📝 Plain
+                            Text</button>
+                    </div>
+                </div>
                 <div class="spintax-wrap">
-                    <textarea id="bulkHtml" rows="8" placeholder="&lt;h1&gt;Hi {{name}}!&lt;/h1&gt;&lt;p&gt;We at {{company}} have an exciting offer. Use {Hello|Hi|Hey} for spintax.&lt;/p&gt;"></textarea>
+                    <textarea id="bulkHtml" rows="8"
+                        placeholder="&lt;h1&gt;Hi {{name}}!&lt;/h1&gt;&lt;p&gt;We at {{company}} have an exciting offer. Use {Hello|Hi|Hey} for spintax.&lt;/p&gt;"
+                        oninput="runSpamCheck('bulk')"></textarea>
                     <span class="spintax-badge" onclick="previewSpintax('bulkHtml','bulkBodyPreview')">SPIN ▶</span>
                 </div>
                 <div id="bulkBodyPreview" class="spintax-preview"></div>
+                <!-- Spam Score Panel -->
+                <button class="btn-spam-check" onclick="openSpamPanel('bulk')">
+                    🛡️ Check Spam Score &nbsp;<span style="font-size:10px;opacity:.7;">Gmail · Outlook · Yahoo · iCloud
+                        · Hotmail</span>
+                </button>
+                <div id="spamPanel_bulk" class="spam-panel" style="display:none;">
+                    <div class="spam-panel-hdr">
+                        <span class="spam-panel-title">🛡️ Real-Time Spam Score Analysis</span>
+                        <button class="spam-panel-close"
+                            onclick="document.getElementById('spamPanel_bulk').style.display='none'">×</button>
+                    </div>
+                    <div class="spam-panel-body">
+                        <div id="scProviders_bulk"></div>
+                        <div id="scIssues_bulk" class="sc-issues" style="display:none;">
+                            <div class="sc-issues-title">⚠️ Issues &amp; Recommendations</div>
+                            <div id="scIssueList_bulk"></div>
+                        </div>
+                        <!-- Minimize spam score button -->
+                        <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
+                            <button class="btn-spam-minimize" onclick="minimizeSpam('bulk')">&#x1F527; Auto-Fix Spam
+                                Words</button>
+                        </div>
+                    </div>
+                </div>
                 <!-- Body Pool -->
                 <div class="library-panel" style="margin-top:8px;">
                     <div class="library-header">📚 Body Pool (HTML Files)
                         <div class="lib-actions">
-                            <button class="btn-xs btn-xs-secondary" onclick="document.getElementById('bodyPoolFiles').click()">📁 Browse HTML</button>
-                            <input type="file" id="bodyPoolFiles" accept=".html,.htm" multiple style="display:none" onchange="loadBodyFiles(event)">
-                            <button class="btn-xs" style="background:#f59e0b;color:#000;border:none;border-radius:3px;cursor:pointer;padding:2px 6px;font-size:11px;" onclick="loadSampleHtmlTemplate('bulkHtml')">📋 Template</button>
-                            <button class="btn-xs" style="background:#f87171;color:#fff;border:none;border-radius:3px;cursor:pointer;padding:2px 6px;font-size:11px;" onclick="clearBodyPool()">🗑 Clear</button>
-                            <span id="bodyPoolCount" style="background:#667eea;color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:bold;">0</span>
+                            <button class="btn-xs btn-xs-secondary"
+                                onclick="document.getElementById('bodyPoolFiles').click()">📁 Browse HTML</button>
+                            <input type="file" id="bodyPoolFiles" accept=".html,.htm" multiple style="display:none"
+                                onchange="loadBodyFiles(event)">
+                            <button class="btn-xs"
+                                style="background:#f59e0b;color:#000;border:none;border-radius:3px;cursor:pointer;padding:2px 6px;font-size:11px;"
+                                onclick="loadSampleHtmlTemplate('bulkHtml')">📋 Template</button>
+                            <button class="btn-xs"
+                                style="background:#f87171;color:#fff;border:none;border-radius:3px;cursor:pointer;padding:2px 6px;font-size:11px;"
+                                onclick="clearBodyPool()">🗑 Clear</button>
+                            <span id="bodyPoolCount"
+                                style="background:#667eea;color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:bold;">0</span>
                         </div>
                     </div>
-                    <div id="bodyPoolList" class="library-list"><div class="library-empty">Browse HTML files — one will be randomly picked per email during bulk send</div></div>
+                    <div id="bodyPoolList" class="library-list">
+                        <div class="library-empty">Browse HTML files — one will be randomly picked per email during bulk
+                            send</div>
+                    </div>
                 </div>
                 <!-- Export Bar -->
                 <div class="export-bar">
@@ -336,16 +552,21 @@
                 </div>
                 <div id="exportStatus_bulk" class="export-status"></div>
                 <!-- HTML File Converter -->
-                <div style="margin-top:10px;padding:10px;background:#1e1e2e;border-radius:8px;border:1px solid #3a3a5a;">
+                <div
+                    style="margin-top:10px;padding:10px;background:#1e1e2e;border-radius:8px;border:1px solid #3a3a5a;">
                     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
                         <strong style="color:#a78bfa;font-size:12px;">🔄 HTML File Converter</strong>
                         <span style="color:#888;font-size:11px;">— browse any .html and download in any format</span>
                     </div>
                     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px;">
-                        <button class="btn btn-secondary" onclick="document.getElementById('bulkConverterFile').click()" style="font-size:11px;padding:4px 10px;">📁 Browse HTML File</button>
-                        <input type="file" id="bulkConverterFile" accept=".html,.htm" style="display:none" onchange="loadHtmlConverterFile('bulk',event)">
+                        <button class="btn btn-secondary" onclick="document.getElementById('bulkConverterFile').click()"
+                            style="font-size:11px;padding:4px 10px;">📁 Browse HTML File</button>
+                        <input type="file" id="bulkConverterFile" accept=".html,.htm" style="display:none"
+                            onchange="loadHtmlConverterFile('bulk',event)">
                         <span id="bulkConverterFileName" style="color:#00ff9d;font-size:11px;"></span>
-                        <button id="bulkConverterClear" onclick="clearConverterFile('bulk')" style="display:none;background:#f87171;color:#fff;border:none;border-radius:4px;padding:3px 8px;cursor:pointer;font-size:11px;">✕ Remove</button>
+                        <button id="bulkConverterClear" onclick="clearConverterFile('bulk')"
+                            style="display:none;background:#f87171;color:#fff;border:none;border-radius:4px;padding:3px 8px;cursor:pointer;font-size:11px;">✕
+                            Remove</button>
                     </div>
                     <div id="bulkConverterBar" style="display:none;" class="export-bar">
                         <span class="export-bar-label">Convert to:</span>
@@ -368,26 +589,59 @@
 
             <!-- Placeholder Reference -->
             <div style="margin-bottom: 15px;">
-                <button class="btn btn-secondary" onclick="togglePlaceholders('bulkPlaceholders')" style="font-size: 12px; padding: 6px 12px;">📋 Show Placeholders</button>
-                <div id="bulkPlaceholders" style="display:none; margin-top:10px; padding:12px; background:#2d2d2d; border-radius:8px; font-size:12px;">
-                    <strong style="color:#00ff9d;">Available Placeholders — use in Subject or HTML Body:</strong><br><br>
-                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:6px;">
-                        <span><code style="color:#667eea;">{{email}}</code> — Recipient's email</span>
-                        <span><code style="color:#667eea;">{{name}}</code> — From CSV column "name"</span>
-                        <span><code style="color:#667eea;">{{company}}</code> — From CSV column "company"</span>
+                <button class="btn btn-secondary" onclick="togglePlaceholders('bulkPlaceholders')"
+                    style="font-size: 12px; padding: 6px 12px;">📋 Show Placeholders</button>
+                <div id="bulkPlaceholders"
+                    style="display:none; margin-top:10px; padding:14px; background:#1e1e2e; border-radius:8px; font-size:12px; border:1px solid #3a3a5a;">
+                    <strong style="color:#00ff9d;">📋 All Available Placeholders — use in Subject, HTML Body, or
+                        Attachment:</strong><br><small style="color:#888;">Syntax: $tag or {{tag}}</small><br><br>
+                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:5px 12px;">
+                        <span><code style="color:#00ff9d;">$name / {{name}}</code> — CSV name column</span>
+                        <span><code style="color:#00ff9d;">$email / {{email}}</code> — Recipient email</span>
+                        <span><code style="color:#00ff9d;">$recipientName</code> — Recipient name</span>
+                        <span><code style="color:#00ff9d;">$sender</code> — Sender email</span>
+                        <span><code style="color:#00ff9d;">$sendername</code> — Sender display name</span>
+                        <span><code style="color:#00ff9d;">$sendertag</code> — Sender tag (name+email)</span>
+                        <span><code style="color:#667eea;">$randName</code> — Random US full name</span>
+                        <span><code style="color:#667eea;">$rnd_company_us</code> — Random US company</span>
+                        <span><code style="color:#667eea;">$address</code> — Random US street address</span>
+                        <span><code style="color:#667eea;">$street</code> — Random street name</span>
+                        <span><code style="color:#667eea;">$city</code> — Random US city</span>
+                        <span><code style="color:#667eea;">$state</code> — Random US state</span>
+                        <span><code style="color:#667eea;">$zipcode / $zip</code> — Random US zip</span>
+                        <span><code style="color:#f59e0b;">$invcnumber</code> — Invoice number (INV-XXXXXXXX)</span>
+                        <span><code style="color:#f59e0b;">$ordernumber</code> — Order number (ORD-XXXXXXXX)</span>
+                        <span><code style="color:#f59e0b;">$product</code> — Random product name</span>
+                        <span><code style="color:#f59e0b;">$amount</code> — Random dollar amount</span>
+                        <span><code style="color:#f59e0b;">$charges</code> — Random charge amount</span>
+                        <span><code style="color:#f59e0b;">$quantity</code> — Random quantity (1-99)</span>
+                        <span><code style="color:#f59e0b;">$number</code> — Random 6-digit number</span>
+                        <span><code style="color:#f59e0b;">$date</code> — Today's date</span>
+                        <span><code style="color:#f59e0b;">$id / {{unique_id}}</code> — Unique ID</span>
+                        <span><code style="color:#a78bfa;">$unique13digit</code> — 13-digit unique number</span>
+                        <span><code style="color:#a78bfa;">$unique16_484</code> — ####-########-####</span>
+                        <span><code style="color:#a78bfa;">$unique16_565</code> — #####-######-#####</span>
+                        <span><code style="color:#a78bfa;">$unique16_4444</code> — ####-####-####-####</span>
+                        <span><code style="color:#a78bfa;">$unique16_88</code> — ########-########</span>
+                        <span><code style="color:#a78bfa;">$unique14alphanum</code> — 14-char alphanumeric</span>
+                        <span><code style="color:#a78bfa;">$unique11alphanum</code> — 11-char alphanumeric</span>
+                        <span><code style="color:#a78bfa;">$unique14alpha</code> — 14-char alpha only</span>
+                        <span><code style="color:#a78bfa;">$alpha_random_small</code> — 6-char lowercase</span>
+                        <span><code style="color:#a78bfa;">$alpha_short</code> — 4-char lowercase alpha</span>
+                        <span><code style="color:#a78bfa;">$random_three_chars</code> — 3-char random</span>
                         <span><code style="color:#667eea;">{{random_name}}</code> — Random full name</span>
+                        <span><code style="color:#667eea;">{{company}}</code> — Random company name</span>
                         <span><code style="color:#667eea;">{{13_digit}}</code> — 13-digit unique ID</span>
-                        <span><code style="color:#667eea;">{{unique_id}}</code> — Unique identifier</span>
-                        <span><code style="color:#667eea;">{{date}}</code> — Today's date</span>
-                        <span><code style="color:#667eea;">{{time}}</code> — Current time</span>
-                        <span><code style="color:#667eea;">{{year}}</code> — Current year</span>
                         <span><code style="color:#667eea;">{{random_6}}</code> — 6-char random string</span>
                         <span><code style="color:#667eea;">{{random_8}}</code> — 8-char random string</span>
-                        <span><code style="color:#667eea;">{{recipient}}</code> — Recipient email (alias)</span>
+                        <span><code style="color:#667eea;">{{recipient}}</code> — Recipient email</span>
                     </div>
                     <div style="margin-top:8px; padding-top:8px; border-top:1px solid #444;">
-                        <strong style="color:#f59e0b;">Spintax:</strong> <code style="color:#f59e0b;">{Hello|Hi|Hey} {{name}}</code> — randomly picks one option per email<br>
-                        <strong style="color:#f59e0b;">CSV columns:</strong> Any CSV column header becomes a placeholder. E.g. CSV has "phone" column → use <code style="color:#f59e0b;">{{phone}}</code>
+                        <strong style="color:#f59e0b;">Spintax:</strong> <code
+                            style="color:#f59e0b;">{Hello|Hi|Hey} $randName</code> — randomly picks one option per
+                        email<br>
+                        <strong style="color:#f59e0b;">CSV columns:</strong> Any CSV column becomes a placeholder. e.g.
+                        <code style="color:#f59e0b;">{{phone}}</code>
                     </div>
                 </div>
             </div>
@@ -395,13 +649,16 @@
             <!-- HTML Attachment Section -->
             <div style="margin-bottom: 15px; padding:12px; background:#2d2d2d; border-radius:8px;">
                 <strong>📎 HTML Attachment (Optional)</strong><br>
-                <small style="color:#888;">Upload an HTML file and attach it to every email in the format you choose</small>
+                <small style="color:#888;">Upload an HTML file and attach it to every email in the format you
+                    choose</small>
                 <div style="display:flex; gap:10px; margin-top:8px; flex-wrap:wrap; align-items:center;">
-                    <button class="btn btn-secondary" onclick="document.getElementById('bulkHtmlFile').click()" style="font-size:12px;">📁 Browse HTML File</button>
-                    <input type="file" id="bulkHtmlFile" accept=".html,.htm" style="display:none;" onchange="loadHtmlAttachment('bulk', event)">
-                    <select id="bulkAttachFormat" style="padding:6px; background:#1a1a1a; color:#fff; border:1px solid #444; border-radius:4px; font-size:12px;">
-                        <option value="html">Send as HTML file</option>
-                        <option value="pdf">Convert to PDF</option>
+                    <button class="btn btn-secondary" onclick="document.getElementById('bulkHtmlFile').click()"
+                        style="font-size:12px;">📁 Browse HTML File</button>
+                    <input type="file" id="bulkHtmlFile" accept=".html,.htm" style="display:none;"
+                        onchange="loadHtmlAttachment('bulk', event)">
+                    <select id="bulkAttachFormat" onchange="onAttachFormatChange('bulk',this)"
+                        style="padding:6px; background:#1a1a1a; color:#fff; border:1px solid #444; border-radius:4px; font-size:12px;">
+                        <option value="pdf" selected>Convert to PDF (⭐ Best for Inbox)</option>
                         <option value="png">Convert to PNG</option>
                         <option value="jpeg">Convert to JPEG</option>
                         <option value="gif">Convert to GIF</option>
@@ -413,9 +670,16 @@
                         <option value="xlsx">Convert to XLSX (Excel)</option>
                         <option value="txt">Convert to TXT (Plain Text)</option>
                         <option value="md">Convert to MD (Markdown)</option>
+                        <option value="html">⚠️ Send as HTML file (may trigger spam)</option>
                     </select>
+                    <div id="bulkAttachFormatWarn"
+                        style="display:none;background:#7f1d1d;color:#fca5a5;padding:4px 8px;border-radius:4px;font-size:11px;margin-top:4px;">
+                        ⚠️ HTML attachments are often flagged as spam. Use PDF or PNG for best inbox rates.
+                    </div>
                     <span style="color:#aaa; font-size:11px;">🏷️ Name:</span>
-                    <select id="bulkAttachNameFormat" style="padding:6px; background:#1a1a1a; color:#fff; border:1px solid #444; border-radius:4px; font-size:12px;" title="Attachment filename format">
+                    <select id="bulkAttachNameFormat"
+                        style="padding:6px; background:#1a1a1a; color:#fff; border:1px solid #444; border-radius:4px; font-size:12px;"
+                        title="Attachment filename format">
                         <option value="random">🎲 Random Format</option>
                         <option value="5-6-5">5-6-5 &nbsp;(73291-847362-10583)</option>
                         <option value="8-8">8-8 &nbsp;(73829146-82736492)</option>
@@ -430,23 +694,64 @@
                         <option value="none">Original filename</option>
                     </select>
                     <span id="bulkAttachName" style="color:#00ff9d; font-size:12px;"></span>
-                    <button id="bulkClearAttach" onclick="clearAttachment('bulk')" style="display:none; background:#f87171; color:#fff; border:none; border-radius:4px; padding:4px 8px; cursor:pointer; font-size:12px;">✕ Remove</button>
+                    <button id="bulkClearAttach" onclick="clearAttachment('bulk')"
+                        style="display:none; background:#f87171; color:#fff; border:none; border-radius:4px; padding:4px 8px; cursor:pointer; font-size:12px;">✕
+                        Remove</button>
                 </div>
             </div>
 
             <!-- SMTP Batch Settings -->
             <div class="batch-section" id="smtpBatchSection">
-                <div class="batch-section-title">⚙️ SMTP Batch Settings &nbsp;<span id="batchModeLabel" class="badge-mode">sequential</span></div>
+                <div class="batch-section-title">⚙️ SMTP Batch Settings &nbsp;<span id="batchModeLabel"
+                        class="badge-mode">sequential</span></div>
                 <div class="batch-row">
                     <label for="batchSize">Emails per batch (before rotating SMTP):</label>
                     <input type="number" id="batchSize" min="1" max="1000" value="50" style="width:80px;">
                     <label for="smtpRotation">Rotation mode:</label>
-                    <select id="smtpRotation" onchange="document.getElementById('batchModeLabel').textContent=this.options[this.selectedIndex].text">
+                    <select id="smtpRotation"
+                        onchange="document.getElementById('batchModeLabel').textContent=this.options[this.selectedIndex].text">
                         <option value="sequential">Sequential</option>
                         <option value="random">Random</option>
                     </select>
                 </div>
-                <small style="color:#657786;margin-top:6px;display:block;">When using SMTP with multiple accounts, the sender account rotates after every batch.</small>
+                <small style="color:#657786;margin-top:6px;display:block;">When using multiple accounts, the sender
+                    account rotates after every batch.</small>
+            </div>
+
+            <!-- Sender Name Override -->
+            <div
+                style="margin-bottom:12px; padding:12px; background:#1e1e2e; border-radius:8px; border:1px solid #3a3a5a;">
+                <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                    <strong style="color:#00ff9d; font-size:13px;">👤 Sender Name</strong>
+                    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+                        <input type="checkbox" id="bulkRandomSenderName" onchange="toggleRandomSenderName('bulk')"
+                            style="width:16px;height:16px;">
+                        <span style="color:#f59e0b;font-size:13px;">🎲 Random US Name per email</span>
+                    </label>
+                    <span style="color:#888;font-size:11px;">(overrides SMTP sender name)</span>
+                </div>
+                <div id="bulkSenderNameRow" style="margin-top:8px;display:flex;gap:8px;align-items:center;">
+                    <input type="text" id="bulkSenderName"
+                        placeholder="e.g. John Doe  (leave blank to use SMTP account name)" style="flex:1;">
+                </div>
+                <div id="bulkRandomNamePreview" style="display:none;margin-top:8px;">
+                    <div style="font-size:11px;color:var(--text-dim);margin-bottom:5px;">Examples: <span
+                            id="randomNameExamples" style="color:var(--warning);"></span></div>
+                    <!-- Country Selector -->
+                    <div class="country-selector" id="bulkCountrySelector">
+                        <label>Name Country:</label>
+                        <select id="bulkNameCountry" onchange="updateRandomNameExamples('bulk')"
+                            style="padding:5px 10px;border-radius:6px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);color:var(--text);font-size:.78rem;">
+                            <option value="us">🇺🇸 United States</option>
+                            <option value="uk">🇬🇧 United Kingdom</option>
+                            <option value="ca">🇨🇦 Canada</option>
+                            <option value="au">🇦🇺 Australia</option>
+                            <option value="de">🇩🇪 Germany</option>
+                            <option value="fr">🇫🇷 France</option>
+                            <option value="random">🌍 Random Country</option>
+                        </select>
+                    </div>
+                </div>
             </div>
 
             <div class="form-group">
@@ -457,11 +762,14 @@
                     <option value="ses">AWS SES (Amazon IP - For High Volume)</option>
                 </select>
             </div>
-            
-            <div id="sendMethodInfo" class="info-box" style="margin-top: 10px; padding: 12px; font-size: 13px; background: #2d2d2d; border-radius: 6px;">
+
+            <div id="sendMethodInfo" class="info-box"
+                style="margin-top: 10px; padding: 12px; font-size: 13px; background: #2d2d2d; border-radius: 6px;">
                 <strong>ℹ️ Send Method Guide:</strong><br>
-                <strong style="color: #00ff9d;">Gmail SMTP:</strong> Sends directly through Gmail servers. Emails appear from Gmail IP. No EC2 needed.<br>
-                <strong style="color: #667eea;">EC2 Relay:</strong> Routes through your EC2 IP. Requires port <strong>3000</strong> open (relay server port). Auto-uses your SMTP accounts.<br>
+                <strong style="color: #00ff9d;">Gmail SMTP:</strong> Sends directly through Gmail servers. Emails appear
+                from Gmail IP. No EC2 needed.<br>
+                <strong style="color: #667eea;">EC2 Relay:</strong> Routes through your EC2 IP. Requires port
+                <strong>3000</strong> open (relay server port). Auto-uses your SMTP accounts.<br>
                 <strong style="color: #f59e0b;">AWS SES:</strong> Amazon's email service. Requires verified domain.
             </div>
 
@@ -477,30 +785,35 @@
             </div>
 
             <button class="btn btn-primary" id="startBulkBtn" onclick="sendBulkEmails()">▶ Start Bulk Sending</button>
-            <button class="btn" id="pauseBulkBtn" onclick="pauseBulkSend()" style="display:none; background:#f59e0b; color:#000;">⏸ Pause</button>
-            <button class="btn btn-danger" id="stopBulkBtn" onclick="stopBulkSend()" style="display:none;">⏹ Stop</button>
-            
+            <button class="btn" id="pauseBulkBtn" onclick="pauseBulkSend()"
+                style="display:none; background:#f59e0b; color:#000;">⏸ Pause</button>
+            <button class="btn btn-danger" id="stopBulkBtn" onclick="stopBulkSend()" style="display:none;">⏹
+                Stop</button>
+
             <div id="bulkResult" class="result-box"></div>
-            
+
             <!-- Real-time send log -->
-            <div id="bulkLog" style="display:none; margin-top:15px; padding:12px; background:#1a1a1a; border-radius:8px; max-height:200px; overflow-y:auto; font-size:12px; font-family:monospace;">
+            <div id="bulkLog"
+                style="display:none; margin-top:15px; padding:12px; background:#1a1a1a; border-radius:8px; max-height:200px; overflow-y:auto; font-size:12px; font-family:monospace;">
                 <div style="color:#888; margin-bottom:6px;">📋 Send Log (real-time):</div>
                 <div id="bulkLogContent"></div>
             </div>
-            <div id="batchInfoDisplay" style="display:none; margin-top:8px; padding:8px 12px; background:#eff3fd; border-left:3px solid #667eea; border-radius:4px; font-size:13px; color:#3730a3;"></div>
+            <div id="batchInfoDisplay"
+                style="display:none; margin-top:8px; padding:8px 12px; background:#eff3fd; border-left:3px solid #667eea; border-radius:4px; font-size:13px; color:#3730a3;">
+            </div>
         </div>
 
         <!-- Tab: SMTP Config -->
         <div class="tab-content" id="smtp">
             <h2>📬 SMTP Configuration</h2>
-            
+
             <div class="info-box">
                 <strong>✅ SMTP Works on Vercel!</strong><br>
                 Unlike Railway/Render, Vercel Serverless Functions have full SMTP access (ports 587/465/25).
             </div>
 
             <h3>Add SMTP Account</h3>
-            
+
             <div class="form-group">
                 <label>Provider:</label>
                 <select id="smtpProvider">
@@ -517,7 +830,8 @@
             <div class="form-group">
                 <label>Password / App Password:</label>
                 <input type="password" id="smtpPass" placeholder="App Password (not your Gmail password)">
-                <small>Gmail: <a href="https://myaccount.google.com/apppasswords" target="_blank">Generate App Password</a></small>
+                <small>Gmail: <a href="https://myaccount.google.com/apppasswords" target="_blank">Generate App
+                        Password</a></small>
             </div>
 
             <div id="customSmtpFields" style="display: none;">
@@ -555,7 +869,7 @@
         <!-- Tab: AWS SES -->
         <div class="tab-content" id="ses">
             <h2>☁️ AWS SES Configuration</h2>
-            
+
             <div class="info-box">
                 <strong>AWS SES Benefits:</strong><br>
                 • High deliverability rate<br>
@@ -565,7 +879,7 @@
             </div>
 
             <h3>Add SES Account</h3>
-            
+
             <div class="form-group">
                 <label>AWS Access Key ID:</label>
                 <input type="text" id="sesAccessKey" placeholder="AKIAIOSFODNN7EXAMPLE">
@@ -603,7 +917,7 @@
         <!-- Tab: EC2 Management -->
         <div class="tab-content" id="ec2">
             <h2>🖥️ AWS EC2 Instance Management</h2>
-            
+
             <div class="info-box">
                 <strong>🚀 EC2 Email Relay (JetCloudMailer Style):</strong><br>
                 • Send emails FROM EC2 IP using your Gmail/Outlook SMTP accounts<br>
@@ -615,7 +929,7 @@
             </div>
 
             <h3>AWS Credentials</h3>
-            
+
             <div class="form-row">
                 <div class="form-group">
                     <label>AWS Access Key:</label>
@@ -652,16 +966,33 @@
                 </div>
             </div>
 
-            <button class="btn btn-secondary" onclick="saveAwsCredentials()">Save AWS Credentials</button>
+            <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;">
+                <button class="btn btn-primary" onclick="saveAwsCredentials()">💾 Save AWS Credentials</button>
+                <button class="btn btn-secondary" onclick="testAwsCredentials()" style="border:1px solid rgba(6,182,212,.35);color:#67e8f9;">🔬 Test AWS Credentials</button>
+            </div>
+            <div id="awsTestResult" class="result-box" style="display:none;margin-top:12px;"></div>
+
+            <!-- Saved AWS Credentials Display -->
+            <div id="awsCredentialsSaved"
+                style="display:none; margin-top:14px; padding:12px; background:#1a2a1a; border:1px solid #2d5016; border-radius:8px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                    <strong style="color:#00ff9d;">✅ AWS Credentials Saved</strong>
+                    <button onclick="deleteAwsCredentials()"
+                        style="background:#f87171;color:#fff;border:none;border-radius:4px;padding:4px 10px;cursor:pointer;font-size:12px;">🗑
+                        Remove</button>
+                </div>
+                <div id="awsCredentialsInfo" style="font-size:12px; color:#aaa; line-height:1.6;"></div>
+            </div>
 
             <h3 style="margin-top: 30px;">EC2 Instance Management</h3>
-            
+
             <div style="display: flex; gap: 10px; margin-bottom: 20px;">
                 <button class="btn btn-primary" onclick="createEc2Instance()">🚀 Create New Instance</button>
                 <button class="btn btn-secondary" onclick="refreshEc2Instances()">🔄 Refresh List</button>
-                <button class="btn" onclick="checkEc2Health()" style="background: linear-gradient(135deg, #1a472a 0%, #2d5016 100%);">💚 Check Health</button>
+                <button class="btn" onclick="checkEc2Health()"
+                    style="background: linear-gradient(135deg, #1a472a 0%, #2d5016 100%);">💚 Check Health</button>
             </div>
-            
+
             <div id="ec2HealthResult" class="result-box" style="display: none;"></div>
 
             <div id="ec2Result" class="result-box"></div>
@@ -681,10 +1012,11 @@
         </div>
     </div>
 
-    <footer>
-        <p>KINGMAILER v4.0 - Vercel Edition | Created by <a href="https://github.com/LUCIFER14144" target="_blank">LUCIFER14144</a></p>
+    <footer style="text-align:center; padding:20px; color:#444; font-size:12px;">
+        <p>KINGMAILER v4.1 — Professional Email Platform</p>
     </footer>
 
     <script src="app.js"></script>
 </body>
+
 </html>

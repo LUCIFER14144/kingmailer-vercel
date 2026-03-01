@@ -1,6 +1,7 @@
 /**
- * KINGMAILER v4.0 - Frontend JavaScript
+ * KINGMAILER v4.1 - Frontend JavaScript
  * Handles all dashboard interactions and API calls
+ * Added: Full $tag placeholder system, AWS creds card, EC2 batch section
  */
 
 // Global state
@@ -33,26 +34,27 @@ function sleep(ms) {
 }
 
 // Initialize on page load
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', function () {
     initTabs();
     loadAccounts();
     loadEc2Credentials(); // Load saved credentials first
     loadEc2Instances();
     syncBatchSection();
     renderAllLibraries();
-    
+    renderSavedAwsCredentials(); // Show saved AWS credentials card if exists
+
     // Show/hide custom SMTP fields
-    document.getElementById('smtpProvider').addEventListener('change', function() {
+    document.getElementById('smtpProvider').addEventListener('change', function () {
         const customFields = document.getElementById('customSmtpFields');
         customFields.style.display = this.value === 'custom' ? 'block' : 'none';
     });
-    
+
     // Auto-update bulk stats when CSV changes
     const bulkCsv = document.getElementById('bulkCsv');
     if (bulkCsv) {
         bulkCsv.addEventListener('input', updateBulkStats);
     }
-    
+
     // Auto-update bulk stats when method changes
     const bulkMethod = document.getElementById('bulkMethod');
     if (bulkMethod) {
@@ -64,15 +66,15 @@ document.addEventListener('DOMContentLoaded', function() {
 function initTabs() {
     const tabBtns = document.querySelectorAll('.tab-btn');
     const tabContents = document.querySelectorAll('.tab-content');
-    
+
     tabBtns.forEach(btn => {
-        btn.addEventListener('click', function() {
+        btn.addEventListener('click', function () {
             const tabName = this.dataset.tab;
-            
+
             // Remove active class from all
             tabBtns.forEach(b => b.classList.remove('active'));
             tabContents.forEach(c => c.classList.remove('active'));
-            
+
             // Add active class to current
             this.classList.add('active');
             document.getElementById(tabName).classList.add('active');
@@ -85,11 +87,11 @@ async function loadAccounts() {
     try {
         const response = await fetch('/api/accounts');
         const data = await response.json();
-        
+
         if (data.success) {
             smtpAccounts = data.accounts.smtp_accounts || [];
             sesAccounts = data.accounts.ses_accounts || [];
-            
+
             renderSmtpAccounts();
             renderSesAccounts();
         }
@@ -108,23 +110,23 @@ async function loadEc2Instances() {
             renderEc2Instances(ec2Instances);
             return;
         }
-        
+
         const creds = JSON.parse(savedCreds);
-        
+
         // First, send credentials to backend
         await fetch('/api/ec2_management', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 action: 'save_credentials',
                 ...creds
             })
         });
-        
+
         // Then fetch instances
         const response = await fetch('/api/ec2_management');
         const data = await response.json();
-        
+
         if (data.success) {
             ec2Instances = data.instances || [];
             renderEc2Instances(ec2Instances);
@@ -158,37 +160,37 @@ async function testSmtpConnection() {
     const provider = document.getElementById('smtpProvider').value;
     const user = document.getElementById('smtpUser').value;
     const pass = document.getElementById('smtpPass').value;
-    
+
     if (!user || !pass) {
         showResult('smtpResult', 'Please fill in all required fields', 'error');
         return;
     }
-    
+
     const smtpConfig = {
         provider: provider,
         user: user,
         pass: pass
     };
-    
+
     if (provider === 'custom') {
         smtpConfig.host = document.getElementById('smtpHost').value;
         smtpConfig.port = document.getElementById('smtpPort').value;
     }
-    
+
     showResult('smtpResult', '🔄 Testing SMTP connection...', 'info');
-    
+
     try {
         const response = await fetch('/api/test_smtp', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 type: 'smtp',
                 smtp_config: smtpConfig
             })
         });
-        
+
         const data = await response.json();
-        
+
         if (data.success) {
             showResult('smtpResult', `✅ ${data.message}`, 'success');
         } else {
@@ -205,12 +207,12 @@ async function addSmtpAccount() {
     const pass = document.getElementById('smtpPass').value;
     const senderName = document.getElementById('smtpSenderName').value || 'KINGMAILER';
     const label = document.getElementById('smtpLabel').value || `${provider} - ${user}`;
-    
+
     if (!user || !pass) {
         showResult('smtpResult', 'Please fill in all required fields', 'error');
         return;
     }
-    
+
     const account = {
         type: 'smtp',
         provider: provider,
@@ -219,25 +221,25 @@ async function addSmtpAccount() {
         sender_name: senderName,
         label: label
     };
-    
+
     if (provider === 'custom') {
         account.host = document.getElementById('smtpHost').value;
         account.port = document.getElementById('smtpPort').value;
     }
-    
+
     try {
         const response = await fetch('/api/accounts', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(account)
         });
-        
+
         const data = await response.json();
-        
+
         if (data.success) {
             showResult('smtpResult', '✅ SMTP account added successfully!', 'success');
             loadAccounts();
-            
+
             // Clear form
             document.getElementById('smtpUser').value = '';
             document.getElementById('smtpPass').value = '';
@@ -253,12 +255,12 @@ async function addSmtpAccount() {
 
 function renderSmtpAccounts() {
     const container = document.getElementById('smtpAccountsList');
-    
+
     if (smtpAccounts.length === 0) {
         container.innerHTML = '<p class="no-accounts">No SMTP accounts added yet</p>';
         return;
     }
-    
+
     container.innerHTML = smtpAccounts.map(acc => `
         <div class="account-card">
             <div class="account-info">
@@ -276,18 +278,18 @@ async function testSesConnection() {
     const accessKey = document.getElementById('sesAccessKey').value;
     const secretKey = document.getElementById('sesSecretKey').value;
     const region = document.getElementById('sesRegion').value;
-    
+
     if (!accessKey || !secretKey) {
         showResult('sesResult', 'Please fill in all required fields', 'error');
         return;
     }
-    
+
     showResult('sesResult', '🔄 Testing AWS SES connection...', 'info');
-    
+
     try {
         const response = await fetch('/api/test_smtp', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 type: 'ses',
                 aws_config: {
@@ -297,9 +299,9 @@ async function testSesConnection() {
                 }
             })
         });
-        
+
         const data = await response.json();
-        
+
         if (data.success) {
             showResult('sesResult', `✅ ${data.message}`, 'success');
         } else {
@@ -315,16 +317,16 @@ async function addSesAccount() {
     const secretKey = document.getElementById('sesSecretKey').value;
     const region = document.getElementById('sesRegion').value;
     const fromEmail = document.getElementById('sesFromEmail').value;
-    
+
     if (!accessKey || !secretKey || !fromEmail) {
         showResult('sesResult', 'Please fill in all required fields', 'error');
         return;
     }
-    
+
     try {
         const response = await fetch('/api/accounts', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 type: 'ses',
                 access_key: accessKey,
@@ -334,13 +336,13 @@ async function addSesAccount() {
                 label: `SES - ${fromEmail}`
             })
         });
-        
+
         const data = await response.json();
-        
+
         if (data.success) {
             showResult('sesResult', '✅ AWS SES account added successfully!', 'success');
             loadAccounts();
-            
+
             // Clear form
             document.getElementById('sesAccessKey').value = '';
             document.getElementById('sesSecretKey').value = '';
@@ -355,12 +357,12 @@ async function addSesAccount() {
 
 function renderSesAccounts() {
     const container = document.getElementById('sesAccountsList');
-    
+
     if (sesAccounts.length === 0) {
         container.innerHTML = '<p class="no-accounts">No SES accounts added yet</p>';
         return;
     }
-    
+
     container.innerHTML = sesAccounts.map(acc => `
         <div class="account-card">
             <div class="account-info">
@@ -373,24 +375,79 @@ function renderSesAccounts() {
 }
 
 // EC2 Management Functions
-async function saveAwsCredentials() {
+async 
+// ── Test AWS Credentials ───────────────────────────────────────────────────────
+async function testAwsCredentials() {
+    const key    = document.getElementById('ec2AccessKey') ? document.getElementById('ec2AccessKey').value.trim() : '';
+    const secret = document.getElementById('ec2SecretKey') ? document.getElementById('ec2SecretKey').value.trim() : '';
+    const region = document.getElementById('ec2Region')    ? document.getElementById('ec2Region').value            : 'us-east-1';
+    const resEl  = document.getElementById('awsTestResult');
+
+    if (!key || !secret) {
+        if (resEl) {
+            resEl.innerHTML = '⚠️ Please enter both Access Key and Secret Key before testing.';
+            resEl.className = 'result-box error';
+            resEl.style.display = 'block';
+        }
+        return;
+    }
+
+    if (resEl) {
+        resEl.innerHTML = '<span style="opacity:.7;">⏳ Testing AWS credentials…</span>';
+        resEl.className = 'result-box info';
+        resEl.style.display = 'block';
+    }
+
+    try {
+        // Call our backend to test credentials using boto3 STS get-caller-identity
+        const resp = await fetch('/api/test_aws', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ access_key: key, secret_key: secret, region: region }),
+        });
+        const data = await resp.json();
+        if (data.success) {
+            if (resEl) {
+                resEl.innerHTML = (
+                    '✅ <strong>AWS Credentials Valid!</strong><br>' +
+                    '🆔 Account: ' + (data.account || '—') + '<br>' +
+                    '👤 User ARN: ' + (data.arn || '—') + '<br>' +
+                    '🌍 Region: ' + region
+                );
+                resEl.className = 'result-box success';
+            }
+        } else {
+            if (resEl) {
+                resEl.innerHTML = '❌ <strong>Invalid Credentials:</strong> ' + (data.error || 'Unknown error');
+                resEl.className = 'result-box error';
+            }
+        }
+    } catch (err) {
+        if (resEl) {
+            resEl.innerHTML = '❌ Test failed: ' + err.message;
+            resEl.className = 'result-box error';
+        }
+    }
+}
+
+function saveAwsCredentials() {
     const accessKey = document.getElementById('ec2AccessKey').value;
     const secretKey = document.getElementById('ec2SecretKey').value;
     const region = document.getElementById('ec2Region').value;
     const keypair = document.getElementById('ec2Keypair').value;
     const securityGroup = document.getElementById('ec2SecurityGroup').value;
-    
+
     if (!accessKey || !secretKey || !region || !keypair) {
         showResult('ec2Result', 'Please fill in all AWS credentials fields', 'error');
         return;
     }
-    
+
     showResult('ec2Result', '🔄 Saving AWS credentials...', 'info');
-    
+
     try {
         const response = await fetch('/api/ec2_management', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 action: 'save_credentials',
                 access_key: accessKey,
@@ -400,11 +457,10 @@ async function saveAwsCredentials() {
                 security_group: securityGroup || ''
             })
         });
-        
+
         const data = await response.json();
-        
+
         if (data.success) {
-            // Save credentials to localStorage
             const credentials = {
                 access_key: accessKey,
                 secret_key: secretKey,
@@ -413,10 +469,8 @@ async function saveAwsCredentials() {
                 security_group: securityGroup || ''
             };
             localStorage.setItem('aws_credentials', JSON.stringify(credentials));
-            
+            renderSavedAwsCredentials();
             showResult('ec2Result', '✅ AWS credentials saved successfully!', 'success');
-            
-            // Reload instances after saving credentials
             setTimeout(() => loadEc2Instances(), 1000);
         } else {
             showResult('ec2Result', `❌ ${data.error}`, 'error');
@@ -426,12 +480,46 @@ async function saveAwsCredentials() {
     }
 }
 
+// Render the saved AWS credentials card
+function renderSavedAwsCredentials() {
+    const savedCreds = localStorage.getItem('aws_credentials');
+    const card = document.getElementById('awsCredentialsSaved');
+    const info = document.getElementById('awsCredentialsInfo');
+    if (!card || !info) return;
+    if (!savedCreds) { card.style.display = 'none'; return; }
+    try {
+        const c = JSON.parse(savedCreds);
+        const masked = (k) => k ? k.substring(0, 6) + '••••••••' + k.slice(-4) : '—';
+        info.innerHTML =
+            `<strong>Access Key:</strong> ${masked(c.access_key)}<br>` +
+            `<strong>Region:</strong> ${c.region || '—'}<br>` +
+            `<strong>Key Pair:</strong> ${c.keypair || '—'}<br>` +
+            `<strong>Security Group:</strong> ${c.security_group || '(auto)'}`;
+        card.style.display = 'block';
+    } catch { card.style.display = 'none'; }
+}
+
+// Delete saved AWS credentials
+function deleteAwsCredentials() {
+    if (!confirm('Remove saved AWS credentials? You will need to re-enter them.')) return;
+    localStorage.removeItem('aws_credentials');
+    renderSavedAwsCredentials();
+    // Clear form fields
+    ['ec2AccessKey', 'ec2SecretKey', 'ec2Keypair', 'ec2SecurityGroup'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+    });
+    showResult('ec2Result', '🗑 AWS credentials removed.', 'info');
+    ec2Instances = [];
+    renderEc2Instances([]);
+}
+
 async function restartRelay(instanceId) {
     showResult('ec2Result', `🔄 Connecting to ${instanceId} via SSM... (may take ~30s)`, 'info');
     try {
         const data = await safeFetchJson('/api/ec2_management', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ action: 'restart_relay', instance_id: instanceId })
         });
 
@@ -474,7 +562,7 @@ async function fixRelay(instanceId) {
     try {
         const data = await safeFetchJson('/api/ec2_management', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ action: 'fix_relay', instance_id: instanceId })
         });
 
@@ -501,7 +589,7 @@ async function terminateAndRecreate(instanceId) {
     try {
         const termData = await safeFetchJson('/api/ec2_management', {
             method: 'DELETE',
-            headers: {'Content-Type': 'application/json'},
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ instance_id: instanceId })
         });
         if (!termData.success) {
@@ -518,24 +606,24 @@ async function terminateAndRecreate(instanceId) {
 
 async function createEc2Instance() {
     showResult('ec2Result', '🔄 Creating EC2 instance... This may take 2-3 minutes.', 'info');
-    
+
     try {
         const response = await fetch('/api/ec2_management', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 action: 'create_instance'
             })
         });
-        
+
         const data = await response.json();
-        
+
         if (data.success) {
-            showResult('ec2Result', 
+            showResult('ec2Result',
                 `✅ EC2 instance created!<br>
                 Instance ID: ${data.instance.instance_id}<br>
                 Public IP: ${data.instance.public_ip}<br>
-                Region: ${data.instance.region}`, 
+                Region: ${data.instance.region}`,
                 'success'
             );
             await refreshEc2Instances();
@@ -549,25 +637,25 @@ async function createEc2Instance() {
 
 async function refreshEc2Instances() {
     showResult('ec2Result', '🔄 Refreshing EC2 instances list...', 'info');
-    
+
     try {
         const response = await fetch('/api/ec2_management', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 action: 'list_instances'
             })
         });
-        
+
         const data = await response.json();
-        
+
         if (data.success) {
             // Update global ec2Instances array
             ec2Instances = data.instances || [];
             renderEc2Instances(ec2Instances);
             showResult('ec2Result', `✅ Found ${ec2Instances.length} instances`, 'success');
             console.log('EC2 instances refreshed:', ec2Instances.length);
-            
+
             // Auto-refresh if there are pending instances
             const pendingCount = ec2Instances.filter(i => i.state === 'pending').length;
             if (pendingCount > 0) {
@@ -586,20 +674,20 @@ async function terminateEc2Instance(instanceId) {
     if (!confirm(`Are you sure you want to terminate instance ${instanceId}?`)) {
         return;
     }
-    
+
     showResult('ec2Result', '🔄 Terminating EC2 instance...', 'info');
-    
+
     try {
         const response = await fetch('/api/ec2_management', {
             method: 'DELETE',
-            headers: {'Content-Type': 'application/json'},
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 instance_id: instanceId
             })
         });
-        
+
         const data = await response.json();
-        
+
         if (data.success) {
             showResult('ec2Result', `✅ ${data.message}`, 'success');
             await refreshEc2Instances();
@@ -617,38 +705,38 @@ async function checkEc2Health() {
         document.getElementById('ec2HealthResult').style.display = 'block';
         return;
     }
-    
+
     showResult('ec2HealthResult', '🔄 Checking EC2 relay health...', 'info');
     document.getElementById('ec2HealthResult').style.display = 'block';
-    
+
     try {
         const response = await fetch('/api/ec2_health', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 instances: ec2Instances
             })
         });
-        
+
         const data = await response.json();
-        
+
         if (data.success) {
             const summary = data.summary;
             let resultHtml = `
                 <strong>EC2 Relay Health Check Results</strong><br><br>
                 📊 Summary: ${summary.healthy}/${summary.total} instances healthy<br><br>
             `;
-            
+
             data.instances.forEach(instance => {
                 const statusIcon = instance.healthy ? '✅' : '❌';
                 const statusColor = instance.healthy ? (instance.warnings ? '#ff9800' : '#00ff9d') : '#ff6b6b';
-                
+
                 resultHtml += `
                     <div style="border-left: 3px solid ${statusColor}; padding-left: 10px; margin: 10px 0;">
                         ${statusIcon} <strong>${instance.instance_id}</strong> (${instance.public_ip})<br>
                         <small>Status: ${instance.status}</small><br>
                 `;
-                
+
                 if (instance.healthy) {
                     resultHtml += `
                         <small style="color: #00ff9d;">
@@ -657,15 +745,15 @@ async function checkEc2Health() {
                             ✓ Port 587 Outbound: ${instance.port_587_outbound || 'unknown'}<br>
                             ✓ Port 465 Outbound: ${instance.port_465_outbound || 'unknown'}<br>
                     `;
-                    
-                    if (instance.info) {
+                    // Only show instance.info if it's non-empty
+                    if (instance.info && instance.info.trim()) {
                         resultHtml += `            <small style="color: #888;">💡 ${instance.info}</small><br>`;
                     }
-                    
+
                     resultHtml += `            ✓ Checked at: ${instance.timestamp}
                         </small>
                     `;
-                    
+
                     // Show warnings if any
                     if (instance.warnings && instance.warnings.length > 0) {
                         resultHtml += `
@@ -684,10 +772,10 @@ async function checkEc2Health() {
                         </small>
                     `;
                 }
-                
+
                 resultHtml += `</div>`;
             });
-            
+
             showResult('ec2HealthResult', resultHtml, summary.healthy === summary.total ? 'success' : 'error');
         } else {
             showResult('ec2HealthResult', `❌ ${data.error}`, 'error');
@@ -699,23 +787,23 @@ async function checkEc2Health() {
 
 function renderEc2Instances(instances) {
     const container = document.getElementById('ec2InstancesList');
-    
+
     if (!instances || instances.length === 0) {
         container.innerHTML = '<p class="no-accounts">No EC2 instances found</p>';
         return;
     }
-    
+
     container.innerHTML = instances.map(instance => {
         const stateColors = {
             'running': '#00ff9d',
-            'pending': '#f59e0b', 
+            'pending': '#f59e0b',
             'stopped': '#888',
             'stopping': '#888',
             'terminated': '#f87171'
         };
         const stateColor = stateColors[instance.state] || '#888';
         const stateEmoji = instance.state === 'running' ? '✅' : instance.state === 'pending' ? '⏳' : '⚠️';
-        
+
         return `
         <div class="account-card">
             <div class="account-info">
@@ -744,16 +832,16 @@ async function deleteAccount(type, id) {
     if (!confirm('Are you sure you want to delete this account?')) {
         return;
     }
-    
+
     try {
         const response = await fetch('/api/accounts', {
             method: 'DELETE',
-            headers: {'Content-Type': 'application/json'},
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ type, id })
         });
-        
+
         const data = await response.json();
-        
+
         if (data.success) {
             loadAccounts();
         }
@@ -766,9 +854,9 @@ async function deleteAccount(type, id) {
 function handleFileUpload(event) {
     const file = event.target.files[0];
     if (!file) return;
-    
+
     const reader = new FileReader();
-    reader.onload = function(e) {
+    reader.onload = function (e) {
         const content = e.target.result;
         document.getElementById('bulkCsv').value = content;
         updateBulkStats();
@@ -781,7 +869,7 @@ function switchInputMode() {
     inputMode = inputMode === 'csv' ? 'simple' : 'csv';
     const label = document.getElementById('inputModeLabel');
     const textarea = document.getElementById('bulkCsv');
-    
+
     if (inputMode === 'simple') {
         label.textContent = 'Mode: Simple (One Email Per Line)';
         textarea.placeholder = 'john@example.com\njane@example.com\nbob@example.com\nalice@example.com';
@@ -795,7 +883,7 @@ function switchInputMode() {
 function updateSendMethodInfo() {
     const method = document.getElementById('bulkMethod').value;
     const infoBox = document.getElementById('sendMethodInfo');
-    
+
     if (method === 'smtp') {
         infoBox.innerHTML = '<strong>Gmail SMTP Mode:</strong> Rotates between your configured Gmail accounts. Emails are sent from Gmail servers (Gmail IP addresses). Good for moderate volumes but Gmail may limit sending rate.';
         infoBox.style.display = 'block';
@@ -809,7 +897,7 @@ function updateSendMethodInfo() {
         infoBox.style.display = 'block';
         infoBox.style.background = '#2d2d2d';
     }
-    
+
     updateBulkStats();
 }
 
@@ -820,7 +908,7 @@ function updateBulkStats() {
         document.getElementById('bulkStats').style.display = 'none';
         return;
     }
-    
+
     // Count emails
     let emailCount = 0;
     if (inputMode === 'simple') {
@@ -830,7 +918,7 @@ function updateBulkStats() {
         const lines = csv.split('\n').filter(line => line.trim());
         emailCount = Math.max(0, lines.length - 1); // Exclude header
     }
-    
+
     // Count SMTP accounts
     const method = document.getElementById('bulkMethod').value;
     let smtpCount = 0;
@@ -839,12 +927,12 @@ function updateBulkStats() {
     } else if (method === 'ec2') {
         smtpCount = ec2Instances.filter(i => i.state === 'running').length;
     }
-    
+
     // Update display
     document.getElementById('bulkStats').style.display = 'block';
     document.getElementById('totalEmails').textContent = emailCount;
     document.getElementById('smtpConfigured').textContent = smtpCount;
-    
+
     if (!bulkSendingActive) {
         document.getElementById('sentCount').textContent = '0';
         document.getElementById('failedCount').textContent = '0';
@@ -857,7 +945,7 @@ function updateBulkStats() {
 function updateBulkProgress(sent, failed, total) {
     document.getElementById('sentCount').textContent = sent;
     document.getElementById('failedCount').textContent = failed;
-    
+
     const progress = Math.round(((sent + failed) / total) * 100);
     document.getElementById('progressBar').style.width = progress + '%';
     document.getElementById('progressText').textContent = progress + '%';
@@ -869,15 +957,15 @@ async function sendSingleEmail() {
     const subject = document.getElementById('singleSubject').value;
     const html = document.getElementById('singleHtml').value;
     const method = document.getElementById('singleMethod').value;
-    
+
     if (!to || !subject || !html) {
         showResult('singleResult', 'Please fill in all fields', 'error');
         return;
     }
-    
+
     // Get config based on method
     let config = {};
-    
+
     if (method === 'smtp') {
         if (smtpAccounts.length === 0) {
             showResult('singleResult', 'Please add an SMTP account first', 'error');
@@ -908,27 +996,30 @@ async function sendSingleEmail() {
             config.smtp_config = smtpAccounts[0];
         }
     }
-    
+
     showResult('singleResult', '🔄 Sending email...', 'info');
-    
+
     // Get attachment if any
     const attachment = await getAttachmentData('single');
     if (attachmentTooLarge(attachment, 'singleResult')) return;
-    
+
     try {
         const data = await safeFetchJson('/api/send', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 to: to,
                 subject: subject,
                 html: html,
                 method: method,
+                from_name: config.smtp_config
+                    ? (config.smtp_config.sender_name || config.smtp_config.user || 'KINGMAILER')
+                    : (config.aws_config ? (config.aws_config.from_email || 'KINGMAILER') : 'KINGMAILER'),
                 ...(attachment ? { attachment } : {}),
                 ...config
             })
         });
-        
+
         if (data.success) {
             showResult('singleResult', `✅ ${data.message}`, 'success');
         } else {
@@ -947,18 +1038,18 @@ async function sendBulkEmails() {
     const method = document.getElementById('bulkMethod').value;
     const minDelay = parseFloat(document.getElementById('bulkMinDelay').value) || 1;
     const maxDelay = parseFloat(document.getElementById('bulkMaxDelay').value) || 3;
-    
+
     if (!csv || !subject || !html) {
         showResult('bulkResult', 'Please fill in all fields', 'error');
         return;
     }
-    
+
     // Convert simple format to CSV if needed
     if (inputMode === 'simple') {
         const emails = csv.split('\n').filter(line => line.trim() && line.includes('@'));
         csv = 'email\n' + emails.join('\n');
     }
-    
+
     // Parse CSV
     const lines = csv.split('\n').filter(line => line.trim());
     if (lines.length < 2) {
@@ -971,7 +1062,7 @@ async function sendBulkEmails() {
         showResult('bulkResult', 'CSV must have an "email" column header', 'error');
         return;
     }
-    
+
     // Build rows array from CSV
     const rows = [];
     for (let i = 1; i < lines.length; i++) {
@@ -981,12 +1072,12 @@ async function sendBulkEmails() {
         headers.forEach((h, idx) => { row[h] = vals[idx] || ''; });
         rows.push(row);
     }
-    
+
     if (rows.length === 0) {
         showResult('bulkResult', 'No valid email addresses found in CSV', 'error');
         return;
     }
-    
+
     // Validate config
     let runningInstances = [];
     if (method === 'smtp') {
@@ -1009,30 +1100,30 @@ async function sendBulkEmails() {
             return;
         }
     }
-    
+
     // Prepare attachment (convert HTML file to selected format BEFORE starting loop)
     showResult('bulkResult', '⏳ Preparing attachment (if any)...', 'info');
     const attachment = await getAttachmentData('bulk');
-    
+
     // Set send state
     bulkSendingActive = true;
     bulkStopped = false;
     bulkPaused = false;
-    
+
     // Show stop/pause buttons, hide start
     document.getElementById('startBulkBtn').style.display = 'none';
     document.getElementById('pauseBulkBtn').style.display = 'inline-block';
     document.getElementById('pauseBulkBtn').textContent = '⏸ Pause';
     document.getElementById('stopBulkBtn').style.display = 'inline-block';
-    
+
     // Show real-time log
     document.getElementById('bulkLog').style.display = 'block';
     document.getElementById('bulkLogContent').innerHTML = '';
-    
+
     const methodNames = { smtp: 'Gmail SMTP', ec2: 'EC2 Relay', ses: 'AWS SES' };
     showResult('bulkResult', `🔄 Bulk sending via ${methodNames[method]} — ${rows.length} emails...`, 'info');
     updateBulkStats();
-    
+
     let sent = 0;
     let failed = 0;
     let rotateIdx = 0;
@@ -1044,16 +1135,16 @@ async function sendBulkEmails() {
     for (let i = 0; i < rows.length; i++) {
         // Stop check
         if (bulkStopped) break;
-        
+
         // Pause — wait until resumed or stopped
         while (bulkPaused && !bulkStopped) {
             await sleep(400);
         }
         if (bulkStopped) break;
-        
+
         const row = rows[i];
         const toEmail = row['email'];
-        
+
         // Build payload for this email
         // Pick subject: random from pool, or the field value (server resolves spintax per-email)
         const _pickSubject = _useSubjectPool
@@ -1071,7 +1162,18 @@ async function sendBulkEmails() {
             method: method,
             csv_row: row
         };
-        
+
+        // Sender name — random per email if enabled
+        const _isRandName = (document.getElementById('bulkRandomSenderName') || {}).checked;
+        if (_isRandName) {
+            const _tagMap = buildDollarTagMap('bulk');
+            emailPayload.from_name = _tagMap.randName;
+            emailPayload.random_sender_name = false; // Already resolved on frontend
+        } else {
+            const _sName = (document.getElementById('bulkSenderName') || {}).value.trim();
+            if (_sName) emailPayload.from_name = _sName;
+        }
+
         if (method === 'smtp') {
             emailPayload.smtp_config = smtpAccounts[rotateIdx % smtpAccounts.length];
             // Rotate SMTP account after each batch
@@ -1102,57 +1204,57 @@ async function sendBulkEmails() {
             }
             rotateIdx++;
         }
-        
+
         if (attachment) emailPayload.attachment = attachment;
-        
+
         // Log entry for this email
         const logLine = document.createElement('div');
         logLine.style.color = '#aaa';
-        logLine.textContent = `[${i+1}/${rows.length}] Sending to ${toEmail}...`;
+        logLine.textContent = `[${i + 1}/${rows.length}] Sending to ${toEmail}...`;
         document.getElementById('bulkLogContent').appendChild(logLine);
         document.getElementById('bulkLog').scrollTop = document.getElementById('bulkLog').scrollHeight;
-        
+
         try {
             const result = await safeFetchJson('/api/send', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(emailPayload)
             });
-            
+
             if (result.success) {
                 sent++;
                 logLine.style.color = '#00ff9d';
-                logLine.textContent = `[${i+1}/${rows.length}] ✅ ${toEmail}`;
+                logLine.textContent = `[${i + 1}/${rows.length}] ✅ ${toEmail}`;
             } else {
                 failed++;
                 logLine.style.color = '#f87171';
-                logLine.textContent = `[${i+1}/${rows.length}] ❌ ${toEmail}: ${result.error}`;
+                logLine.textContent = `[${i + 1}/${rows.length}] ❌ ${toEmail}: ${result.error}`;
             }
         } catch (err) {
             failed++;
             logLine.style.color = '#f87171';
-            logLine.textContent = `[${i+1}/${rows.length}] ❌ ${toEmail}: ${err.message}`;
+            logLine.textContent = `[${i + 1}/${rows.length}] ❌ ${toEmail}: ${err.message}`;
         }
-        
+
         // Update progress bar in real-time
         updateBulkProgress(sent, failed, rows.length);
-        
+
         // Delay between emails (skip on last or if stopped)
         if (i < rows.length - 1 && !bulkStopped) {
             const delayMs = (Math.random() * (maxDelay - minDelay) + minDelay) * 1000;
             await sleep(delayMs);
         }
     }
-    
+
     // Wrap up
     bulkSendingActive = false;
     bulkPaused = false;
     bulkStopped = false;
-    
+
     document.getElementById('startBulkBtn').style.display = 'inline-block';
     document.getElementById('pauseBulkBtn').style.display = 'none';
     document.getElementById('stopBulkBtn').style.display = 'none';
-    
+
     const stopped = sent + failed < rows.length;
     const msg = stopped
         ? `⏹ Stopped. Sent: ${sent} ✅ &nbsp; Failed: ${failed} ❌ &nbsp; Remaining: ${rows.length - sent - failed}`
@@ -1197,7 +1299,7 @@ function loadHtmlAttachment(context, event) {
     const file = event.target.files[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = function(e) {
+    reader.onload = function (e) {
         const data = { name: file.name, content: e.target.result };
         if (context === 'single') {
             singleAttachmentData = data;
@@ -1231,7 +1333,7 @@ function clearAttachment(context) {
 // format '5-6-5' → 5+6+5=16 digits e.g. '73291-847362-10583'
 function generateAttachName(format) {
     if (!format || format === 'none') return null;
-    const presets = ['5-6-5','8-8','4-4-4-4','6-4-6','4-6-4','6-6','4-4-4','3-4-3','5-5'];
+    const presets = ['5-6-5', '8-8', '4-4-4-4', '6-4-6', '4-6-4', '6-6', '4-4-4', '3-4-3', '5-5'];
     if (format === 'random') format = presets[Math.floor(Math.random() * presets.length)];
     return format.split('-').map(seg => {
         const n = parseInt(seg);
@@ -1241,8 +1343,77 @@ function generateAttachName(format) {
     }).join('-');
 }
 
+// US data for $tag generators
+const _US_FIRST = ['James', 'John', 'Robert', 'Michael', 'William', 'David', 'Richard', 'Joseph', 'Thomas', 'Charles', 'Mary', 'Patricia', 'Jennifer', 'Linda', 'Barbara', 'Elizabeth', 'Susan', 'Jessica', 'Sarah', 'Karen', 'Emily', 'Amanda', 'Stephanie', 'Rebecca', 'Laura'];
+const _US_LAST = ['Smith', 'Johnson', 'Williams', 'Brown', 'Jones', 'Garcia', 'Miller', 'Davis', 'Rodriguez', 'Martinez', 'Wilson', 'Anderson', 'Taylor', 'Thomas', 'Moore', 'Jackson', 'Thompson', 'White'];
+const _US_CITIES = [
+    { city: 'New York', state: 'NY', zip: '10001' }, { city: 'Los Angeles', state: 'CA', zip: '90001' },
+    { city: 'Chicago', state: 'IL', zip: '60601' }, { city: 'Houston', state: 'TX', zip: '77001' },
+    { city: 'Phoenix', state: 'AZ', zip: '85001' }, { city: 'Philadelphia', state: 'PA', zip: '19101' },
+    { city: 'San Antonio', state: 'TX', zip: '78201' }, { city: 'San Diego', state: 'CA', zip: '92101' },
+    { city: 'Dallas', state: 'TX', zip: '75201' }, { city: 'Austin', state: 'TX', zip: '78701' },
+    { city: 'Seattle', state: 'WA', zip: '98101' }, { city: 'Denver', state: 'CO', zip: '80201' },
+    { city: 'Nashville', state: 'TN', zip: '37201' }, { city: 'Charlotte', state: 'NC', zip: '28201' },
+    { city: 'Detroit', state: 'MI', zip: '48201' }, { city: 'Boston', state: 'MA', zip: '02101' },
+    { city: 'Las Vegas', state: 'NV', zip: '89101' }, { city: 'Miami', state: 'FL', zip: '33101' },
+    { city: 'Atlanta', state: 'GA', zip: '30301' }, { city: 'Portland', state: 'OR', zip: '97201' },
+];
+const _US_STREETS = ['Main St', 'Oak Ave', 'Maple Dr', 'Pine Blvd', 'Cedar Lane', 'Elm Rd', 'Washington Blvd', 'Park Ave', 'Lake Dr', 'Hillside Way', 'Sunset Blvd', 'River Rd', 'Forest Ave', 'Valley Dr', 'Summit Rd'];
+const _US_COMPANIES = ['Apex Solutions LLC', 'Bright Path Inc', 'Cascade Digital Corp', 'Delta Group', 'Everest Ventures', 'Frontier Services Co', 'Global Tech Inc', 'Harbor Networks LLC', 'Inland Systems Corp', 'Jade Analytics', 'Keystone Consulting', 'Lighthouse Media', 'Meridian Group LLC', 'Nexus Innovations', 'Oakwood Industries', 'Pinnacle Growth Inc', 'Quantum Systems', 'Ridgeline Corp', 'Summit Partners LLC', 'Trident Enterprises'];
+const _PRODUCTS = ['Premium Membership', 'Express Delivery', 'Annual Plan', 'Business Package', 'Standard Subscription', 'Pro License', 'Elite Bundle', 'Starter Kit', 'Enterprise Plan', 'Monthly Service', 'Digital Package', 'Advanced Suite'];
+
+function _rndOf(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+function _rndInt(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
+function _rndNum(n) { const mn = Math.pow(10, n - 1), mx = Math.pow(10, n) - 1; return String(_rndInt(mn, mx)); }
+function _rndAlpha(n) { return Array.from({ length: n }, () => 'abcdefghijklmnopqrstuvwxyz'[Math.floor(Math.random() * 26)]).join(''); }
+function _rndAlphaNum(n, upper) { const c = upper ? 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789' : 'abcdefghijklmnopqrstuvwxyz0123456789'; return Array.from({ length: n }, () => c[Math.floor(Math.random() * c.length)]).join(''); }
+
+function buildDollarTagMap(context) {
+    const loc = _rndOf(_US_CITIES);
+    const sn = _rndInt(100, 9999);
+    const first = _rndOf(_US_FIRST), last = _rndOf(_US_LAST);
+    const acc = smtpAccounts.length > 0 ? smtpAccounts[0] : null;
+    const sEmail = acc ? acc.user : '';
+    const sName = acc ? (acc.sender_name || acc.user) : (first + ' ' + last);
+    const rEmail = context === 'single' ? ((document.getElementById('singleTo') || {}).value || '') : '';
+    return {
+        name: rEmail.split('@')[0] || 'Customer', email: rEmail, recipientName: first + ' ' + last,
+        sender: sEmail, sendername: sName, sendertag: `${sName} <${sEmail}>`,
+        randName: first + ' ' + last, rnd_company_us: _rndOf(_US_COMPANIES),
+        address: `${sn} ${_rndOf(_US_STREETS)}, ${loc.city}, ${loc.state} ${loc.zip}`,
+        street: `${sn} ${_rndOf(_US_STREETS)}`,
+        city: loc.city, state: loc.state, zipcode: loc.zip, zip: loc.zip,
+        invcnumber: 'INV-' + _rndNum(8), ordernumber: 'ORD-' + _rndNum(8),
+        product: _rndOf(_PRODUCTS),
+        amount: '$' + (_rndInt(999, 99999) / 100).toFixed(2),
+        charges: '$' + (_rndInt(499, 49999) / 100).toFixed(2),
+        quantity: String(_rndInt(1, 99)), number: _rndNum(6),
+        date: new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: '2-digit' }),
+        id: _rndNum(10),
+        unique13digit: String(Date.now()).slice(0, 13),
+        unique16_484: `${_rndNum(4)}-${_rndNum(8)}-${_rndNum(4)}`,
+        unique16_565: `${_rndNum(5)}-${_rndNum(6)}-${_rndNum(5)}`,
+        unique16_4444: `${_rndNum(4)}-${_rndNum(4)}-${_rndNum(4)}-${_rndNum(4)}`,
+        unique16_88: `${_rndNum(8)}-${_rndNum(8)}`,
+        unique14alphanum: _rndAlphaNum(14, true), unique11alphanum: _rndAlphaNum(11, true),
+        unique14alpha: _rndAlpha(14).toUpperCase(),
+        alpha_random_small: _rndAlpha(6), alpha_short: _rndAlpha(4), random_three_chars: _rndAlphaNum(3),
+    };
+}
+
+function applyDollarTags(text, tagMap) {
+    if (!text || !tagMap) return text;
+    const keys = Object.keys(tagMap).sort((a, b) => b.length - a.length);
+    for (const key of keys) {
+        const val = String(tagMap[key]);
+        text = text.split('$' + key).join(val);
+        text = text.split('{{' + key + '}}').join(val);
+    }
+    return text;
+}
+
 // Convert HTML attachment to selected format and return base64 object
-async function getAttachmentData(context) {
+async function getAttachmentData(context, recipientEmail, rowData) {
     const raw = context === 'single' ? singleAttachmentData : bulkAttachmentData;
     const format = document.getElementById(context + 'AttachFormat').value;
     if (!raw) return null;
@@ -1251,8 +1422,29 @@ async function getAttachmentData(context) {
     const nameFmtEl = document.getElementById(context + 'AttachNameFormat');
     const nameFmt = nameFmtEl ? nameFmtEl.value : 'random';
     const uniqueCode = generateAttachName(nameFmt);
-    const buildName = (ext) => uniqueCode ? (uniqueCode + ext) : raw.name.replace(/\.(html|htm)$/i, ext);
-    const html = raw.content;
+    // Use descriptive filenames: random numbers are a top spam signal
+    // Legitimate attachments from real companies have meaningful names
+    const FORMAT_NAMES = {
+        pdf: 'document', png: 'image', jpeg: 'photo', jpg: 'photo',
+        gif: 'image', webp: 'image', tiff: 'image', docx: 'report',
+        rtf: 'document', pptx: 'presentation', xlsx: 'spreadsheet',
+        txt: 'details', md: 'info', html: 'page',
+    };
+    const fmtKey = format.toLowerCase().replace('.', '');
+    const baseName = FORMAT_NAMES[fmtKey] || 'document';
+    // Use original file name stem if clean, otherwise use descriptive base name
+    const origStem = raw.name.replace(/\.(html|htm)$/i, '').replace(/[^a-zA-Z0-9_-]/g, '');
+    const useStem = origStem && origStem.length > 2 && origStem.length < 40 ? origStem : baseName;
+    const buildName = (ext) => uniqueCode ? (useStem + '-' + uniqueCode + ext) : (useStem + ext);
+
+    // Apply $tag placeholders BEFORE rendering so they appear in the attachment
+    const tagMap = buildDollarTagMap(context);
+    if (recipientEmail) {
+        tagMap.email = recipientEmail; tagMap.recipient = recipientEmail;
+        tagMap.name = recipientEmail.split('@')[0];
+    }
+    if (rowData) Object.keys(rowData).forEach(k => { if (k) tagMap[k] = rowData[k]; });
+    const html = applyDollarTags(raw.content, tagMap);
 
     // ── Helper: string → base64 (Unicode-safe) ────────────────────────────
     function strToB64(str) {
@@ -1323,35 +1515,85 @@ async function getAttachmentData(context) {
     }
 
     // ── Canvas-based: PDF, PNG, JPEG, GIF, WebP, TIFF (async) ────────────
-    const MAX_B64 = 3.5 * 1024 * 1024;
+    // Target: attachment decoded size < 100KB (136KB in base64) — fits all mail servers
+    const MAX_B64 = Math.ceil(100 * 1024 * 4 / 3); // 100KB decoded → ~137KB base64
     return new Promise((resolve) => {
         const iframe = document.createElement('iframe');
-        iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:900px;height:700px;border:none;';
+        iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:1200px;height:900px;border:none;visibility:hidden;';
         document.body.appendChild(iframe);
-        iframe.onload = async function() {
+        iframe.onload = async function () {
             try {
                 const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
-                const canvas = await html2canvas(iframeDoc.body, { useCORS: true, scale: 0.7, logging: false });
+                // scale:2.0 = high-quality (2x retina)
+                const canvas = await html2canvas(iframeDoc.body, {
+                    useCORS: true,
+                    scale: 1.0,           // 1.0 = 1200x900px — good quality, fits 100KB target
+                    logging: false,
+                    allowTaint: true,
+                    backgroundColor: '#ffffff',
+                    imageTimeout: 8000,
+                });
                 document.body.removeChild(iframe);
 
                 if (format === 'pdf') {
-                    const { jsPDF } = window.jspdf;
-                    const jpegUrl = canvas.toDataURL('image/jpeg', 0.7);
-                    const W = 595, H = Math.round((canvas.height / canvas.width) * 595);
-                    const pdf = new jsPDF({ orientation: H > W ? 'portrait' : 'landscape', unit: 'pt', format: [W, H] });
-                    pdf.addImage(jpegUrl, 'JPEG', 0, 0, W, H, '', 'FAST');
-                    resolve({ name: buildName('.pdf'), content: pdf.output('datauristring').split(',')[1], type: 'application/pdf' });
-                } else {
-                    // PNG, JPEG, GIF, WebP, TIFF
-                    const mimeMap  = { png: 'image/png', jpeg: 'image/jpeg', gif: 'image/jpeg', webp: 'image/webp', tiff: 'image/png' };
-                    const extMap   = { png: '.png', jpeg: '.jpg', gif: '.gif', webp: '.webp', tiff: '.tiff' };
-                    const mime = mimeMap[format] || 'image/jpeg';
-                    let quality = 0.8, dataUrl;
+                    // Send as high-quality JPEG with .pdf extension (no jsPDF fingerprint)
+                    // jsPDF adds a recognizable binary signature that spam AIs use to classify
+                    // sending a JPEG with application/pdf MIME is standard for image-based PDFs
+                    let jpegQ = 0.80;
+                    let pdfDataUrl;
                     do {
-                        dataUrl = canvas.toDataURL(mime, quality);
-                        quality -= 0.1;
-                    } while (dataUrl.split(',')[1].length > MAX_B64 && quality > 0.1);
-                    resolve({ name: buildName(extMap[format] || '.jpg'), content: dataUrl.split(',')[1], type: mime });
+                        pdfDataUrl = canvas.toDataURL('image/jpeg', jpegQ);
+                        jpegQ = Math.round((jpegQ - 0.05) * 100) / 100;
+                    } while (pdfDataUrl.split(',')[1].length > MAX_B64 && jpegQ > 0.40);
+                    resolve({ name: buildName('.jpg'), content: pdfDataUrl.split(',')[1], type: 'image/jpeg' });
+                } else {
+                    // FIXED MIME MAP: no extension/MIME mismatches (major spam trigger)
+                    // GIF: canvas can't encode real GIF → produce JPEG with .jpg ext
+                    // TIFF: canvas can't encode TIFF → produce PNG with .png ext
+                    // ── Format map with correct MIME/extension pairs ────────────────────
+                    // GIF/TIFF: canvas has no native encoder → use JPEG/PNG respectively
+                    const fmtMap = {
+                        png: { mime: 'image/png', ext: '.png', lossless: true },
+                        jpeg: { mime: 'image/jpeg', ext: '.jpg', lossless: false, q: 0.82 },
+                        gif: { mime: 'image/jpeg', ext: '.jpg', lossless: false, q: 0.82 },
+                        webp: { mime: 'image/webp', ext: '.webp', lossless: false, q: 0.82 },
+                        tiff: { mime: 'image/png', ext: '.png', lossless: true },
+                    };
+                    const fmt = fmtMap[format] || { mime: 'image/jpeg', ext: '.jpg', lossless: false, q: 0.82 };
+
+                    let dataUrl;
+                    if (fmt.lossless) {
+                        // PNG/TIFF: quality param is IGNORED by canvas — must reduce dimensions
+                        // Strategy: shrink working canvas by 0.82× each pass until under 100KB
+                        let workCanvas = canvas;
+                        let scale2 = 1.0;
+                        for (let attempt = 0; attempt < 8; attempt++) {
+                            if (scale2 < 1.0) {
+                                // Draw original canvas at reduced size
+                                const wc = document.createElement('canvas');
+                                wc.width = Math.round(canvas.width * scale2);
+                                wc.height = Math.round(canvas.height * scale2);
+                                const wctx = wc.getContext('2d');
+                                // Smooth downscaling
+                                wctx.imageSmoothingEnabled = true;
+                                wctx.imageSmoothingQuality = 'high';
+                                wctx.drawImage(canvas, 0, 0, wc.width, wc.height);
+                                workCanvas = wc;
+                            }
+                            dataUrl = workCanvas.toDataURL(fmt.mime);
+                            if (dataUrl.split(',')[1].length <= MAX_B64) break; // fits!
+                            scale2 = Math.round((scale2 - 0.12) * 100) / 100;
+                            if (scale2 < 0.2) break; // safety floor
+                        }
+                    } else {
+                        // JPEG/WebP/GIF: reduce quality until under 100KB
+                        let quality = fmt.q;
+                        do {
+                            dataUrl = canvas.toDataURL(fmt.mime, quality);
+                            quality = Math.round((quality - 0.05) * 100) / 100;
+                        } while (dataUrl.split(',')[1].length > MAX_B64 && quality > 0.40);
+                    }
+                    resolve({ name: buildName(fmt.ext), content: dataUrl.split(',')[1], type: fmt.mime });
                 }
             } catch (err) {
                 if (document.body.contains(iframe)) document.body.removeChild(iframe);
@@ -1402,12 +1644,337 @@ function showResult(elementId, message, type) {
     element.style.display = 'block';
 }
 
+// ── Multi-country Name Banks ─────────────────────────────────────────────────
+const _NAME_BANKS = {
+    us: {
+        first: ['James', 'John', 'Robert', 'Michael', 'William', 'David', 'Richard', 'Joseph', 'Thomas', 'Charles',
+            'Mary', 'Patricia', 'Jennifer', 'Linda', 'Barbara', 'Elizabeth', 'Susan', 'Jessica', 'Sarah', 'Karen',
+            'Emily', 'Amanda', 'Stephanie', 'Rebecca', 'Laura', 'Ashley', 'Megan'],
+        last: ['Smith', 'Johnson', 'Williams', 'Brown', 'Jones', 'Garcia', 'Miller', 'Davis', 'Rodriguez', 'Martinez',
+            'Wilson', 'Anderson', 'Taylor', 'Thomas', 'Moore', 'Jackson', 'Thompson', 'White', 'Harris', 'Martin'],
+    },
+    uk: {
+        first: ['Oliver', 'Jack', 'Harry', 'George', 'Charlie', 'James', 'William', 'Thomas', 'Alfie', 'Freddie',
+            'Olivia', 'Emily', 'Isla', 'Poppy', 'Ava', 'Isabella', 'Sophie', 'Grace', 'Lily', 'Amelia'],
+        last: ['Smith', 'Jones', 'Williams', 'Taylor', 'Davies', 'Brown', 'Evans', 'Wilson', 'Thomas', 'Roberts',
+            'Johnson', 'Walker', 'Wright', 'Thompson', 'White', 'Hall', 'Harris', 'Lewis', 'Clarke', 'Robinson'],
+    },
+    ca: {
+        first: ['Liam', 'Noah', 'Oliver', 'Elijah', 'Aiden', 'Lucas', 'Ethan', 'Mason', 'Logan', 'Carter',
+            'Emma', 'Olivia', 'Sophia', 'Ava', 'Charlotte', 'Isabella', 'Mia', 'Abigail', 'Harper', 'Evelyn'],
+        last: ['Tremblay', 'Gagnon', 'Roy', 'Bouchard', 'Gauthier', 'Morin', 'Lavoie', 'Fortin', 'Campbell', 'MacDonald'],
+    },
+    au: {
+        first: ['Jack', 'Oliver', 'William', 'Noah', 'Thomas', 'Archer', 'Mason', 'Henry', 'Cooper', 'Charlotte',
+            'Olivia', 'Amelia', 'Emma', 'Ava', 'Mia', 'Isla', 'Sophie', 'Grace', 'Chloe', 'Ruby'],
+        last: ['Smith', 'Jones', 'Williams', 'Brown', 'Wilson', 'Taylor', 'Johnson', 'White', 'Mitchell', 'Campbell'],
+    },
+    de: {
+        first: ['Lukas', 'Leon', 'Jonas', 'Maximilian', 'Felix', 'Finn', 'Paul', 'Noah', 'Elias', 'Tim',
+            'Emma', 'Mia', 'Hannah', 'Emilia', 'Sofia', 'Lena', 'Anna', 'Lea', 'Marie', 'Leonie'],
+        last: ['Müller', 'Schmidt', 'Schneider', 'Fischer', 'Weber', 'Meyer', 'Wagner', 'Becker', 'Schulz', 'Koch'],
+    },
+    fr: {
+        first: ['Gabriel', 'Raphael', 'Lucas', 'Leo', 'Hugo', 'Arthur', 'Louis', 'Tom', 'Nathan', 'Mathis',
+            'Emma', 'Jade', 'Louise', 'Alice', 'Chloé', 'Inès', 'Léa', 'Manon', 'Camille', 'Lola'],
+        last: ['Martin', 'Bernard', 'Thomas', 'Petit', 'Robert', 'Richard', 'Durand', 'Dubois', 'Moreau', 'Laurent'],
+    },
+};
+function _getNameBank(country) {
+    if (country === 'random' || !_NAME_BANKS[country]) {
+        const keys = Object.keys(_NAME_BANKS);
+        return _NAME_BANKS[keys[Math.floor(Math.random() * keys.length)]];
+    }
+    return _NAME_BANKS[country];
+}
+function _randomNameFromCountry(country) {
+    const bank = _getNameBank(country);
+    return _rndOf(bank.first) + ' ' + _rndOf(bank.last);
+}
+function updateRandomNameExamples(ctx) {
+    const countryEl = document.getElementById((ctx || 'bulk') + 'NameCountry');
+    const country = countryEl ? countryEl.value : 'us';
+    const examples = Array.from({ length: 4 }, () => _randomNameFromCountry(country)).join(', ');
+    const ex = document.getElementById('randomNameExamples');
+    if (ex) ex.textContent = examples;
+    const sel = document.getElementById((ctx || 'bulk') + 'CountrySelector');
+    if (sel) sel.classList.add('visible');
+}
+// Toggle random sender name UI (updated: country support)
+function toggleRandomSenderName(ctx) {
+    const cb = document.getElementById(ctx + 'RandomSenderName');
+    const row = document.getElementById(ctx + 'SenderNameRow');
+    const prev = document.getElementById(ctx + 'RandomNamePreview');
+    if (!cb) return;
+    const isRandom = cb.checked;
+    if (row) row.style.display = isRandom ? 'none' : 'flex';
+    if (prev) prev.style.display = isRandom ? 'block' : 'none';
+    const sel = document.getElementById(ctx + 'CountrySelector');
+    if (isRandom && prev) {
+        updateRandomNameExamples(ctx);
+        if (sel) sel.classList.add('visible');
+    } else {
+        if (sel) sel.classList.remove('visible');
+    }
+}
+
+// Show spam warning when HTML attachment format is selected
+function onAttachFormatChange(ctx, el) {
+    const warn = document.getElementById(ctx + 'AttachFormatWarn');
+    if (warn) warn.style.display = (el.value === 'html') ? 'block' : 'none';
+}
+
+// Real-time subject spam keyword checker
+// These are the #1 spam-flagged subjects used in phishing/bulk campaigns
+const _SPAM_SUBJECT_WORDS = [
+    'shipment', 'shipped', 'shipping', 'package', 'delivery', 'delivered',
+    'order', 'invoice', 'receipt', 'billing', 'payment', 'charge',
+    'confirm', 'confirmation', 'verify', 'verification', 'account',
+    'urgent', 'important', 'action required', 'click here', 'click now',
+    'free', 'winner', 'won', 'prize', 'congratulations', 'reward',
+    'limited time', 'expires', 'offer', 'deal', 'discount', 'sale',
+    'suspended', 'blocked', 'compromised', 'unusual activity',
+    'act now', 'respond', 'reply', 'open immediately',
+    'dear customer', 'dear user', 'dear member', 'hello dear',
+    'bank', 'refund', 'claim', 'tax', 'irs', 'amazon', 'paypal', 'fedex', 'ups', 'dhl',
+];
+const _subjectWarnTimers = {};
+function checkSubjectSpam(ctx, val) {
+    const warn = document.getElementById(ctx + 'SubjectSpamWarn');
+    if (!warn) return;
+    const lower = val.toLowerCase();
+    const hit = _SPAM_SUBJECT_WORDS.some(w => lower.includes(w));
+    if (hit && val.length > 3) {
+        warn.style.display = 'block';
+        warn.style.opacity = '1';
+        clearTimeout(_subjectWarnTimers[ctx]);
+        // Auto-dismiss after 10 seconds with smooth fade out
+        _subjectWarnTimers[ctx] = setTimeout(() => {
+            warn.style.transition = 'opacity 0.6s ease';
+            warn.style.opacity = '0';
+            setTimeout(() => {
+                warn.style.display = 'none';
+                warn.style.opacity = '1';
+                warn.style.transition = '';
+            }, 650);
+        }, 10000);
+    } else {
+        clearTimeout(_subjectWarnTimers[ctx]);
+        warn.style.display = 'none';
+    }
+}
+
+
+// ── Spam Score Checker ─────────────────────────────────────────────────────────────────────────
+// Debounce timer for real-time analysis
+let _scDebounceTimer = null;
+
+/**
+ * openSpamPanel(ctx) — open the panel and run analysis immediately
+ */
+function openSpamPanel(ctx) {
+    const panel = document.getElementById('spamPanel_' + ctx);
+    if (!panel) return;
+    panel.style.display = 'block';
+    _doSpamCheck(ctx);
+}
+
+/**
+ * runSpamCheck(ctx) — called on input events (debounced 400ms)
+ */
+function runSpamCheck(ctx) {
+    clearTimeout(_scDebounceTimer);
+    _scDebounceTimer = setTimeout(() => _doSpamCheck(ctx), 400);
+    // Also fire subject spam check for inline warning
+    const subjEl = document.getElementById((ctx === 'single' ? 'singleSubject' : 'bulkSubject'));
+    if (subjEl) checkSubjectSpam(ctx, subjEl.value);
+}
+
+function _doSpamCheck(ctx) {
+    if (!window.analyzeSpam) return;
+    const panel = document.getElementById('spamPanel_' + ctx);
+    if (!panel || panel.style.display === 'none') return;
+
+    const subjectId = ctx === 'single' ? 'singleSubject' : 'bulkSubject';
+    const bodyId = ctx === 'single' ? 'singleHtml' : 'bulkHtml';
+    const subject = (document.getElementById(subjectId) || {}).value || '';
+    const body = (document.getElementById(bodyId) || {}).value || '';
+
+    const { results, issues } = analyzeSpam(subject, body);
+    _renderSpamPanel(ctx, results, issues);
+}
+
+function _renderSpamPanel(ctx, results, issues) {
+    // ── Provider rows ────────────────────────────────────────────────────────
+    const provContainer = document.getElementById('scProviders_' + ctx);
+    if (!provContainer) return;
+
+    provContainer.innerHTML = results.map(r => {
+        const pct = r.score;
+        const barColour = pct < (r.inbox || 35) ? '#22c55e'
+            : pct < (r.promo || 65) ? '#f59e0b'
+                : '#ef4444';
+        return `
+        <div class="sc-provider-row">
+            <span class="sc-provider-name">${r.icon} ${r.name}</span>
+            <div class="sc-bar-wrap">
+                <div class="sc-bar-fill" style="width:${pct}%;background:${barColour};"></div>
+            </div>
+            <span class="sc-verdict" style="color:${r.colour};">
+                ${r.vicon} ${r.verdict}<span class="sc-score-badge">${pct}/100</span>
+            </span>
+        </div>`;
+    }).join('');
+
+    // ── Issues list ──────────────────────────────────────────────────────────
+    const issuesWrap = document.getElementById('scIssues_' + ctx);
+    const issueList = document.getElementById('scIssueList_' + ctx);
+    if (!issuesWrap || !issueList) return;
+
+    if (issues.length === 0) {
+        issuesWrap.style.display = 'none';
+    } else {
+        issuesWrap.style.display = 'block';
+        issueList.innerHTML = issues.map(i => `
+            <div class="sc-issue ${i.type}">
+                <span class="sc-issue-dot"></span>
+                <span>${i.msg}</span>
+            </div>`).join('');
+    }
+}
+
+
+// ── Body Mode Toggle (HTML / Plain Text) ─────────────────────────────────────
+function setBodyMode(ctx, mode) {
+    const htmlBtn = document.getElementById(ctx + 'ModeHtml');
+    const textBtn = document.getElementById(ctx + 'ModeText');
+    const bodyId = ctx === 'single' ? 'singleHtml' : 'bulkHtml';
+    const badgeEl = document.querySelector('#' + bodyId + ' ~ .spintax-badge, .spintax-wrap .spintax-badge');
+    const bodyEl = document.getElementById(bodyId);
+    const label = document.querySelector('[for="' + bodyId + '"], label:has(+ div .spintax-wrap)');
+    // Find the label above this form-group
+    const fgLabel = bodyEl ? bodyEl.closest('.form-group') && bodyEl.closest('.form-group').querySelector('label') : null;
+    if (htmlBtn) htmlBtn.classList.toggle('mode-active', mode === 'html');
+    if (textBtn) textBtn.classList.toggle('mode-active', mode === 'text');
+    if (!bodyEl) return;
+    if (mode === 'html') {
+        bodyEl.placeholder = '<h1>Hello!</h1><p>Your content here. Use {Option A|Option B} for spintax.</p>';
+        if (fgLabel) fgLabel.textContent = ctx === 'single' ? 'HTML Body:' : 'HTML Template:';
+    } else {
+        bodyEl.placeholder = 'Type your plain text message here.\n\nUse {Hello|Hi|Hey} spintax for variation.\nUse $name, $email, $product etc. for personalisation.';
+        if (fgLabel) fgLabel.textContent = ctx === 'single' ? 'Plain Text Body:' : 'Plain Text Template:';
+    }
+    // Store mode so sendEmail picks it up
+    window['_bodyMode_' + ctx] = mode;
+    // Re-run spam check
+    runSpamCheck(ctx);
+}
+function getBodyMode(ctx) {
+    return window['_bodyMode_' + ctx] || 'html';
+}
+
+// ── Spam Score Minimizer ──────────────────────────────────────────────────────
+// Replaces known spam-triggering keywords with safer spintax alternatives
+const _SPAM_FIXES = {
+    'shipment delivered': '{Your item|Package} has {arrived|been received}',
+    'shipment': '{package|parcel|item}',
+    'shipped': '{sent|processed|dispatched}',
+    'shipping': '{delivery|fulfilment|processing}',
+    'delivery failed': 'delivery {update|notification|status}',
+    'delivered': '{arrived|completed|received}',
+    'order confirmation': '{request summary|purchase details}',
+    'order info': '{request details|purchase information}',
+    'invoice': '{document|statement|record}',
+    'urgent': '{important|priority}',
+    'action required': '{please review|your attention is needed}',
+    'act now': '{see details|review now}',
+    'click here': '{view details|learn more|open here}',
+    'click now': '{see more|view now}',
+    'free': '{complimentary|included|no extra cost}',
+    'winner': '{selected recipient|valued member}',
+    'prize': '{reward|benefit}',
+    'congratulations': '{great news|thank you}',
+    'limited time': '{for a short time|while available}',
+    'expires': '{ends|closes}',
+    'verify your account': 'confirm your {details|information}',
+    'verify': '{confirm|review}',
+    'account suspended': 'account {update|notification}',
+    'suspended': '{paused|on hold}',
+    'payment due': '{balance due|amount pending}',
+    'payment': '{transaction|process}',
+    'dear customer': '{Hello|Hi} {$name|there}',
+    'dear user': '{Hello|Hi} {$name|there}',
+};
+
+function minimizeSpam(ctx) {
+    const subjectId = ctx === 'single' ? 'singleSubject' : 'bulkSubject';
+    const bodyId = ctx === 'single' ? 'singleHtml' : 'bulkHtml';
+    const subjEl = document.getElementById(subjectId);
+    const bodyEl = document.getElementById(bodyId);
+
+    function applyFixes(text) {
+        if (!text) return text;
+        // Apply longest matches first to avoid partial replacements
+        const entries = Object.entries(_SPAM_FIXES).sort((a, b) => b[0].length - a[0].length);
+        for (const [word, repl] of entries) {
+            const regex = new RegExp(word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+            text = text.replace(regex, repl);
+        }
+        return text;
+    }
+
+    let changed = false;
+    if (subjEl && subjEl.value) {
+        const fixed = applyFixes(subjEl.value);
+        if (fixed !== subjEl.value) { subjEl.value = fixed; changed = true; }
+    }
+    if (bodyEl && bodyEl.value) {
+        const fixed = applyFixes(bodyEl.value);
+        if (fixed !== bodyEl.value) { bodyEl.value = fixed; changed = true; }
+    }
+
+    // Flash panel to confirm
+    const panel = document.getElementById('spamPanel_' + ctx);
+    if (panel && panel.style.display !== 'none') {
+        panel.style.outline = '2px solid #10b981';
+        setTimeout(() => { panel.style.outline = ''; }, 1200);
+    }
+
+    // Re-run spam check
+    _doSpamCheck(ctx);
+    if (changed) {
+        // Show minimize success toast
+        const toast = document.createElement('div');
+        toast.textContent = '✅ Spam words replaced with safer alternatives!';
+        Object.assign(toast.style, {
+            position: 'fixed', bottom: '24px', right: '24px', zIndex: '9999',
+            background: '#064e3b', border: '1px solid #10b981', color: '#6ee7b7',
+            padding: '10px 18px', borderRadius: '8px', fontSize: '13px',
+            fontWeight: '600', boxShadow: '0 8px 24px rgba(0,0,0,.4)',
+            animation: 'scFadeIn .2s ease',
+        });
+        document.body.appendChild(toast);
+        setTimeout(() => toast.remove(), 3000);
+    }
+}
+
 // ── Batch section visibility ───────────────────────────────────────────────
 function syncBatchSection() {
     const methodEl = document.getElementById('bulkMethod');
-    const section  = document.getElementById('smtpBatchSection');
+    const section = document.getElementById('smtpBatchSection');
     if (!section || !methodEl) return;
-    section.style.display = (methodEl.value === 'smtp') ? 'block' : 'none';
+    // Show batch settings for both SMTP and EC2 (both support account rotation)
+    const m = methodEl.value;
+    section.style.display = (m === 'smtp' || m === 'ec2') ? 'block' : 'none';
+    // Update label to show which thing is rotating
+    const titleEl = section.querySelector('.batch-section-title');
+    if (titleEl) {
+        if (m === 'ec2') {
+            titleEl.innerHTML = '⚙️ EC2 Relay Batch Settings &nbsp;<span id="batchModeLabel" class="badge-mode">sequential</span>';
+        } else {
+            titleEl.innerHTML = '⚙️ SMTP Batch Settings &nbsp;<span id="batchModeLabel" class="badge-mode">sequential</span>';
+        }
+    }
 }
 
 // ── Spintax resolver ───────────────────────────────────────────────────────
@@ -1426,7 +1993,7 @@ function resolveSpintax(text) {
 }
 
 function previewSpintax(fieldId, previewId) {
-    const field   = document.getElementById(fieldId);
+    const field = document.getElementById(fieldId);
     const preview = document.getElementById(previewId);
     if (!field || !preview) return;
     const resolved = resolveSpintax(field.value || '');
@@ -1449,11 +2016,11 @@ function loadLibrary() {
 }
 
 function saveLibrary(lib) {
-    try { localStorage.setItem(LIBRARY_KEY, JSON.stringify(lib)); } catch {}
+    try { localStorage.setItem(LIBRARY_KEY, JSON.stringify(lib)); } catch { }
 }
 
 function escHtml(s) {
-    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 // Save subject or body to library
@@ -1461,10 +2028,10 @@ function escHtml(s) {
 function saveToLibrary(fieldId, listKey, listElId) {
     const field = document.getElementById(fieldId);
     if (!field || !field.value.trim()) { alert('Field is empty'); return; }
-    const lib  = loadLibrary();
-    const key  = listKey === 'subjectLib' ? 'subjects' : 'bodies';
-    const cap  = key === 'subjects' ? 50 : 30;
-    const val  = field.value.trim();
+    const lib = loadLibrary();
+    const key = listKey === 'subjectLib' ? 'subjects' : 'bodies';
+    const cap = key === 'subjects' ? 50 : 30;
+    const val = field.value.trim();
     // Deduplicate
     if (lib[key].includes(val)) { alert('Already saved'); return; }
     lib[key].unshift(val);
@@ -1474,9 +2041,9 @@ function saveToLibrary(fieldId, listKey, listElId) {
 }
 
 function renderLibraryList(key, listElId, fieldId) {
-    const el  = document.getElementById(listElId);
+    const el = document.getElementById(listElId);
     if (!el) return;
-    const lib  = loadLibrary();
+    const lib = loadLibrary();
     const items = lib[key] || [];
     if (!items.length) {
         el.innerHTML = '<div class="library-empty">No saved items yet</div>';
@@ -1493,7 +2060,7 @@ function renderLibraryList(key, listElId, fieldId) {
 
 function loadFromLibrary(fieldId, key, idx, listElId) {
     const field = document.getElementById(fieldId);
-    const lib   = loadLibrary();
+    const lib = loadLibrary();
     if (!field || !lib[key] || !lib[key][idx]) return;
     field.value = lib[key][idx];
     // Mark active row
@@ -1512,9 +2079,9 @@ function deleteFromLibrary(evt, key, idx, listElId, fieldId) {
 // Render all libraries on load (single + bulk share the same localStorage)
 function renderAllLibraries() {
     renderLibraryList('subjects', 'singleSubjectList', 'singleSubject');
-    renderLibraryList('bodies',   'singleBodyList',    'singleHtml');
-    renderLibraryList('subjects', 'bulkSubjectList',   'bulkSubject');
-    renderLibraryList('bodies',   'bulkBodyList',      'bulkHtml');
+    renderLibraryList('bodies', 'singleBodyList', 'singleHtml');
+    renderLibraryList('subjects', 'bulkSubjectList', 'bulkSubject');
+    renderLibraryList('bodies', 'bulkBodyList', 'bulkHtml');
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1536,7 +2103,7 @@ function loadSubjectPoolFile(context, event) {
     const file = event.target.files[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = function(e) {
+    reader.onload = function (e) {
         const lines = e.target.result.trim().split('\n').map(l => l.trim()).filter(l => l);
         const pool = context === 'single' ? singleSubjectPool : bulkSubjectPool;
         lines.forEach(line => { if (!pool.includes(line)) pool.push(line); });
@@ -1610,7 +2177,7 @@ function loadBodyFiles(event) {
     let loaded = 0;
     files.forEach(file => {
         const reader = new FileReader();
-        reader.onload = function(e) {
+        reader.onload = function (e) {
             bodyPool.push({ id: _bodyPoolNextId++, name: file.name, content: e.target.result });
             loaded++;
             if (loaded === files.length) renderBodyPool();
@@ -1631,7 +2198,7 @@ function renderBodyPool() {
     }
     poolEl.innerHTML = bodyPool.map(b => `
         <div class="library-item">
-            <span class="library-item-text">📄 ${escHtml(b.name)} <small style="color:#888;">(${Math.round(b.content.length/1024*10)/10} KB)</small></span>
+            <span class="library-item-text">📄 ${escHtml(b.name)} <small style="color:#888;">(${Math.round(b.content.length / 1024 * 10) / 10} KB)</small></span>
             <button class="btn-xs" style="font-size:10px;background:#667eea;color:#fff;border:none;border-radius:3px;padding:2px 6px;cursor:pointer;margin-right:4px;" onclick="useBodyFromPool(${b.id})">Use</button>
             <button class="library-item-del" onclick="removeBodyFile(${b.id})">✕</button>
         </div>`).join('');
@@ -1703,7 +2270,7 @@ function loadHtmlConverterFile(context, event) {
     const file = event.target.files[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = function(e) {
+    reader.onload = function (e) {
         htmlConverterData[context] = { name: file.name, content: e.target.result };
         const nameEl = document.getElementById(context + 'ConverterFileName');
         const clearBtn = document.getElementById(context + 'ConverterClear');
@@ -1748,40 +2315,40 @@ async function exportHtmlFile(context, format) {
     setStatus('Converting…');
     try {
         if (format === 'txt') {
-            triggerDownload(new Blob([htmlToPlainText(html)], {type:'text/plain'}), baseName + '.txt');
+            triggerDownload(new Blob([htmlToPlainText(html)], { type: 'text/plain' }), baseName + '.txt');
         } else if (format === 'md') {
-            triggerDownload(new Blob([htmlToMarkdown(html)], {type:'text/markdown'}), baseName + '.md');
+            triggerDownload(new Blob([htmlToMarkdown(html)], { type: 'text/markdown' }), baseName + '.md');
         } else if (format === 'rtf') {
-            triggerDownload(new Blob([htmlToRtf(html)], {type:'application/rtf'}), baseName + '.rtf');
+            triggerDownload(new Blob([htmlToRtf(html)], { type: 'application/rtf' }), baseName + '.rtf');
         } else if (format === 'docx') {
             const wordHtml = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><meta name=ProgId content=Word.Document></head><body>${html}</body></html>`;
-            triggerDownload(new Blob([wordHtml], {type:'application/vnd.ms-word'}), baseName + '.doc');
+            triggerDownload(new Blob([wordHtml], { type: 'application/vnd.ms-word' }), baseName + '.doc');
         } else if (format === 'xlsx') {
             if (window.XLSX) {
                 const doc = new DOMParser().parseFromString(html, 'text/html');
                 const tables = doc.querySelectorAll('table');
                 const wb = XLSX.utils.book_new();
                 if (tables.length) {
-                    tables.forEach((tbl, ti) => XLSX.utils.book_append_sheet(wb, XLSX.utils.table_to_sheet(tbl), `Sheet${ti+1}`));
+                    tables.forEach((tbl, ti) => XLSX.utils.book_append_sheet(wb, XLSX.utils.table_to_sheet(tbl), `Sheet${ti + 1}`));
                 } else {
                     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(htmlToPlainText(html).split('\n').map(l => [l])), 'Content');
                 }
-                triggerDownload(new Blob([XLSX.write(wb,{bookType:'xlsx',type:'array'})], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}), baseName + '.xlsx');
+                triggerDownload(new Blob([XLSX.write(wb, { bookType: 'xlsx', type: 'array' })], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), baseName + '.xlsx');
             } else { setStatus('❌ SheetJS not loaded'); return; }
         } else if (format === 'pptx') {
             if (typeof PptxGenJS !== 'undefined') {
                 const pptx = new PptxGenJS();
-                const paras = htmlToPlainText(html).split('\n\n').filter(p=>p.trim()).slice(0,20);
+                const paras = htmlToPlainText(html).split('\n\n').filter(p => p.trim()).slice(0, 20);
                 (paras.length ? paras : [htmlToPlainText(html)]).forEach(para => {
                     const slide = pptx.addSlide();
-                    slide.addText(para.slice(0,500), {x:0.5,y:0.5,w:9,h:5,fontSize:16,wrap:true});
+                    slide.addText(para.slice(0, 500), { x: 0.5, y: 0.5, w: 9, h: 5, fontSize: 16, wrap: true });
                 });
                 const buf = await pptx.stream();
-                triggerDownload(new Blob([buf], {type:'application/vnd.openxmlformats-officedocument.presentationml.presentation'}), baseName + '.pptx');
+                triggerDownload(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' }), baseName + '.pptx');
             } else { setStatus('❌ PptxGenJS not loaded'); return; }
         } else if (format === 'pdf') {
             await _exportViaCanvas(html, 'pdf', baseName + '.pdf', setStatus, triggerDownload); return;
-        } else if (['png','jpeg','gif','webp','tiff'].includes(format)) {
+        } else if (['png', 'jpeg', 'gif', 'webp', 'tiff'].includes(format)) {
             await _exportViaCanvas(html, format, baseName + '.' + format, setStatus, triggerDownload); return;
         }
         setStatus('✓ Downloaded ' + baseName + '.' + format);
@@ -1809,7 +2376,7 @@ function htmlToPlainText(html) {
 function htmlToMarkdown(html) {
     try {
         let md = html;
-        md = md.replace(/<h([1-6])[^>]*>([\s\S]*?)<\/h\1>/gi, (_, n, t) => '#'.repeat(parseInt(n)) + ' ' + t.replace(/<[^>]+>/g,'') + '\n');
+        md = md.replace(/<h([1-6])[^>]*>([\s\S]*?)<\/h\1>/gi, (_, n, t) => '#'.repeat(parseInt(n)) + ' ' + t.replace(/<[^>]+>/g, '') + '\n');
         md = md.replace(/<strong[^>]*>([\s\S]*?)<\/strong>/gi, '**$1**');
         md = md.replace(/<b[^>]*>([\s\S]*?)<\/b>/gi, '**$1**');
         md = md.replace(/<em[^>]*>([\s\S]*?)<\/em>/gi, '*$1*');
@@ -1826,7 +2393,7 @@ function htmlToMarkdown(html) {
 function htmlToRtf(html) {
     const text = htmlToPlainText(html);
     const lines = text.split('\n').map(l =>
-        l.replace(/\\/g,'\\\\').replace(/\{/g,'\\{').replace(/\}/g,'\\}') + '\\par'
+        l.replace(/\\/g, '\\\\').replace(/\{/g, '\\{').replace(/\}/g, '\\}') + '\\par'
     );
     return ['{\\rtf1\\ansi\\deff0', ...lines, '}'].join('\n');
 }
@@ -1845,7 +2412,7 @@ async function exportBodyContent(which, format) {
     }
     function triggerDownload(blob, filename) {
         const url = URL.createObjectURL(blob);
-        const a   = document.createElement('a');
+        const a = document.createElement('a');
         a.href = url; a.download = filename; a.click();
         setTimeout(() => URL.revokeObjectURL(url), 1000);
     }
@@ -1862,7 +2429,7 @@ async function exportBodyContent(which, format) {
         } else if (format === 'rtf') {
             triggerDownload(new Blob([htmlToRtf(html)], { type: 'application/rtf' }), 'export.rtf');
 
-        // ── Word (HTML wrapped in .doc MIME — opens in Word/LibreOffice) ─
+            // ── Word (HTML wrapped in .doc MIME — opens in Word/LibreOffice) ─
         } else if (format === 'docx') {
             const wordHtml = `<html xmlns:o="urn:schemas-microsoft-com:office:office"
                 xmlns:w="urn:schemas-microsoft-com:office:word"
@@ -1874,7 +2441,7 @@ async function exportBodyContent(which, format) {
                 </head><body>${html}</body></html>`;
             triggerDownload(new Blob([wordHtml], { type: 'application/vnd.ms-word' }), 'export.doc');
 
-        // ── XLSX via SheetJS ──────────────────────────────────────────────
+            // ── XLSX via SheetJS ──────────────────────────────────────────────
         } else if (format === 'xlsx') {
             if (window.XLSX) {
                 // Try to extract tables first; fallback to plain text rows
@@ -1888,7 +2455,7 @@ async function exportBodyContent(which, format) {
                     });
                 } else {
                     const rows = htmlToPlainText(html).split('\n').map(l => [l]);
-                    const ws   = XLSX.utils.aoa_to_sheet(rows);
+                    const ws = XLSX.utils.aoa_to_sheet(rows);
                     XLSX.utils.book_append_sheet(wb, ws, 'Content');
                 }
                 const data = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
@@ -1900,11 +2467,11 @@ async function exportBodyContent(which, format) {
                 setStatus('✓ SheetJS not loaded — exported as CSV instead'); return;
             }
 
-        // ── PPTX via PptxGenJS ────────────────────────────────────────────
+            // ── PPTX via PptxGenJS ────────────────────────────────────────────
         } else if (format === 'pptx') {
             if (typeof PptxGenJS !== 'undefined') {
-                const pptx  = new PptxGenJS();
-                const text  = htmlToPlainText(html);
+                const pptx = new PptxGenJS();
+                const text = htmlToPlainText(html);
                 const paras = text.split('\n\n').filter(p => p.trim()).slice(0, 20);
                 (paras.length ? paras : [text]).forEach(para => {
                     const slide = pptx.addSlide();
@@ -1916,13 +2483,13 @@ async function exportBodyContent(which, format) {
                 setStatus('❌ PptxGenJS library not available'); return;
             }
 
-        // ── PDF via jsPDF + html2canvas ───────────────────────────────────
+            // ── PDF via jsPDF + html2canvas ───────────────────────────────────
         } else if (format === 'pdf') {
             await _exportViaCanvas(html, 'pdf', 'export.pdf', setStatus, triggerDownload);
             return;
 
-        // ── Image formats via html2canvas ─────────────────────────────────
-        } else if (['png','jpeg','gif','webp','tiff'].includes(format)) {
+            // ── Image formats via html2canvas ─────────────────────────────────
+        } else if (['png', 'jpeg', 'gif', 'webp', 'tiff'].includes(format)) {
             await _exportViaCanvas(html, format, `export.${format === 'tiff' ? 'tiff' : format}`, setStatus, triggerDownload);
             return;
 
@@ -1959,7 +2526,7 @@ async function _exportViaCanvas(html, format, filename, setStatus, triggerDownlo
                     triggerDownload(new Blob([pdf.output('arraybuffer')], { type: 'application/pdf' }), filename);
                 } else {
                     // For GIF/WebP/TIFF → use JPEG/PNG as those MIME types aren't natively supported by canvas
-                    const mimeMap = { png:'image/png', jpeg:'image/jpeg', gif:'image/jpeg', webp:'image/webp', tiff:'image/png' };
+                    const mimeMap = { png: 'image/png', jpeg: 'image/jpeg', gif: 'image/jpeg', webp: 'image/webp', tiff: 'image/png' };
                     const mime = mimeMap[format] || 'image/png';
                     canvas.toBlob(blob => { if (blob) triggerDownload(blob, filename); }, mime, 0.9);
                 }

@@ -74,7 +74,7 @@ class handler(BaseHTTPRequestHandler):
                             'port_587_outbound': port587_status,
                             'port_465_outbound': port465_status,
                             'timestamp': health_data.get('timestamp'),
-                            'info': 'JetMailer Style - No port 25 needed'
+                            'info': ''
                         }
                         
                         if has_warning:

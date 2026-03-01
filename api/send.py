@@ -1,6 +1,7 @@
 """
-KINGMAILER v4.0 - Enhanced Email Sending API
+KINGMAILER v4.1 - Enhanced Email Sending API
 Features: SMTP, AWS SES, EC2 Relay, Spintax, Template Tags
+Inbox Fix: Proper MIME structure, RFC 2231 filenames, anti-spam headers
 """
 
 from http.server import BaseHTTPRequestHandler
@@ -10,6 +11,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email import encoders
 from email.utils import formatdate, make_msgid
+from email.header import Header
 import boto3
 from botocore.exceptions import ClientError
 import json
@@ -19,6 +21,7 @@ import string
 import urllib.request
 from datetime import datetime
 import base64
+import uuid
 
 
 # Spintax Processor
@@ -38,53 +41,120 @@ def process_spintax(text):
     return text
 
 
-# Template Tag Replacements
-def replace_template_tags(text, recipient_email=''):
-    """Replace all template tags in text"""
+# ── Placeholder data pools ──────────────────────────────────────────────────
+_US_FIRST = ['James','John','Robert','Michael','William','David','Richard','Joseph','Thomas','Charles',
+             'Mary','Patricia','Jennifer','Linda','Barbara','Elizabeth','Susan','Jessica','Sarah','Karen',
+             'Emily','Amanda','Stephanie','Rebecca','Laura','Sharon','Cynthia','Dorothy','Amy','Anna']
+_US_LAST  = ['Smith','Johnson','Williams','Brown','Jones','Garcia','Miller','Davis','Rodriguez','Martinez',
+             'Wilson','Anderson','Taylor','Thomas','Hernandez','Moore','Martin','Jackson','Thompson','White']
+_US_CITIES = [
+    ('New York','NY','10001'),('Los Angeles','CA','90001'),('Chicago','IL','60601'),
+    ('Houston','TX','77001'),('Phoenix','AZ','85001'),('Philadelphia','PA','19101'),
+    ('San Antonio','TX','78201'),('San Diego','CA','92101'),('Dallas','TX','75201'),
+    ('Austin','TX','78701'),('Seattle','WA','98101'),('Denver','CO','80201'),
+    ('Nashville','TN','37201'),('Charlotte','NC','28201'),('Boston','MA','02101'),
+    ('Las Vegas','NV','89101'),('Miami','FL','33101'),('Atlanta','GA','30301'),
+    ('Portland','OR','97201'),('Detroit','MI','48201'),
+]
+_US_STREETS   = ['Main St','Oak Ave','Maple Dr','Pine Blvd','Cedar Lane','Elm Rd',
+                 'Washington Blvd','Park Ave','Lake Dr','Hillside Way','Sunset Blvd',
+                 'River Rd','Forest Ave','Valley Dr','Summit Rd']
+_US_COMPANIES = ['Apex Solutions LLC','Bright Path Inc','Cascade Digital Corp','Delta Group',
+                 'Everest Ventures','Frontier Services Co','Global Tech Inc','Harbor Networks LLC',
+                 'Inland Systems Corp','Jade Analytics','Keystone Consulting','Lighthouse Media',
+                 'Meridian Group LLC','Nexus Innovations','Oakwood Industries','Pinnacle Growth Inc',
+                 'Quantum Systems','Ridgeline Corp','Summit Partners LLC','Trident Enterprises']
+_US_PRODUCTS  = ['Premium Membership','Express Delivery','Annual Plan','Business Package',
+                 'Standard Subscription','Pro License','Elite Bundle','Starter Kit',
+                 'Enterprise Plan','Monthly Service','Digital Package','Advanced Suite']
+
+
+def _rnd_num(n):
+    return ''.join(random.choices(string.digits, k=n))
+def _rnd_alpha(n):
+    return ''.join(random.choices(string.ascii_lowercase, k=n))
+def _rnd_alphanum(n, upper=False):
+    pool = (string.ascii_uppercase if upper else string.ascii_lowercase) + string.digits
+    return ''.join(random.choices(pool, k=n))
+
+
+def build_tag_map(recipient_email='', sender_name='', sender_email='', csv_row=None):
+    """Build a fresh mapping of all $tag and {{tag}} placeholder values."""
+    first = random.choice(_US_FIRST)
+    last  = random.choice(_US_LAST)
+    city, state, zipcode = random.choice(_US_CITIES)
+    sn = random.randint(100, 9999)
+    st = random.choice(_US_STREETS)
+    ts13 = str(int(datetime.now().timestamp() * 1000))[:13]
+    m = {
+        'name':          recipient_email.split('@')[0] if recipient_email else (first+' '+last),
+        'email':         recipient_email,
+        'recipient':     recipient_email,
+        'recipientName': first + ' ' + last,
+        'sender':        sender_email,
+        'sendername':    sender_name or (first + ' ' + last),
+        'sendertag':     f"{sender_name} <{sender_email}>" if sender_name else sender_email,
+        'randName':      f"{first} {last}",
+        'rnd_company_us': random.choice(_US_COMPANIES),
+        'address':       f"{sn} {st}, {city}, {state} {zipcode}",
+        'street':        f"{sn} {st}",
+        'city':          city,
+        'state':         state,
+        'zipcode':       zipcode,
+        'zip':           zipcode,
+        'invcnumber':    'INV-' + _rnd_num(8),
+        'ordernumber':   'ORD-' + _rnd_num(8),
+        'product':       random.choice(_US_PRODUCTS),
+        'amount':        f"${random.randint(999, 99999)/100:.2f}",
+        'charges':       f"${random.randint(499, 49999)/100:.2f}",
+        'quantity':      str(random.randint(1, 99)),
+        'number':        _rnd_num(6),
+        'date':          datetime.now().strftime('%B %d, %Y'),
+        'time':          datetime.now().strftime('%I:%M %p'),
+        'year':          str(datetime.now().year),
+        'id':            _rnd_num(10),
+        'random_name':   f"{first} {last}",
+        'company':       random.choice(_US_COMPANIES),
+        'company_name':  random.choice(_US_COMPANIES),
+        '13_digit':      ts13,
+        'unique_id':     ts13,
+        'unique13digit': ts13,
+        'random_6':      ''.join(random.choices(string.ascii_letters + string.digits, k=6)),
+        'random_8':      ''.join(random.choices(string.ascii_letters + string.digits, k=8)),
+        'unique16_484':      f"{_rnd_num(4)}-{_rnd_num(8)}-{_rnd_num(4)}",
+        'unique16_565':      f"{_rnd_num(5)}-{_rnd_num(6)}-{_rnd_num(5)}",
+        'unique16_4444':     f"{_rnd_num(4)}-{_rnd_num(4)}-{_rnd_num(4)}-{_rnd_num(4)}",
+        'unique16_88':       f"{_rnd_num(8)}-{_rnd_num(8)}",
+        'unique14alphanum':  _rnd_alphanum(14, upper=True),
+        'unique11alphanum':  _rnd_alphanum(11, upper=True),
+        'unique14alpha':     _rnd_alpha(14).upper(),
+        'alpha_random_small': _rnd_alpha(6),
+        'alpha_short':        _rnd_alpha(4),
+        'random_three_chars': _rnd_alphanum(3),
+    }
+    if csv_row:
+        for k, v in csv_row.items():
+            if k:
+                m[k] = str(v)
+    return m
+
+
+def replace_template_tags(text, recipient_email='', sender_name='', sender_email='', csv_row=None):
+    """Replace ALL $tag and {{tag}} placeholders in text."""
     if not text:
         return text
-    
-    def gen_random_name():
-        first = ['James', 'John', 'Robert', 'Michael', 'William', 'Mary', 'Patricia', 'Jennifer', 'Linda', 'Elizabeth']
-        last = ['Smith', 'Johnson', 'Williams', 'Brown', 'Jones', 'Garcia', 'Miller', 'Davis', 'Rodriguez', 'Martinez']
-        return f"{random.choice(first)} {random.choice(last)}"
-    
-    def gen_company():
-        prefixes = ['Tech', 'Global', 'Digital', 'Smart', 'Innovative', 'Advanced', 'Premier', 'Elite']
-        suffixes = ['Solutions', 'Systems', 'Corporation', 'Industries', 'Group', 'Services', 'Technologies']
-        return f"{random.choice(prefixes)} {random.choice(suffixes)}"
-    
-    def gen_13_digit():
-        timestamp = int(datetime.now().timestamp() * 1000)
-        random_suffix = random.randint(100, 999)
-        id_str = f"{timestamp}{random_suffix}"
-        return id_str[:13]
-    
-    replacements = {
-        'random_name': gen_random_name(),
-        'name': gen_random_name(),          # fallback when CSV has no 'name' column
-        'company': gen_company(),
-        'company_name': gen_company(),
-        '13_digit': gen_13_digit(),
-        'unique_id': gen_13_digit(),
-        'date': datetime.now().strftime('%B %d, %Y'),
-        'time': datetime.now().strftime('%I:%M %p'),
-        'year': str(datetime.now().year),
-        'random_6': ''.join(random.choices(string.ascii_letters + string.digits, k=6)),
-        'random_8': ''.join(random.choices(string.ascii_letters + string.digits, k=8)),
-        'recipient': recipient_email,
-        'email': recipient_email
-    }
-    
-    for tag, value in replacements.items():
-        # Escape tag name to handle special characters like underscores and digits
-        text = re.sub(r'\{\{' + re.escape(tag) + r'\}\}', str(value), text, flags=re.IGNORECASE)
-    
+    tag_map = build_tag_map(recipient_email, sender_name, sender_email, csv_row)
+    sorted_keys = sorted(tag_map.keys(), key=len, reverse=True)
+    for key in sorted_keys:
+        val = str(tag_map[key])
+        # Use lambda to prevent re.sub from interpreting \ in val as backreferences
+        text = re.sub(r'\{\{' + re.escape(key) + r'\}\}', lambda m, v=val: v, text, flags=re.IGNORECASE)
+        text = re.sub(r'\$' + re.escape(key) + r'(?=[^a-zA-Z0-9_]|$)', lambda m, v=val: v, text)
     return text
 
 
 def replace_csv_row_tags(text, row):
-    """Replace {{column}} placeholders with CSV row values"""
+    """Replace {{column}} placeholders with CSV row values."""
     if not text or not row:
         return text
     for key, value in row.items():
@@ -92,27 +162,73 @@ def replace_csv_row_tags(text, row):
     return text
 
 
+def _rfc2231_filename(filename):
+    """Encode filename using RFC 2231 for proper Content-Disposition (avoids spam triggers)."""
+    try:
+        filename.encode('ascii')
+        return filename  # pure ASCII — no encoding needed
+    except UnicodeEncodeError:
+        from urllib.parse import quote
+        return f"UTF-8''{quote(filename, safe='')}"
+
+
 def add_attachment_to_message(msg, attachment):
-    """Attach a base64-encoded file to a MIME message. Returns (True, None) on success or (False, error_str) on failure."""
+    """Attach a base64-encoded file.
+    - Images: Content-Disposition: inline  (viewable content, less suspicious)
+    - Documents: Content-Disposition: attachment
+    Returns (True, None) on success or (False, error_str).
+    """
     if not attachment:
         return True, None
     try:
         raw_b64 = attachment['content']
-        # Fix padding if needed
         raw_b64 += '=' * (-len(raw_b64) % 4)
         file_data = base64.b64decode(raw_b64)
         mime_type = attachment.get('type', 'application/octet-stream')
-        filename = attachment.get('name', 'attachment')
+        filename  = attachment.get('name', 'attachment')
+
+        # Normalise MIME type from file extension
+        ext_mime_map = {
+            '.pdf':  'application/pdf',
+            '.html': 'application/octet-stream',
+            '.htm':  'application/octet-stream',
+            '.txt':  'text/plain',
+            '.png':  'image/png',
+            '.jpg':  'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.gif':  'image/jpeg',   # canvas produces JPEG for GIF
+            '.webp': 'image/webp',
+            '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            '.doc':  'application/vnd.ms-word',
+            '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            '.xls':  'application/vnd.ms-excel',
+            '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        }
+        import os as _os
+        ext = _os.path.splitext(filename)[1].lower()
+        if mime_type == 'application/octet-stream' and ext in ext_mime_map:
+            mime_type = ext_mime_map[ext]
+
         main_type, sub_type = mime_type.split('/', 1) if '/' in mime_type else ('application', 'octet-stream')
         part = MIMEBase(main_type, sub_type)
         part.set_payload(file_data)
         encoders.encode_base64(part)
-        part.add_header('Content-Disposition', 'attachment', filename=filename)
+
+        # KEY FIX: images use inline disposition → treated as viewable, not suspicious download
+        _INLINE_TYPES = {'image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/jpg'}
+        disposition = 'inline' if mime_type in _INLINE_TYPES else 'attachment'
+        part.add_header('Content-Disposition', disposition, filename=filename)
+
+        # Safely replace Content-Type to add name= parameter
+        try:
+            part.replace_header('Content-Type', f'{mime_type}; name="{filename}"')
+        except KeyError:
+            part['Content-Type'] = f'{mime_type}; name="{filename}"'
+
         msg.attach(part)
         return True, None
     except Exception as e:
         return False, str(e)
-
 
 def _html_to_plain(html):
     """Strip HTML tags to produce a plain-text fallback."""
@@ -126,27 +242,76 @@ def _html_to_plain(html):
     return text.strip()
 
 
-def _build_msg(from_header, to_email, subject, html_body, attachment=None):
-    """Build a properly structured MIME message.
-    - No attachment: multipart/alternative (text/plain + text/html)
-    - With attachment: multipart/mixed → multipart/alternative + file
+def _extract_domain(from_header):
+    """Extract clean domain from From header like 'Name <user@domain.com>'."""
+    if '@' in from_header:
+        part = from_header.split('@')[-1]
+        # Remove trailing > or whitespace
+        domain = re.sub(r'[>\s].*$', '', part).strip()
+        return domain if domain else 'mail.local'
+    return 'mail.local'
+
+
+
+def _is_html(text):
+    """Return True if text contains at least one HTML tag like <p>, <br>, <div>."""
+    return bool(re.search(r'<[a-z][a-z0-9]*[\s>/]', text or '', re.IGNORECASE))
+
+def _plain_to_html(text):
+    """Convert plain text with newlines into a properly structured HTML email body.
+    Paragraphs separated by blank lines, single newlines become <br>.
     """
+    import html as _html_mod
+    # Escape HTML entities first
+    escaped = _html_mod.escape(text)
+    # Split on blank lines → paragraphs
+    paragraphs = re.split(r'\n\s*\n', escaped)
+    html_parts = []
+    for para in paragraphs:
+        # Single newlines within a paragraph → <br>
+        para_html = para.replace('\n', '<br>')
+        html_parts.append(f'<p style="margin:0 0 1em 0;line-height:1.6;">{para_html}</p>')
+    body = '\n'.join(html_parts)
+    return (
+        '<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;'
+        'color:#222;max-width:650px;margin:0 auto;padding:20px;">'
+        + body + '</div>'
+    )
+
+def _build_msg(from_header, to_email, subject, html_body, attachment=None):
+    """Build a properly structured MIME message optimised for inbox delivery.
+    Auto-detects plain text vs HTML and wraps plain text properly.
+    """
+    # If body has no HTML tags, convert \n → <p>/<br> so lines display correctly
+    if not _is_html(html_body):
+        html_body = _plain_to_html(html_body)
     plain = _html_to_plain(html_body)
+
+    # Inner multipart/alternative carries text/plain + text/html
     alt = MIMEMultipart('alternative')
+    # Plain text MUST come before HTML (RFC 2046 §5.1.4)
     alt.attach(MIMEText(plain, 'plain', 'utf-8'))
     alt.attach(MIMEText(html_body, 'html', 'utf-8'))
 
     if attachment:
+        # multipart/mixed is the outer wrapper when there is a file attachment
         msg = MIMEMultipart('mixed')
         msg.attach(alt)
     else:
         msg = alt
 
-    msg['From'] = from_header
-    msg['To'] = to_email
-    msg['Subject'] = subject
-    msg['Date'] = formatdate(localtime=True)
-    msg['Message-ID'] = make_msgid(domain=from_header.split('@')[-1].rstrip('>')  if '@' in from_header else 'mail')
+    domain = _extract_domain(from_header)
+
+    # ── Core headers ─────────────────────────────────────────────────────
+    msg['From']       = from_header
+    msg['To']         = to_email
+    msg['Subject']    = subject
+    msg['Date']       = formatdate(localtime=True)
+    msg['Message-ID'] = make_msgid(domain=domain)
+    msg['MIME-Version'] = '1.0'
+    msg['X-Mailer'] = 'KingMailer'
+
+
     return msg
 
 
@@ -159,7 +324,9 @@ def send_via_smtp(smtp_config, from_name, to_email, subject, html_body, attachme
 
         smtp_user = smtp_config.get('user')
         smtp_pass = smtp_config.get('pass')
-        sender_name = smtp_config.get('sender_name') or from_name
+        # from_name is the caller-provided name (may be random per-email).
+        # smtp_config.sender_name is the account default — used only when from_name is empty.
+        sender_name = from_name or smtp_config.get('sender_name') or ''
         from_header = f"{sender_name} <{smtp_user}>" if sender_name else smtp_user
 
         msg = _build_msg(from_header, to_email, subject, html_body, attachment)
@@ -286,9 +453,22 @@ class handler(BaseHTTPRequestHandler):
                 subject = replace_csv_row_tags(subject, csv_row)
                 html_body = replace_csv_row_tags(html_body, csv_row)
             
-            # Replace standard template tags
-            subject = replace_template_tags(subject, to_email)
-            html_body = replace_template_tags(html_body, to_email)
+            # Extract sender info for $sendername etc.
+            _smtp_cfg  = data.get('smtp_config') or {}
+            _aws_cfg   = data.get('aws_config')  or {}
+            _s_name = (_smtp_cfg.get('sender_name') or
+                       data.get('from_name') or 'KINGMAILER')
+            _s_email = (_smtp_cfg.get('user') or
+                        _aws_cfg.get('from_email') or
+                        data.get('from_email') or '')
+
+            # Replace standard template tags ($tag and {{tag}} syntax)
+            subject   = replace_template_tags(subject,   recipient_email=to_email,
+                                               sender_name=_s_name, sender_email=_s_email,
+                                               csv_row=csv_row)
+            html_body = replace_template_tags(html_body, recipient_email=to_email,
+                                               sender_name=_s_name, sender_email=_s_email,
+                                               csv_row=csv_row)
             
             # Route to appropriate sending method
             if send_method == 'smtp' or send_method == 'gmail':
