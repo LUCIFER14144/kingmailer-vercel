@@ -1,6 +1,18 @@
 {
   "rewrites": [
     {
+      "source": "/api/login",
+      "destination": "/api/auth"
+    },
+    {
+      "source": "/api/logout",
+      "destination": "/api/auth"
+    },
+    {
+      "source": "/api/users(.*)",
+      "destination": "/api/auth"
+    },
+    {
       "source": "/((?!api).*)",
       "destination": "/public/$1"
     }
