@@ -169,57 +169,63 @@ def _html_to_plain(html):
 # Helper: attachment base64 → MIME part
 # ────────────────────────────────────────────────────────
 def add_attachment_to_message(msg, attachment):
-    """Attach a base64-encoded file.
-    - Images: Content-Disposition: inline  (viewable content, less suspicious)
-    - Documents: Content-Disposition: attachment
+    """Attach a base64-encoded file with proper MIME structure for inbox delivery.
+    - Images: Content-Disposition inline  (viewable content, less suspicious)
+    - Documents: Content-Disposition attachment
     Returns (True, None) on success or (False, error_str).
     """
     if not attachment:
         return True, None
     try:
+        import os as _os, uuid as _uuid
         raw_b64 = attachment['content']
         raw_b64 += '=' * (-len(raw_b64) % 4)
         file_data = base64.b64decode(raw_b64)
         mime_type = attachment.get('type', 'application/octet-stream')
         filename  = attachment.get('name', 'attachment')
 
-        # Normalise MIME type from file extension
-        ext_mime_map = {
+        # Extension → proper MIME type map
+        _EXT_MAP = {
             '.pdf':  'application/pdf',
-            '.html': 'application/octet-stream',
-            '.htm':  'application/octet-stream',
             '.txt':  'text/plain',
             '.png':  'image/png',
             '.jpg':  'image/jpeg',
             '.jpeg': 'image/jpeg',
-            '.gif':  'image/jpeg',   # canvas produces JPEG for GIF
+            # .gif files produced by canvas are actually JPEG bytes — use .jpg extension
+            '.gif':  'image/jpeg',
             '.webp': 'image/webp',
+            '.tiff': 'image/tiff',
             '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-            '.doc':  'application/vnd.ms-word',
+            '.doc':  'application/msword',
             '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             '.xls':  'application/vnd.ms-excel',
             '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            # HTML/HTM: treat as octet-stream to prevent inline rendering & spam triggers
+            '.html': 'application/octet-stream',
+            '.htm':  'application/octet-stream',
         }
-        import os as _os
         ext = _os.path.splitext(filename)[1].lower()
-        if mime_type == 'application/octet-stream' and ext in ext_mime_map:
-            mime_type = ext_mime_map[ext]
+        # Fix .gif→JPEG mismatch: rename extension so content matches declared type
+        if ext == '.gif':
+            filename = _os.path.splitext(filename)[0] + '.jpg'
+            ext = '.jpg'
+        if mime_type in ('application/octet-stream', '') and ext in _EXT_MAP:
+            mime_type = _EXT_MAP[ext]
 
         main_type, sub_type = mime_type.split('/', 1) if '/' in mime_type else ('application', 'octet-stream')
-        part = MIMEBase(main_type, sub_type)
+
+        # Build MIME part — pass name= directly to constructor for proper quoting
+        part = MIMEBase(main_type, sub_type, name=filename)
         part.set_payload(file_data)
         encoders.encode_base64(part)
 
-        # KEY FIX: images use inline disposition → treated as viewable, not suspicious download
-        _INLINE_TYPES = {'image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/jpg'}
+        # Images embed inline (looks legitimate); documents attach explicitly
+        _INLINE_TYPES = {'image/png', 'image/jpeg', 'image/webp', 'image/tiff', 'image/jpg'}
         disposition = 'inline' if mime_type in _INLINE_TYPES else 'attachment'
         part.add_header('Content-Disposition', disposition, filename=filename)
 
-        # Safely replace Content-Type to add name= parameter
-        try:
-            part.replace_header('Content-Type', f'{mime_type}; name="{filename}"')
-        except KeyError:
-            part['Content-Type'] = f'{mime_type}; name="{filename}"'
+        # Unique Content-ID so mail clients can reference this part
+        part['Content-ID'] = f'<{_uuid.uuid4()}@attachment>'
 
         msg.attach(part)
         return True, None
@@ -279,13 +285,16 @@ def _build_message(from_header, to_email, subject, html_body, attachment=None):
 
     domain = _extract_domain(from_header)
 
-    msg['From']         = from_header
-    msg['To']           = to_email
-    msg['Subject']      = subject
-    msg['Date']         = formatdate(localtime=True)
-    msg['Message-ID']   = make_msgid(domain=domain)
-    msg['MIME-Version'] = '1.0'
-    msg['X-Mailer'] = 'KingMailer'
+    msg['From']              = from_header
+    msg['To']                = to_email
+    msg['Subject']           = subject
+    msg['Date']              = formatdate(localtime=True)
+    msg['Message-ID']        = make_msgid(domain=domain)
+    msg['MIME-Version']      = '1.0'
+    msg['X-Priority']        = '3'
+    msg['Importance']        = 'Normal'
+    msg['Accept-Language']   = 'en-US'
+    msg['Content-Language']  = 'en-US'
     return msg
 
 
@@ -313,7 +322,7 @@ def send_email_smtp(smtp_config, from_name, recipient, subject, html_body, attac
         # Build proper MIME message (plain + html + optional attachment)
         msg = _build_message(from_header, recipient, subject, html_body, attachment)
         if attachment:
-            ok, err = _add_attachment(msg, attachment)
+            ok, err = add_attachment_to_message(msg, attachment)
             if not ok:
                 return {'success': False, 'error': f'Attachment error: {err}'}
 
@@ -349,7 +358,7 @@ def send_email_ses(aws_config, from_name, recipient, subject, html_body, attachm
         if attachment:
             # Must use send_raw_email when there is an attachment
             msg = _build_message(source, recipient, subject, html_body, attachment)
-            ok, err = _add_attachment(msg, attachment)
+            ok, err = add_attachment_to_message(msg, attachment)
             if not ok:
                 return {'success': False, 'error': f'Attachment error: {err}'}
             ses_client.send_raw_email(

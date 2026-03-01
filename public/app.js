@@ -70,6 +70,9 @@ function initTabs() {
     tabBtns.forEach(btn => {
         btn.addEventListener('click', function () {
             const tabName = this.dataset.tab;
+            if (!tabName) return;
+            const target = document.getElementById(tabName);
+            if (!target) return;
 
             // Remove active class from all
             tabBtns.forEach(b => b.classList.remove('active'));
@@ -77,9 +80,15 @@ function initTabs() {
 
             // Add active class to current
             this.classList.add('active');
-            document.getElementById(tabName).classList.add('active');
+            target.classList.add('active');
         });
     });
+
+    // Ensure first tab is active if none are
+    const activeBtn = document.querySelector('.tab-btn.active');
+    if (!activeBtn && tabBtns.length > 0) {
+        tabBtns[0].click();
+    }
 }
 
 // Load saved accounts from API
