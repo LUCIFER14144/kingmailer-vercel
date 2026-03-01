@@ -384,13 +384,12 @@ function renderSesAccounts() {
 }
 
 // EC2 Management Functions
-async 
 // ── Test AWS Credentials ───────────────────────────────────────────────────────
 async function testAwsCredentials() {
-    const key    = document.getElementById('ec2AccessKey') ? document.getElementById('ec2AccessKey').value.trim() : '';
+    const key = document.getElementById('ec2AccessKey') ? document.getElementById('ec2AccessKey').value.trim() : '';
     const secret = document.getElementById('ec2SecretKey') ? document.getElementById('ec2SecretKey').value.trim() : '';
-    const region = document.getElementById('ec2Region')    ? document.getElementById('ec2Region').value            : 'us-east-1';
-    const resEl  = document.getElementById('awsTestResult');
+    const region = document.getElementById('ec2Region') ? document.getElementById('ec2Region').value : 'us-east-1';
+    const resEl = document.getElementById('awsTestResult');
 
     if (!key || !secret) {
         if (resEl) {
@@ -439,7 +438,7 @@ async function testAwsCredentials() {
     }
 }
 
-function saveAwsCredentials() {
+async function saveAwsCredentials() {
     const accessKey = document.getElementById('ec2AccessKey').value;
     const secretKey = document.getElementById('ec2SecretKey').value;
     const region = document.getElementById('ec2Region').value;
