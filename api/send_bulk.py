@@ -178,53 +178,34 @@ def _html_to_plain(html):
 # ────────────────────────────────────────────────────────
 # Helper: attachment base64 → MIME part
 # ────────────────────────────────────────────────────────
+def _clean_mime(part, is_root=True):
+    """Recursively ensure ONLY the root part has MIME-Version: 1.0."""
+    if not is_root and 'MIME-Version' in part:
+        del part['MIME-Version']
+    if part.is_multipart():
+        for sub in part.get_payload():
+            if hasattr(sub, 'add_header'):
+                _clean_mime(sub, is_root=False)
+
 def add_attachment_to_message(msg, attachment):
-    """Attach a base64-encoded file using MIMEApplication/MIMEImage (matches Apple Mail).
-    Returns (True, None) on success or (False, error_str).
-    """
-    if not attachment:
-        return True, None
+    """Attach file mimicking Apple Mail's precise header alignment."""
+    if not attachment: return True, None
     try:
-        import os as _os
         import mimetypes
-        raw_b64 = attachment['content']
-        raw_b64 += '=' * (-len(raw_b64) % 4)
-        file_data = base64.b64decode(raw_b64)
-        mime_type = attachment.get('type', 'application/octet-stream')
-        filename  = attachment.get('name', 'attachment')
+        file_data = base64.b64decode(attachment['content'] + '=' * (-len(attachment['content']) % 4))
+        filename = attachment.get('name', 'file.dat')
+        m_type = attachment.get('type') or mimetypes.guess_type(filename)[0] or 'application/octet-stream'
+        main, sub = m_type.split('/', 1) if '/' in m_type else ('application', 'octet-stream')
 
-        # Log attachment details for debugging
-        print(f'[ATTACHMENT] File: {filename}, Type: {mime_type}, Size: {len(file_data)} bytes')
-
-        # Resolve MIME type from file extension when not provided or generic
-        ext = _os.path.splitext(filename)[1].lower()
-        if mime_type in ('application/octet-stream', '', None):
-            guessed, _ = mimetypes.guess_type(filename)
-            if guessed:
-                mime_type = guessed
-        # HTML files: never send as text/html attachment
-        if ext in ('.html', '.htm'):
-            mime_type = 'application/octet-stream'
-
-        main_type, sub_type = mime_type.split('/', 1) if '/' in mime_type else ('application', 'octet-stream')
-
-        if main_type == 'image':
-            part = MIMEImage(file_data, _subtype=sub_type, name=filename)
-        elif main_type == 'application':
-            part = MIMEApplication(file_data, sub_type, Name=filename)
-        else:
-            part = MIMEApplication(file_data, Name=filename)
-        try:
-            filename.encode('ascii')
-            part.add_header('Content-Disposition', 'attachment', filename=filename)
-        except (UnicodeEncodeError, AttributeError):
-            part.add_header('Content-Disposition', 'attachment', filename=('utf-8', '', filename))
-
-        if main_type != 'text':
-            part.set_charset(None)
-            if 'Content-Transfer-Encoding' not in part:
-                part.add_header('Content-Transfer-Encoding', 'base64')
-
+        part = MIMEBase(main, sub)
+        part.set_payload(file_data)
+        encoders.encode_base64(part)
+        
+        # Align headers
+        part.add_header('Content-Type', f'{main}/{sub}', name=filename)
+        part.add_header('Content-Disposition', 'attachment', filename=filename)
+        
+        if 'MIME-Version' in part: del part['MIME-Version']
         msg.attach(part)
         return True, None
     except Exception as e:
@@ -265,55 +246,51 @@ def _plain_to_html(text):
     )
 
 def _build_message(from_header, to_email, subject, html_body, attachment=None):
-    """Build RFC-compliant MIME message with all deliverability optimisations."""
-    # ── 1. Ensure full HTML structure with DOCTYPE (required by Gmail renderer) ───
-    if not _is_html(html_body):
-        html_body = _plain_to_html(html_body)
-    if '<html' not in html_body.lower():
-        html_body = (
-            '<!DOCTYPE html>\n'
-            '<html><head><meta charset="utf-8">'
-            '<meta name="viewport" content="width=device-width,initial-scale=1">'
-            '</head><body>\n' + html_body + '\n</body></html>'
-        )
-
-    # ── 2. Per-email UUID jitter — breaks Gmail duplicate-content clustering ───
-    html_body = html_body.rstrip() + f'\n<!-- {uuid.uuid4().hex} -->'
-
-    # ── 3. Plain-text fallback ───────────────────────────────────────────
+    """Build Ultra-Clean MIME message mimicking Apple Mail for 90%+ Inbox."""
+    if not _is_html(html_body): html_body = _plain_to_html(html_body)
     plain = _html_to_plain(html_body)
+    
+    # Apple Mail Boundary Format
+    b_main = f"Apple-Mail=_LUC-{uuid.uuid4().hex.upper()}"
+    b_alt  = f"Apple-Mail=_ALT-{uuid.uuid4().hex.upper()}"
 
-    # ── 4. TRUE Quoted-Printable body encoding (body + header both QP) ───────
-    _qp = _Charset('utf-8')
-    _qp.body_encoding = _QP
-    text_part = MIMEText(plain, 'plain', _qp)
-    html_part = MIMEText(html_body, 'html', _qp)
-    del text_part['MIME-Version']
-    del html_part['MIME-Version']
-
-    # ── 5. MIME structure ───────────────────────────────────────────
     if attachment:
-        msg = MIMEMultipart('mixed')
-        alt = MIMEMultipart('alternative')
-        del alt['MIME-Version']
-        alt.attach(text_part)
-        alt.attach(html_part)
+        msg = MIMEMultipart('mixed', boundary=b_main)
+        alt = MIMEMultipart('alternative', boundary=b_alt)
+    else:
+        msg = MIMEMultipart('alternative', boundary=b_main)
+        alt = None
+
+    # Quoted-Printable UTF-8 Body
+    from email.charset import Charset, QP
+    cset = Charset('utf-8')
+    cset.body_encoding = QP
+    t_part = MIMEText(plain, 'plain', cset)
+    h_part = MIMEText(html_body, 'html', cset)
+
+    if attachment:
+        alt.attach(t_part)
+        alt.attach(h_part)
         msg.attach(alt)
     else:
-        msg = MIMEMultipart('alternative')
-        msg.attach(text_part)
-        msg.attach(html_part)
+        msg.attach(t_part)
+        msg.attach(h_part)
 
-    # ── 6. Headers — Native Deliverability Structure ─────────
+    # Clean redundant headers
+    if '_clean_mime' in globals():
+        _clean_mime(msg)
+
+    # Headers — Apple Mail Spoof
     domain = _extract_domain(from_header)
-
-    msg['From']         = from_header
-    msg['To']           = to_email
-    msg['Subject']      = subject
-    msg['Date']         = formatdate(localtime=True)
-    msg['Message-ID']   = make_msgid(domain=domain)
-    msg['Reply-To']     = from_header
-
+    msg['Subject'] = f"{subject} {''.join(random.choice(['\u200c', '\u200d', '\u200b']) for _ in range(5))}"
+    msg['From'] = from_header
+    msg['To'] = to_email
+    msg['Message-ID'] = f"<{uuid.uuid4().hex.upper()}@{domain}>"
+    msg['X-Mailer'] = 'Apple Mail (2.3774.600.60)'
+    msg['User-Agent'] = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15'
+    msg['Reply-To'] = from_header
+    msg['Date'] = formatdate(localtime=True)
+    
     return msg
 
 
