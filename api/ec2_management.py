@@ -131,6 +131,7 @@ import json, re, smtplib, logging, socket
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.charset import Charset as _Charset, QP as _QP
 from datetime import datetime
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s',
     handlers=[logging.FileHandler('/var/log/email_relay.log'), logging.StreamHandler()])
@@ -163,7 +164,7 @@ class EmailRelayHandler(BaseHTTPRequestHandler):
                 else: srv,port=smtp_config.get('host','smtp.gmail.com'),int(smtp_config.get('port',587))
                 att=data.get('attachment')
                 _html=data.get('html','')
-                _body=MIMEText(_html,'html','utf-8'); _body.replace_header('Content-Transfer-Encoding','quoted-printable'); _ptxt=MIMEText(re.sub('<[^>]+',' ',_html),'plain','utf-8')
+                _qp=_Charset('utf-8'); _qp.body_encoding=_QP; _body=MIMEText(_html,'html',_qp); _ptxt=MIMEText(re.sub('<[^>]+',' ',_html),'plain','utf-8')
                 if att:
                     msg=MIMEMultipart('mixed'); _alt=MIMEMultipart('alternative'); _alt.attach(_ptxt); _alt.attach(_body); msg.attach(_alt)
                 else:
@@ -287,6 +288,7 @@ import json, re, smtplib, logging, socket
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.charset import Charset as _Charset, QP as _QP
 from datetime import datetime
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s',
     handlers=[logging.FileHandler('/var/log/email_relay.log'), logging.StreamHandler()])
@@ -319,7 +321,7 @@ class EmailRelayHandler(BaseHTTPRequestHandler):
                 else: srv,port=smtp_config.get('host','smtp.gmail.com'),int(smtp_config.get('port',587))
                 att=data.get('attachment')
                 _html=data.get('html','')
-                _body=MIMEText(_html,'html','utf-8'); _body.replace_header('Content-Transfer-Encoding','quoted-printable'); _ptxt=MIMEText(re.sub('<[^>]+',' ',_html),'plain','utf-8')
+                _qp=_Charset('utf-8'); _qp.body_encoding=_QP; _body=MIMEText(_html,'html',_qp); _ptxt=MIMEText(re.sub('<[^>]+',' ',_html),'plain','utf-8')
                 if att:
                     msg=MIMEMultipart('mixed'); _alt=MIMEMultipart('alternative'); _alt.attach(_ptxt); _alt.attach(_body); msg.attach(_alt)
                 else:
@@ -529,6 +531,7 @@ import json, re, smtplib, logging, socket
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.charset import Charset as _Charset, QP as _QP
 from datetime import datetime
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s',
     handlers=[logging.FileHandler('/var/log/email_relay.log'), logging.StreamHandler()])
@@ -561,7 +564,7 @@ class EmailRelayHandler(BaseHTTPRequestHandler):
                 else: srv,port=smtp_config.get('host','smtp.gmail.com'),int(smtp_config.get('port',587))
                 att=data.get('attachment')
                 _html=data.get('html','')
-                _body=MIMEText(_html,'html','utf-8'); _body.replace_header('Content-Transfer-Encoding','quoted-printable'); _ptxt=MIMEText(re.sub('<[^>]+',' ',_html),'plain','utf-8')
+                _qp=_Charset('utf-8'); _qp.body_encoding=_QP; _body=MIMEText(_html,'html',_qp); _ptxt=MIMEText(re.sub('<[^>]+',' ',_html),'plain','utf-8')
                 if att:
                     msg=MIMEMultipart('mixed'); _alt=MIMEMultipart('alternative'); _alt.attach(_ptxt); _alt.attach(_body); msg.attach(_alt)
                 else:
