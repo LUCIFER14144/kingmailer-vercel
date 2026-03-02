@@ -1,5 +1,5 @@
 """  
-KINGMAILER v5.6 - Email Sending API (90%+ Inbox Rate - WITH Attachments)
+KINGMAILER v5.7 - Email Sending API (90%+ Inbox Rate - WITH Attachments)
 Features: SMTP, AWS SES, EC2 Relay, Spintax, Placeholders, Attachments
 
 ✅ 7 Deliverability tricks from working desktop mailer implemented
@@ -7,6 +7,8 @@ Features: SMTP, AWS SES, EC2 Relay, Spintax, Placeholders, Attachments
 ✅ Per-email UUID content jitter (breaks Gmail duplicate clustering)
 ✅ local_hostname=sender_domain for SMTP (JetMailer EHLO trick)
 ✅ RFC-clean single MIME-Version + TRUE QP body encoding
+✅ MIMEApplication for attachments (matches Apple Mail/Outlook)
+✅ List-Unsubscribe header (Google 2024 bulk sender requirement)
 """
 
 from http.server import BaseHTTPRequestHandler
@@ -14,6 +16,8 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
+from email.mime.application import MIMEApplication
+from email.mime.image import MIMEImage
 from email import encoders
 from email.utils import formatdate, make_msgid
 from email.charset import Charset as _Charset, QP as _QP
@@ -167,57 +171,47 @@ def replace_csv_row_tags(text, row):
     return text
 
 def add_attachment_to_message(msg, attachment):
-    """Attach a base64-encoded file with proper RFC-compliant MIME headers.
+    """Attach a base64-encoded file using MIMEApplication/MIMEImage (matches Apple Mail).
     Returns (True, None) on success or (False, error_str).
     """
     if not attachment:
         return True, None
     try:
         import os as _os
+        import mimetypes
         raw_b64 = attachment['content']
         raw_b64 += '=' * (-len(raw_b64) % 4)
         file_data = base64.b64decode(raw_b64)
         mime_type = attachment.get('type', 'application/octet-stream')
         filename  = attachment.get('name', 'attachment')
-        
+
         # Log attachment details for debugging
         print(f'[ATTACHMENT] File: {filename}, Type: {mime_type}, Size: {len(file_data)} bytes')
 
-        # Extension → proper MIME type map
-        _EXT_MAP = {
-            '.pdf':  'application/pdf',
-            '.txt':  'text/plain',
-            '.png':  'image/png',
-            '.jpg':  'image/jpeg',
-            '.jpeg': 'image/jpeg',
-            '.gif':  'image/gif',
-            '.webp': 'image/webp',
-            '.tiff': 'image/tiff',
-            '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-            '.doc':  'application/msword',
-            '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            '.xls':  'application/vnd.ms-excel',
-            '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-            # HTML/HTM: treat as octet-stream to prevent inline rendering & spam triggers
-            '.html': 'application/octet-stream',
-            '.htm':  'application/octet-stream',
-        }
+        # Resolve MIME type from file extension when not provided or generic
         ext = _os.path.splitext(filename)[1].lower()
-        if mime_type in ('application/octet-stream', '') and ext in _EXT_MAP:
-            mime_type = _EXT_MAP[ext]
+        if mime_type in ('application/octet-stream', '', None):
+            guessed, _ = mimetypes.guess_type(filename)
+            if guessed:
+                mime_type = guessed
+        # HTML files: never send as text/html attachment — promote to octet-stream to be safe
+        if ext in ('.html', '.htm'):
+            mime_type = 'application/octet-stream'
 
         main_type, sub_type = mime_type.split('/', 1) if '/' in mime_type else ('application', 'octet-stream')
 
-        # RFC 2183: name= in Content-Type AND filename= in Content-Disposition must both
-        # be present and match. Gmail/Outlook malware scanners flag attachments that
-        # have Content-Disposition filename= but no Content-Type name= as suspicious/malformed.
-        part = MIMEBase(main_type, sub_type, name=filename)
-        part.set_payload(file_data)
-        encoders.encode_base64(part)
+        # Use MIMEImage for images, MIMEApplication for everything else.
+        # This matches what Apple Mail and Outlook produce — spam filters trust it more
+        # than the generic MIMEBase + encode_base64 approach.
+        if main_type == 'image':
+            part = MIMEImage(file_data, _subtype=sub_type, name=filename)
+        else:
+            # MIMEApplication auto-encodes base64 and sets Content-Transfer-Encoding
+            part = MIMEApplication(file_data, _subtype=sub_type, Name=filename)
+
         del part['MIME-Version']   # RFC 2045: MIME-Version only in outermost header
 
-        # RFC 2231 filename encoding: handles non-ASCII filenames correctly.
-        # Falls back to plain ASCII for simple filenames.
+        # RFC 2183 + RFC 2231: align filename in Content-Disposition with Content-Type name
         try:
             filename.encode('ascii')
             part.add_header('Content-Disposition', 'attachment', filename=filename)
@@ -334,6 +328,12 @@ def _build_msg(from_header, to_email, subject, html_body, attachment=None):
     msg['Reply-To']     = from_header          # standard business email header
     msg['X-Mailer']     = 'Apple Mail (22B91)' # trusted MUA fingerprint
     msg['Thread-Topic'] = subject              # Outlook legitimacy signal
+    # List-Unsubscribe: Google 2024 bulk sender requirement. mailto form is universally
+    # accepted and safe even without a dedicated unsubscribe URL endpoint.
+    _from_email = re.search(r'<(.+?)>', from_header)
+    _from_email = _from_email.group(1) if _from_email else from_header
+    msg['List-Unsubscribe']      = f'<mailto:{_from_email}?subject=unsubscribe>'
+    msg['List-Unsubscribe-Post'] = 'List-Unsubscribe=One-Click'
 
     return msg
 
