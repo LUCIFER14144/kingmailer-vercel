@@ -1,12 +1,12 @@
 """  
-KINGMAILER v5.5 - Bulk Email Sending API (90%+ Inbox Rate - WITH Attachments)
+KINGMAILER v5.6 - Bulk Email Sending API (90%+ Inbox Rate - WITH Attachments)
 Features: CSV processing, SMTP/SES/EC2, Account Rotation, Spintax, Placeholders
 
-✅ CRITICAL FIX: Remove duplicate MIME-Version from all MIME sub-parts
-✅ RFC 2045: MIME-Version must appear ONLY in the outermost message header
-✅ True Quoted-Printable body encoding via Charset object (not relabeling)
-✅ Minimal headers, let Gmail/SMTP handle authentication
-✅ 90%+ inbox rate with Gmail SMTP (no DNS setup required)
+✅ 7 Deliverability tricks from working desktop mailer implemented
+✅ Apple Mail signature + UUID Message-ID + Reply-To + Thread-Topic
+✅ Per-email UUID content jitter (breaks Gmail duplicate clustering)
+✅ local_hostname=sender_domain for SMTP (JetMailer EHLO trick)
+✅ RFC-clean single MIME-Version + TRUE QP body encoding
 """
 
 from http.server import BaseHTTPRequestHandler
@@ -272,40 +272,37 @@ def _plain_to_html(text):
     )
 
 def _build_message(from_header, to_email, subject, html_body, attachment=None):
-    """Build MIME message with minimal headers + Quoted-Printable encoding for better deliverability.
-    Let Gmail/SMTP server add authentication headers automatically.
-    """
-    # Convert plain text to HTML if needed
+    """Build RFC-compliant MIME message with all deliverability optimisations."""
+    # ── 1. Ensure full HTML structure with DOCTYPE (required by Gmail renderer) ───
     if not _is_html(html_body):
         html_body = _plain_to_html(html_body)
-    
-    # Generate plain text version
+    if '<html' not in html_body.lower():
+        html_body = (
+            '<!DOCTYPE html>\n'
+            '<html><head><meta charset="utf-8">'
+            '<meta name="viewport" content="width=device-width,initial-scale=1">'
+            '</head><body>\n' + html_body + '\n</body></html>'
+        )
+
+    # ── 2. Per-email UUID jitter — breaks Gmail duplicate-content clustering ───
+    html_body = html_body.rstrip() + f'\n<!-- {uuid.uuid4().hex} -->'
+
+    # ── 3. Plain-text fallback ───────────────────────────────────────────
     plain = _html_to_plain(html_body)
-    
-    # ═══════════════════════════════════════════════════════════════════
-    # JetMailer Pattern: Use Quoted-Printable encoding for HTML (RFC 2045)
-    # This is CRITICAL for deliverability - reduces spam score significantly
-    # ═══════════════════════════════════════════════════════════════════
-    
-    # ─── TRUE Quoted-Printable encoding via Charset object ───────────────────
-    # BUG in v5.3: replace_header() only changes the label — body stayed base64!
-    # That created a LYING MIME structure (header=QP, body=base64) → instant spam.
-    # Charset object with QP actually re-encodes the body content properly.
+
+    # ── 4. TRUE Quoted-Printable body encoding (body + header both QP) ───────
     _qp = _Charset('utf-8')
     _qp.body_encoding = _QP
-
     text_part = MIMEText(plain, 'plain', _qp)
     html_part = MIMEText(html_body, 'html', _qp)
-    # RFC 2045 §6.1: MIME-Version MUST appear only in the outermost message header.
-    # Python's email lib adds it to every MIMEText/MIMEBase sub-part — that is a
-    # spec violation that spam filters (SpamAssassin, Gmail) flag as malformed.
     del text_part['MIME-Version']
     del html_part['MIME-Version']
 
+    # ── 5. MIME structure ───────────────────────────────────────────
     if attachment:
         msg = MIMEMultipart('mixed')
         alt = MIMEMultipart('alternative')
-        del alt['MIME-Version']   # remove from inner container
+        del alt['MIME-Version']
         alt.attach(text_part)
         alt.attach(html_part)
         msg.attach(alt)
@@ -313,27 +310,19 @@ def _build_message(from_header, to_email, subject, html_body, attachment=None):
         msg = MIMEMultipart('alternative')
         msg.attach(text_part)
         msg.attach(html_part)
-    
-    # ═══════════════════════════════════════════════════════════════════
-    # Minimal Headers Only - Let SMTP Server Handle Authentication
-    # ═══════════════════════════════════════════════════════════════════
-    
+
+    # ── 6. Headers — all 7 deliverability tricks ──────────────────────────
     domain = _extract_domain(from_header)
-    
-    msg['From']       = from_header
-    msg['To']         = to_email
-    msg['Subject']    = subject
-    msg['Date']       = formatdate(localtime=True)
-    msg['Message-ID'] = make_msgid(domain=domain)
-    
-    # ❌ REMOVED SPAM-TRIGGERING HEADERS:
-    # - Precedence: bulk (explicitly marks as spam)
-    # - X-Auto-Response-Suppress (Exchange-specific, looks suspicious)
-    # - Return-Path (Gmail adds this automatically, duplicate = forged)
-    # - Sender (Gmail adds this automatically, duplicate = forged)
-    # - Reply-To (redundant if From is correct)
-    # - List-Unsubscribe (without proper endpoint = spam signal)
-    
+    _uid = uuid.uuid4().hex.upper()
+    msg['From']         = from_header
+    msg['To']           = to_email
+    msg['Subject']      = subject
+    msg['Date']         = formatdate(localtime=True)
+    msg['Message-ID']   = f'<{_uid[:8]}-{_uid[8:12]}-{_uid[12:16]}-{_uid[16:20]}-{_uid[20:]}@{domain}>'
+    msg['Reply-To']     = from_header
+    msg['X-Mailer']     = 'Apple Mail (22B91)'
+    msg['Thread-Topic'] = subject
+
     return msg
 
 
@@ -367,7 +356,8 @@ def send_email_smtp(smtp_config, from_name, recipient, subject, html_body, attac
                 return {'success': False, 'error': f'Attachment error: {err}'}
             print(f'[BULK-SMTP] Attachment added successfully')
 
-        with smtplib.SMTP(smtp_server, smtp_port, timeout=30) as server:
+        with smtplib.SMTP(smtp_server, smtp_port, timeout=30,
+                           local_hostname=smtp_user.split('@')[-1] if smtp_user and '@' in smtp_user else None) as server:
             server.ehlo()
             server.starttls()
             server.ehlo()
