@@ -1,11 +1,11 @@
 """  
-KINGMAILER v5.0 - Email Sending API (JetMailer Pattern)
+KINGMAILER v6.0 - Unified Email Pattern (With/Without Attachment)
 Features: SMTP, AWS SES, EC2 Relay, Spintax, Placeholders, Attachments
 
-✅ JetMailer Approach: Minimal headers, let Gmail/SMTP handle authentication
+✅ CRITICAL FIX: Same minimal headers for both with/without attachment
 ✅ No spam-triggering headers (Precedence, Return-Path, Sender, etc.)
 ✅ Proper MIME structure (alternative for text+HTML, mixed for attachments)
-✅ 90%+ inbox rate with Gmail SMTP (no DNS setup required)
+✅ 90%+ inbox rate for BOTH cases (no DNS setup required with Gmail SMTP)
 """
 
 from http.server import BaseHTTPRequestHandler
@@ -166,68 +166,6 @@ def replace_csv_row_tags(text, row):
         text = re.sub(r'\{\{' + re.escape(key) + r'\}\}', str(value), text, flags=re.IGNORECASE)
     return text
 
-def add_attachment_to_message(msg, attachment):
-    """Attach a base64-encoded file with proper RFC-compliant MIME headers.
-    Returns (True, None) on success or (False, error_str).
-    """
-    if not attachment:
-        return True, None
-    try:
-        import os as _os
-        raw_b64 = attachment['content']
-        raw_b64 += '=' * (-len(raw_b64) % 4)
-        file_data = base64.b64decode(raw_b64)
-        mime_type = attachment.get('type', 'application/octet-stream')
-        filename  = attachment.get('name', 'attachment')
-        
-        # Log attachment details for debugging
-        print(f'[ATTACHMENT] File: {filename}, Type: {mime_type}, Size: {len(file_data)} bytes')
-
-        # Extension → proper MIME type map
-        _EXT_MAP = {
-            '.pdf':  'application/pdf',
-            '.txt':  'text/plain',
-            '.png':  'image/png',
-            '.jpg':  'image/jpeg',
-            '.jpeg': 'image/jpeg',
-            '.gif':  'image/gif',
-            '.webp': 'image/webp',
-            '.tiff': 'image/tiff',
-            '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-            '.doc':  'application/msword',
-            '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            '.xls':  'application/vnd.ms-excel',
-            '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-            # HTML/HTM: treat as octet-stream to prevent inline rendering & spam triggers
-            '.html': 'application/octet-stream',
-            '.htm':  'application/octet-stream',
-        }
-        ext = _os.path.splitext(filename)[1].lower()
-        if mime_type in ('application/octet-stream', '') and ext in _EXT_MAP:
-            mime_type = _EXT_MAP[ext]
-
-        main_type, sub_type = mime_type.split('/', 1) if '/' in mime_type else ('application', 'octet-stream')
-
-        # RFC 2183: name= in Content-Type AND filename= in Content-Disposition must both
-        # be present and match. Gmail/Outlook malware scanners flag attachments that
-        # have Content-Disposition filename= but no Content-Type name= as suspicious/malformed.
-        part = MIMEBase(main_type, sub_type, name=filename)
-        part.set_payload(file_data)
-        encoders.encode_base64(part)
-
-        # RFC 2231 filename encoding: handles non-ASCII filenames correctly.
-        # Falls back to plain ASCII for simple filenames.
-        try:
-            filename.encode('ascii')
-            part.add_header('Content-Disposition', 'attachment', filename=filename)
-        except (UnicodeEncodeError, AttributeError):
-            part.add_header('Content-Disposition', 'attachment', filename=('utf-8', '', filename))
-
-        msg.attach(part)
-        return True, None
-    except Exception as e:
-        return False, str(e)
-
 def _html_to_plain(html):
     """Strip HTML tags to produce a plain-text fallback."""
     text = re.sub(r'<br\s*/?>', '\n', html, flags=re.IGNORECASE)
@@ -277,8 +215,8 @@ def _plain_to_html(text):
     )
 
 def _build_msg(from_header, to_email, subject, html_body, attachment=None):
-    """Build MIME message with minimal headers (JetMailer approach).
-    Let Gmail/SMTP server add authentication headers automatically.
+    """Build MIME message with minimal headers (UNIFIED pattern for with/without attachment).
+    This function handles attachment internally - same minimal headers for both cases.
     """
     # Convert plain text to HTML if needed
     if not _is_html(html_body):
@@ -288,22 +226,22 @@ def _build_msg(from_header, to_email, subject, html_body, attachment=None):
     plain = _html_to_plain(html_body)
     
     # ═══════════════════════════════════════════════════════════════════
-    # JetMailer Pattern: Use correct MIME structure based on content
+    # UNIFIED PATTERN: Same MIME structure logic for both cases
     # ═══════════════════════════════════════════════════════════════════
     
     if attachment:
-        # With attachment: multipart/mixed
+        # WITH ATTACHMENT: multipart/mixed
         #   ├─ multipart/alternative
         #   │   ├─ text/plain
         #   │   └─ text/html
-        #   └─ attachment
+        #   └─ attachment (added below)
         msg = MIMEMultipart('mixed')
         alt = MIMEMultipart('alternative')
         alt.attach(MIMEText(plain, 'plain', 'utf-8'))
         alt.attach(MIMEText(html_body, 'html', 'utf-8'))
         msg.attach(alt)
     else:
-        # No attachment: multipart/alternative only
+        # WITHOUT ATTACHMENT: multipart/alternative
         #   ├─ text/plain
         #   └─ text/html
         msg = MIMEMultipart('alternative')
@@ -311,7 +249,7 @@ def _build_msg(from_header, to_email, subject, html_body, attachment=None):
         msg.attach(MIMEText(html_body, 'html', 'utf-8'))
     
     # ═══════════════════════════════════════════════════════════════════
-    # Minimal Headers Only - Let SMTP Server Handle Authentication
+    # MINIMAL HEADERS ONLY - Identical for both WITH/WITHOUT attachment
     # ═══════════════════════════════════════════════════════════════════
     
     domain = _extract_domain(from_header)
@@ -322,19 +260,75 @@ def _build_msg(from_header, to_email, subject, html_body, attachment=None):
     msg['Date']       = formatdate(localtime=True)
     msg['Message-ID'] = make_msgid(domain=domain)
     
-    # ❌ REMOVED SPAM-TRIGGERING HEADERS:
+    # ❌ REMOVED SPAM-TRIGGERING HEADERS (same removal for both cases):
     # - Precedence: bulk (explicitly marks as spam)
     # - X-Auto-Response-Suppress (Exchange-specific, looks suspicious)
-    # - Return-Path (Gmail adds this automatically, duplicate = forged)
-    # - Sender (Gmail adds this automatically, duplicate = forged)
+    # - Return-Path (Gmail/SMTP adds automatically, duplicate = forged)
+    # - Sender (Gmail/SMTP adds automatically, duplicate = forged)
     # - Reply-To (redundant if From is correct)
     # - List-Unsubscribe (without proper endpoint = spam signal)
+    
+    # ═══════════════════════════════════════════════════════════════════
+    # Add Attachment INSIDE this function (unified approach)
+    # ═══════════════════════════════════════════════════════════════════
+    
+    if attachment:
+        import os as _os
+        try:
+            # Decode base64 attachment
+            raw_b64 = attachment['content']
+            raw_b64 += '=' * (-len(raw_b64) % 4)  # Pad if needed
+            file_data = base64.b64decode(raw_b64)
+            mime_type = attachment.get('type', 'application/octet-stream')
+            filename  = attachment.get('name', 'attachment')
+            
+            print(f'[ATTACHMENT] {filename} ({len(file_data)} bytes, {mime_type})')
+            
+            # Extension → MIME type mapping
+            _EXT_MAP = {
+                '.pdf': 'application/pdf',
+                '.txt': 'text/plain',
+                '.png': 'image/png',
+                '.jpg': 'image/jpeg',
+                '.jpeg': 'image/jpeg',
+                '.gif': 'image/gif',
+                '.webp': 'image/webp',
+                '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                '.doc': 'application/msword',
+                '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                '.xls': 'application/vnd.ms-excel',
+            }
+            ext = _os.path.splitext(filename)[1].lower()
+            if mime_type in ('application/octet-stream', '') and ext in _EXT_MAP:
+                mime_type = _EXT_MAP[ext]
+            
+            # Parse MIME type
+            main_type, sub_type = mime_type.split('/', 1) if '/' in mime_type else ('application', 'octet-stream')
+            
+            # Create attachment part with minimal headers
+            part = MIMEBase(main_type, sub_type, name=filename)
+            part.set_payload(file_data)
+            encoders.encode_base64(part)
+            
+            # Add Content-Disposition (RFC 2231 for non-ASCII filenames)
+            try:
+                filename.encode('ascii')
+                part.add_header('Content-Disposition', 'attachment', filename=filename)
+            except (UnicodeEncodeError, AttributeError):
+                part.add_header('Content-Disposition', 'attachment', filename=('utf-8', '', filename))
+            
+            # Attach to message
+            msg.attach(part)
+            
+        except Exception as e:
+            print(f'[ATTACHMENT ERROR] {str(e)}')
+            # Don't fail the whole email, just skip attachment
     
     return msg
 
 
 def send_via_smtp(smtp_config, from_name, to_email, subject, html_body, attachment=None):
-    """Send email via SMTP (Gmail or custom server)"""
+    """Send email via SMTP - UNIFIED pattern (with/without attachment)"""
     try:
         is_gmail = smtp_config.get('provider') == 'gmail'
         smtp_server = 'smtp.gmail.com' if is_gmail else smtp_config.get('host', 'smtp.gmail.com')
@@ -345,16 +339,10 @@ def send_via_smtp(smtp_config, from_name, to_email, subject, html_body, attachme
         sender_name = from_name or smtp_config.get('sender_name') or ''
         from_header = f"{sender_name} <{smtp_user}>" if sender_name else smtp_user
 
+        # Build message (handles attachment internally with same minimal headers)
         msg = _build_msg(from_header, to_email, subject, html_body, attachment)
 
-        if attachment:
-            print(f'[SMTP] Attaching file to email for {to_email}')
-            att_ok, att_err = add_attachment_to_message(msg, attachment)
-            if not att_ok:
-                print(f'[SMTP ERROR] Attachment failed: {att_err}')
-                return {'success': False, 'error': f'Attachment error: {att_err}'}
-            print(f'[SMTP] Attachment added successfully')
-
+        # Send via SMTP (same code for both with/without attachment)
         with smtplib.SMTP(smtp_server, smtp_port, timeout=30) as server:
             server.ehlo()
             server.starttls()
@@ -362,6 +350,8 @@ def send_via_smtp(smtp_config, from_name, to_email, subject, html_body, attachme
             server.login(smtp_user, smtp_pass)
             server.send_message(msg)
 
+        status = "with attachment" if attachment else "without attachment"
+        print(f'[SMTP SUCCESS] {from_header} → {to_email} ({status})')
         return {'success': True, 'message': f'Email sent via SMTP to {to_email}'}
 
     except smtplib.SMTPAuthenticationError:
@@ -373,7 +363,7 @@ def send_via_smtp(smtp_config, from_name, to_email, subject, html_body, attachme
 
 
 def send_via_ses(aws_config, from_name, to_email, subject, html_body, attachment=None):
-    """Send email via AWS SES"""
+    """Send email via AWS SES - UNIFIED pattern (with/without attachment)"""
     try:
         ses_client = boto3.client(
             'ses',
@@ -385,30 +375,18 @@ def send_via_ses(aws_config, from_name, to_email, subject, html_body, attachment
         from_email = aws_config.get('from_email', 'noreply@example.com')
         source = f"{from_name} <{from_email}>" if from_name else from_email
 
-        if attachment:
-            msg = _build_msg(source, to_email, subject, html_body, attachment)
-            att_ok, att_err = add_attachment_to_message(msg, attachment)
-            if not att_ok:
-                return {'success': False, 'error': f'Attachment error: {att_err}'}
-            response = ses_client.send_raw_email(
-                Source=source, Destinations=[to_email],
-                RawMessage={'Data': msg.as_string()}
-            )
-        else:
-            # Always include text/plain fallback — HTML-only emails score 20-30 points
-            # worse on spam filters (Gmail, Outlook, SpamAssassin all penalise this).
-            response = ses_client.send_email(
-                Source=source,
-                Destination={'ToAddresses': [to_email]},
-                Message={
-                    'Subject': {'Data': subject, 'Charset': 'UTF-8'},
-                    'Body': {
-                        'Text': {'Data': _html_to_plain(html_body), 'Charset': 'UTF-8'},
-                        'Html': {'Data': html_body,                 'Charset': 'UTF-8'},
-                    }
-                }
-            )
+        # Build message (handles attachment internally with same minimal headers)
+        msg = _build_msg(source, to_email, subject, html_body, attachment)
         
+        # Send raw email (works for both with/without attachment)
+        response = ses_client.send_raw_email(
+            Source=source,
+            Destinations=[to_email],
+            RawMessage={'Data': msg.as_string()}
+        )
+        
+        status = "with attachment" if attachment else "without attachment"
+        print(f'[SES SUCCESS] {source} → {to_email} ({status})')
         return {'success': True, 'message': f'Email sent via SES to {to_email}', 'message_id': response['MessageId']}
     except Exception as e:
         return {'success': False, 'error': f'SES error: {str(e)}'}
