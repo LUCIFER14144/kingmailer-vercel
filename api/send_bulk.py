@@ -1,11 +1,11 @@
 """  
-KINGMAILER v5.2 - Bulk Email Sending API (90%+ Inbox Rate - WITH Attachments)
+KINGMAILER v5.3 - Bulk Email Sending API (90%+ Inbox Rate - WITH Attachments)
 Features: CSV processing, SMTP/SES/EC2, Account Rotation, Spintax, Placeholders
 
 ✅ JetMailer Approach: Minimal headers, let Gmail/SMTP handle authentication
 ✅ No spam-triggering headers (Precedence, Return-Path, Sender, etc.)
-✅ Proper MIME structure with Quoted-Printable encoding for HTML
-✅ Fixed attachment handling with reliable set_charset() method
+✅ FORCED Quoted-Printable encoding (base64 HTML = PRIMARY spam trigger)
+✅ Proper MIME structure for maximum deliverability
 ✅ 90%+ inbox rate with Gmail SMTP (no DNS setup required)
 """
 
@@ -288,12 +288,12 @@ def _build_message(from_header, to_email, subject, html_body, attachment=None):
     # Create plain text part
     text_part = MIMEText(plain, 'plain', 'utf-8')
     
-    # Create HTML part with Quoted-Printable encoding
-    # Using set_charset() ensures proper QP encoding for better deliverability
+    # Create HTML part with FORCED Quoted-Printable encoding
+    # CRITICAL: base64 encoding on HTML is a PRIMARY spam trigger!
+    # Modern spam filters decode base64 and then flag it as obfuscation attempt
     html_part = MIMEText(html_body, 'html', 'utf-8')
-    # The set_charset method will automatically use QP encoding for text/html
-    # This is much more reliable than using a Charset object directly
-    html_part.set_charset('utf-8')
+    # Force QP encoding by replacing the default base64 header
+    html_part.replace_header('Content-Transfer-Encoding', 'quoted-printable')
     
     if attachment:
         # With attachment: multipart/mixed
