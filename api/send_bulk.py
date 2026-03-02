@@ -1,7 +1,6 @@
-"""
-KINGMAILER v4.1 - Bulk Email Sending API
-Features: CSV processing, SMTP/SES/EC2, Account Rotation, Spintax, Template Tags
-Inbox Fix: Attachment support, proper MIME, anti-spam headers
+"""  
+KINGMAILER v4.2 - Bulk Email Sending API
+Features: CSV processing, SMTP/SES/EC2, Account Rotation, Spintax, Placeholders
 """
 
 from http.server import BaseHTTPRequestHandler
@@ -170,20 +169,21 @@ def _html_to_plain(html):
 # Helper: attachment base64 → MIME part
 # ────────────────────────────────────────────────────────
 def add_attachment_to_message(msg, attachment):
-    """Attach a base64-encoded file with proper MIME structure for inbox delivery.
-    - Images: Content-Disposition inline  (viewable content, less suspicious)
-    - Documents: Content-Disposition attachment
+    """Attach a base64-encoded file with proper RFC-compliant MIME headers.
     Returns (True, None) on success or (False, error_str).
     """
     if not attachment:
         return True, None
     try:
-        import os as _os, uuid as _uuid
+        import os as _os
         raw_b64 = attachment['content']
         raw_b64 += '=' * (-len(raw_b64) % 4)
         file_data = base64.b64decode(raw_b64)
         mime_type = attachment.get('type', 'application/octet-stream')
         filename  = attachment.get('name', 'attachment')
+        
+        # Log attachment details for debugging
+        print(f'[ATTACHMENT] File: {filename}, Type: {mime_type}, Size: {len(file_data)} bytes')
 
         # Extension → proper MIME type map
         _EXT_MAP = {
@@ -224,9 +224,6 @@ def add_attachment_to_message(msg, attachment):
             part.add_header('Content-Disposition', 'attachment', filename=filename)
         except (UnicodeEncodeError, AttributeError):
             part.add_header('Content-Disposition', 'attachment', filename=('utf-8', '', filename))
-        # Do NOT add Content-ID to regular attachments.
-        # Content-ID is only valid for multipart/related inline parts (cid: images).
-        # Adding it to a PDF/image attachment is a header-mismatch spam signal.
 
         msg.attach(part)
         return True, None
@@ -294,12 +291,7 @@ def _build_message(from_header, to_email, subject, html_body, attachment=None):
     msg['Subject']           = subject
     msg['Date']              = formatdate(localtime=True)
     msg['Message-ID']        = make_msgid(domain=domain)
-    # Do NOT set MIME-Version manually — Python email library adds it automatically.
-    # Setting it manually creates a DUPLICATE MIME-Version header, which is an RFC
-    # violation and a confirmed spam trigger on Gmail, Outlook and Yahoo.
-    # Reply-To: always set so replies reach the sender
     msg['Reply-To']          = from_header
-    # X-Mailer: use a known MUA string; unknown custom strings are a confirmed spam signal
     msg['X-Mailer']          = 'Microsoft Outlook 16.0'
     return msg
 
@@ -319,7 +311,6 @@ def send_email_smtp(smtp_config, from_name, recipient, subject, html_body, attac
         smtp_port   = 587 if is_gmail else int(smtp_config.get('port', 587))
         smtp_user   = smtp_config.get('user')
         smtp_pass   = smtp_config.get('pass')
-        # from_name is caller-provided (may be random). smtp_config.sender_name is account default.
         sender_name = from_name or smtp_config.get('sender_name') or ''
         from_header = f"{sender_name} <{smtp_user}>" if sender_name else smtp_user
 
@@ -328,9 +319,12 @@ def send_email_smtp(smtp_config, from_name, recipient, subject, html_body, attac
         # Build proper MIME message (plain + html + optional attachment)
         msg = _build_message(from_header, recipient, subject, html_body, attachment)
         if attachment:
+            print(f'[BULK-SMTP] Attaching file for {recipient}')
             ok, err = add_attachment_to_message(msg, attachment)
             if not ok:
+                print(f'[BULK-SMTP ERROR] Attachment failed: {err}')
                 return {'success': False, 'error': f'Attachment error: {err}'}
+            print(f'[BULK-SMTP] Attachment added successfully')
 
         with smtplib.SMTP(smtp_server, smtp_port, timeout=30) as server:
             server.ehlo()
