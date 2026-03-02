@@ -297,7 +297,14 @@ def _build_msg(from_header, to_email, subject, html_body, attachment=None):
     alt = MIMEMultipart('alternative')
     # Plain text MUST come before HTML (RFC 2046 §5.1.4)
     alt.attach(MIMEText(plain, 'plain', 'utf-8'))
-    alt.attach(MIMEText(html_body, 'html', 'utf-8'))
+    
+    # HTML part with FORCED quoted-printable encoding
+    # CRITICAL: Python's MIMEText auto-selects base64 for long lines/special chars
+    # Base64 HTML + base64 attachment = spam filter red flag
+    # Gmail/Outlook use quoted-printable for HTML, base64 ONLY for attachments
+    html_part = MIMEText(html_body, 'html', 'utf-8')
+    html_part.replace_header('Content-Transfer-Encoding', 'quoted-printable')
+    alt.attach(html_part)
 
     if attachment:
         # multipart/mixed is the outer wrapper when there is a file attachment
