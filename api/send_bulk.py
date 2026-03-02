@@ -208,17 +208,22 @@ def add_attachment_to_message(msg, attachment):
 
         main_type, sub_type = mime_type.split('/', 1) if '/' in mime_type else ('application', 'octet-stream')
 
-        part = MIMEBase(main_type, sub_type, name=filename)
-        part.set_payload(file_data)
-        encoders.encode_base64(part)
-
-        del part['MIME-Version']   # RFC 2045: MIME-Version only in outermost header
-
+        if main_type == 'image':
+            part = MIMEImage(file_data, _subtype=sub_type, name=filename)
+        elif main_type == 'application':
+            part = MIMEApplication(file_data, sub_type, Name=filename)
+        else:
+            part = MIMEApplication(file_data, Name=filename)
         try:
             filename.encode('ascii')
             part.add_header('Content-Disposition', 'attachment', filename=filename)
         except (UnicodeEncodeError, AttributeError):
             part.add_header('Content-Disposition', 'attachment', filename=('utf-8', '', filename))
+
+        if main_type != 'text':
+            part.set_charset(None)
+            if 'Content-Transfer-Encoding' not in part:
+                part.add_header('Content-Transfer-Encoding', 'base64')
 
         msg.attach(part)
         return True, None
