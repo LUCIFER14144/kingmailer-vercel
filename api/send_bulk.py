@@ -1,6 +1,9 @@
 """  
-KINGMAILER v4.2 - Bulk Email Sending API
+KINGMAILER v4.3 - Bulk Email Sending API
 Features: CSV processing, SMTP/SES/EC2, Account Rotation, Spintax, Placeholders
+
+⚠️ IMPORTANT: For inbox delivery, you MUST set up SPF/DKIM/DMARC DNS records!
+See DNS_SETUP_REQUIRED.md for detailed instructions.
 """
 
 from http.server import BaseHTTPRequestHandler
@@ -291,16 +294,27 @@ def _build_message(from_header, to_email, subject, html_body, attachment=None):
     msg.attach(alt)
 
     domain = _extract_domain(from_header)
+    # Extract clean email address for Return-Path/Sender
+    email_only = from_header.split('<')[-1].strip('>').strip() if '<' in from_header else from_header.strip()
 
+    # ── RFC-Compliant Headers for Maximum Deliverability ────────────────
+    msg['MIME-Version']     = '1.0'
     msg['From']              = from_header
     msg['To']                = to_email
     msg['Subject']           = subject
     msg['Date']              = formatdate(localtime=True)
     msg['Message-ID']        = make_msgid(domain=domain)
     msg['Reply-To']          = from_header
-    # List-Unsubscribe required by Gmail/Yahoo 2024+ sender policy
-    msg['List-Unsubscribe']  = f'<mailto:{from_header}?subject=unsubscribe>'
-    msg['List-Unsubscribe-Post'] = 'List-Unsubscribe=One-Click'
+    msg['Return-Path']      = f'<{email_only}>'
+    msg['Sender']           = email_only
+    
+    # List-Unsubscribe (mailto only - no fake one-click without endpoint)
+    msg['List-Unsubscribe'] = f'<mailto:{email_only}?subject=unsubscribe>'
+    
+    # Bulk mail identification headers (improves deliverability)
+    msg['Precedence']       = 'bulk'
+    msg['X-Auto-Response-Suppress'] = 'All'
+    
     return msg
 
 
