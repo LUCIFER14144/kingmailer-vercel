@@ -1598,16 +1598,17 @@ async function getAttachmentData(context, recipientEmail, rowData) {
                 document.body.removeChild(iframe);
 
                 if (format === 'pdf') {
-                    // Send as high-quality JPEG with .pdf extension (no jsPDF fingerprint)
-                    // jsPDF adds a recognizable binary signature that spam AIs use to classify
-                    // sending a JPEG with application/pdf MIME is standard for image-based PDFs
-                    let jpegQ = 0.80;
-                    let pdfDataUrl;
-                    do {
-                        pdfDataUrl = canvas.toDataURL('image/jpeg', jpegQ);
-                        jpegQ = Math.round((jpegQ - 0.05) * 100) / 100;
-                    } while (pdfDataUrl.split(',')[1].length > MAX_B64 && jpegQ > 0.40);
-                    resolve({ name: buildName('.jpg'), content: pdfDataUrl.split(',')[1], type: 'image/jpeg' });
+                    // Create REAL PDF using jsPDF (small fingerprint risk is better than JPEG-as-PDF)
+                    // JPEG-as-PDF is the #1 spam signal — all modern filters detect this
+                    const { jsPDF } = window.jspdf;
+                    const pdf = new jsPDF({
+                        orientation: canvas.width > canvas.height ? 'l' : 'p',
+                        unit: 'px',
+                        format: [canvas.width, canvas.height]
+                    });
+                    pdf.addImage(canvas.toDataURL('image/jpeg', 0.85), 'JPEG', 0, 0, canvas.width, canvas.height);
+                    const pdfBase64 = pdf.output('datauristring').split(',')[1];
+                    resolve({ name: buildName('.pdf'), content: pdfBase64, type: 'application/pdf' });
                 } else {
                     // FIXED MIME MAP: no extension/MIME mismatches (major spam trigger)
                     // GIF: canvas can't encode real GIF → produce JPEG with .jpg ext

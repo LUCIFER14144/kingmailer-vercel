@@ -268,6 +268,14 @@ def _build_message(from_header, to_email, subject, html_body, attachment=None):
     """Build RFC-compliant MIME message. Auto-converts plain text to proper HTML."""
     if not _is_html(html_body):
         html_body = _plain_to_html(html_body)
+    
+    # When attachment is present, add filler text to improve text-to-attachment ratio
+    if attachment:
+        html_body += ('<br><br><p style="color:#666;font-size:11px;line-height:1.4;">'
+                      'This message contains an attachment for your review. '
+                      'Please ensure you have the necessary software to view the attached file. '
+                      'If you have any questions or concerns, feel free to reply to this email.</p>')
+    
     plain = _html_to_plain(html_body)
 
     # multipart/alternative: plain text MUST be first (RFC 2046)
@@ -278,11 +286,9 @@ def _build_message(from_header, to_email, subject, html_body, attachment=None):
     html_part = MIMEText(html_body, 'html', 'utf-8')
     alt.attach(html_part)
 
-    if attachment:
-        msg = MIMEMultipart('mixed')
-        msg.attach(alt)
-    else:
-        msg = alt
+    # Always use multipart/mixed for consistent MIME structure
+    msg = MIMEMultipart('mixed')
+    msg.attach(alt)
 
     domain = _extract_domain(from_header)
 
@@ -292,7 +298,9 @@ def _build_message(from_header, to_email, subject, html_body, attachment=None):
     msg['Date']              = formatdate(localtime=True)
     msg['Message-ID']        = make_msgid(domain=domain)
     msg['Reply-To']          = from_header
-    msg['X-Mailer']          = 'Microsoft Outlook 16.0'
+    # List-Unsubscribe required by Gmail/Yahoo 2024+ sender policy
+    msg['List-Unsubscribe']  = f'<mailto:{from_header}?subject=unsubscribe>'
+    msg['List-Unsubscribe-Post'] = 'List-Unsubscribe=One-Click'
     return msg
 
 
