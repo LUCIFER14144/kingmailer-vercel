@@ -300,13 +300,8 @@ def _build_msg(from_header, to_email, subject, html_body, attachment=None):
     # Plain text MUST come before HTML (RFC 2046 §5.1.4)
     alt.attach(MIMEText(plain, 'plain', 'utf-8'))
 
-    # HTML part — force quoted-printable encoding using Charset.
-    # IMPORTANT: replace_header() only changes the label, NOT the payload bytes.
-    # MIMEText('utf-8') base64-encodes immediately on creation.
-    # The only correct way to get QP-encoded payload is via Charset(body_encoding=QP).
-    _qp = _Charset('utf-8')
-    _qp.body_encoding = _QP
-    html_part = MIMEText(html_body, 'html', _qp)
+    # HTML part — natively use utf-8 charset which handles encoding properly
+    html_part = MIMEText(html_body, 'html', 'utf-8')
     alt.attach(html_part)
 
     if attachment:
