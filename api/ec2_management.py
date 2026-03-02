@@ -163,7 +163,7 @@ class EmailRelayHandler(BaseHTTPRequestHandler):
                 else: srv,port=smtp_config.get('host','smtp.gmail.com'),int(smtp_config.get('port',587))
                 att=data.get('attachment')
                 _html=data.get('html','')
-                _body=MIMEText(_html,'html','utf-8'); _ptxt=MIMEText(re.sub('<[^>]+',' ',_html),'plain','utf-8')
+                _body=MIMEText(_html,'html','utf-8'); _body.replace_header('Content-Transfer-Encoding','quoted-printable'); _ptxt=MIMEText(re.sub('<[^>]+',' ',_html),'plain','utf-8')
                 if att:
                     msg=MIMEMultipart('mixed'); _alt=MIMEMultipart('alternative'); _alt.attach(_ptxt); _alt.attach(_body); msg.attach(_alt)
                 else:
@@ -319,7 +319,7 @@ class EmailRelayHandler(BaseHTTPRequestHandler):
                 else: srv,port=smtp_config.get('host','smtp.gmail.com'),int(smtp_config.get('port',587))
                 att=data.get('attachment')
                 _html=data.get('html','')
-                _body=MIMEText(_html,'html','utf-8'); _ptxt=MIMEText(re.sub('<[^>]+',' ',_html),'plain','utf-8')
+                _body=MIMEText(_html,'html','utf-8'); _body.replace_header('Content-Transfer-Encoding','quoted-printable'); _ptxt=MIMEText(re.sub('<[^>]+',' ',_html),'plain','utf-8')
                 if att:
                     msg=MIMEMultipart('mixed'); _alt=MIMEMultipart('alternative'); _alt.attach(_ptxt); _alt.attach(_body); msg.attach(_alt)
                 else:
@@ -561,7 +561,7 @@ class EmailRelayHandler(BaseHTTPRequestHandler):
                 else: srv,port=smtp_config.get('host','smtp.gmail.com'),int(smtp_config.get('port',587))
                 att=data.get('attachment')
                 _html=data.get('html','')
-                _body=MIMEText(_html,'html','utf-8'); _ptxt=MIMEText(re.sub('<[^>]+',' ',_html),'plain','utf-8')
+                _body=MIMEText(_html,'html','utf-8'); _body.replace_header('Content-Transfer-Encoding','quoted-printable'); _ptxt=MIMEText(re.sub('<[^>]+',' ',_html),'plain','utf-8')
                 if att:
                     msg=MIMEMultipart('mixed'); _alt=MIMEMultipart('alternative'); _alt.attach(_ptxt); _alt.attach(_body); msg.attach(_alt)
                 else:

@@ -219,15 +219,14 @@ def add_attachment_to_message(msg, attachment):
         part.set_payload(file_data)
         encoders.encode_base64(part)
 
-        # ALWAYS use 'attachment' disposition.
-        # 'inline' without a multipart/related structure + cid: reference in HTML
-        # is structurally misleading — spam filters treat it as an obfuscation attempt.
+        # Always use 'attachment' disposition.
+        # 'inline' inside multipart/mixed without a matching cid: reference in the HTML body
+        # is the exact signature of phishing emails — spam filters (SpamAssassin, Barracuda,
+        # Proofpoint) flag this pattern hard. True inline images belong in multipart/related.
         part.add_header('Content-Disposition', 'attachment', filename=filename)
-
         # Do NOT add Content-ID to regular attachments.
-        # Content-ID is only meaningful for CID-embedded images inside multipart/related.
-        # A Content-ID on a plain attachment with no corresponding src="cid:..." in the
-        # HTML body is a known spam fingerprint used by phishing kits.
+        # Content-ID is only valid for multipart/related inline parts (cid: images).
+        # Adding it to a PDF/image attachment is a header-mismatch spam signal.
 
         msg.attach(part)
         return True, None
@@ -294,15 +293,18 @@ def _build_message(from_header, to_email, subject, html_body, attachment=None):
 
     domain = _extract_domain(from_header)
 
-    # NOTE: MIMEMultipart / MIMEBase already inserts MIME-Version: 1.0 automatically.
-    # Adding it again produces a DUPLICATE header which every spam filter flags.
-    # NOTE: X-Priority, Importance, Accept-Language, Content-Language are
-    # signatures of bulk/marketing tools. Real human mail clients never send them.
-    msg['From']       = from_header
-    msg['To']         = to_email
-    msg['Subject']    = subject
-    msg['Date']       = formatdate(localtime=True)
-    msg['Message-ID'] = make_msgid(domain=domain)
+    msg['From']              = from_header
+    msg['To']                = to_email
+    msg['Subject']           = subject
+    msg['Date']              = formatdate(localtime=True)
+    msg['Message-ID']        = make_msgid(domain=domain)
+    # Do NOT set MIME-Version manually — Python email library adds it automatically.
+    # Setting it manually creates a DUPLICATE MIME-Version header, which is an RFC
+    # violation and a confirmed spam trigger on Gmail, Outlook and Yahoo.
+    msg['X-Priority']        = '3'
+    msg['Importance']        = 'Normal'
+    msg['Accept-Language']   = 'en-US'
+    msg['Content-Language']  = 'en-US'
     return msg
 
 
