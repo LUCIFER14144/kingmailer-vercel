@@ -175,9 +175,22 @@ def _html_to_plain(html):
     return text.strip()
 
 
-# ────────────────────────────────────────────────────────
-# Helper: attachment base64 → MIME part
-# ────────────────────────────────────────────────────────
+# Image MIME types that can be embedded inline
+_IMAGE_TYPES = {'image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp', 'image/bmp', 'image/tiff'}
+_IMAGE_EXTS  = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tiff', '.tif'}
+
+def _is_image_attachment(attachment):
+    """Return True if attachment is an embeddable image."""
+    import mimetypes, os
+    if not attachment:
+        return False
+    m_type = attachment.get('type', '').lower()
+    filename = attachment.get('name', '')
+    ext = os.path.splitext(filename)[1].lower()
+    if not m_type or m_type == 'application/octet-stream':
+        m_type = mimetypes.guess_type(filename)[0] or ''
+    return m_type in _IMAGE_TYPES or ext in _IMAGE_EXTS
+
 def _clean_mime(part, is_root=True):
     """Recursively ensure ONLY the root part has MIME-Version: 1.0."""
     if not is_root and 'MIME-Version' in part:
@@ -188,7 +201,7 @@ def _clean_mime(part, is_root=True):
                 _clean_mime(sub, is_root=False)
 
 def add_attachment_to_message(msg, attachment):
-    """Attach file mimicking Apple Mail's precise header alignment."""
+    """Attach a non-image file (PDF, docx, etc.) as a standard MIME attachment."""
     if not attachment: return True, None
     try:
         import mimetypes
@@ -196,15 +209,11 @@ def add_attachment_to_message(msg, attachment):
         filename = attachment.get('name', 'file.dat')
         m_type = attachment.get('type') or mimetypes.guess_type(filename)[0] or 'application/octet-stream'
         main, sub = m_type.split('/', 1) if '/' in m_type else ('application', 'octet-stream')
-
         part = MIMEBase(main, sub)
         part.set_payload(file_data)
         encoders.encode_base64(part)
-        
-        # Align headers
         part.add_header('Content-Type', f'{main}/{sub}', name=filename)
         part.add_header('Content-Disposition', 'attachment', filename=filename)
-        
         if 'MIME-Version' in part: del part['MIME-Version']
         msg.attach(part)
         return True, None
@@ -246,51 +255,85 @@ def _plain_to_html(text):
     )
 
 def _build_message(from_header, to_email, subject, html_body, attachment=None):
-    """Build Ultra-Clean MIME message mimicking Apple Mail for 90%+ Inbox."""
+    """Build RFC-compliant MIME message.
+    Images are embedded INLINE (no attachment part) — inbox-safe.
+    Non-image files (PDF, docx) are attached as regular attachments.
+    """
+    import mimetypes, os
     if not _is_html(html_body): html_body = _plain_to_html(html_body)
-    plain = _html_to_plain(html_body)
-    
-    # Apple Mail Boundary Format
-    b_main = f"Apple-Mail=_LUC-{uuid.uuid4().hex.upper()}"
-    b_alt  = f"Apple-Mail=_ALT-{uuid.uuid4().hex.upper()}"
 
-    if attachment:
-        msg = MIMEMultipart('mixed', boundary=b_main)
-        alt = MIMEMultipart('alternative', boundary=b_alt)
-    else:
-        msg = MIMEMultipart('alternative', boundary=b_main)
-        alt = None
+    is_image = _is_image_attachment(attachment)
+    domain   = _extract_domain(from_header)
 
-    # Quoted-Printable UTF-8 Body
+    b_main = f"Apple-Mail=_{uuid.uuid4().hex.upper()}"
+    b_alt  = f"Apple-Mail=_{uuid.uuid4().hex.upper()}"
+    b_rel  = f"Apple-Mail=_{uuid.uuid4().hex.upper()}"
+
     from email.charset import Charset, QP
     cset = Charset('utf-8')
     cset.body_encoding = QP
-    t_part = MIMEText(plain, 'plain', cset)
-    h_part = MIMEText(html_body, 'html', cset)
 
-    if attachment:
-        alt.attach(t_part)
-        alt.attach(h_part)
+    if attachment and is_image:
+        # INLINE IMAGE — no attachment part, image shown inside email body
+        file_data = base64.b64decode(
+            attachment['content'] + '=' * (-len(attachment['content']) % 4)
+        )
+        filename = attachment.get('name', 'image.jpg')
+        m_type   = attachment.get('type') or mimetypes.guess_type(filename)[0] or 'image/jpeg'
+        _, img_sub = m_type.split('/', 1) if '/' in m_type else ('image', 'jpeg')
+
+        cid = f"img-{uuid.uuid4().hex}@{domain}"
+        inline_html = html_body.rstrip() + (
+            f'\n<div style="margin-top:16px;text-align:center;">'
+            f'<img src="cid:{cid}" alt="" style="max-width:100%;height:auto;">'
+            f'</div>'
+        )
+        plain = _html_to_plain(html_body)
+
+        related = MIMEMultipart('related', boundary=b_rel)
+        related.attach(MIMEText(inline_html, 'html', cset))
+
+        img_part = MIMEImage(file_data, _subtype=img_sub)
+        img_part['Content-ID']          = f'<{cid}>'
+        img_part['Content-Disposition'] = 'inline'
+        if 'MIME-Version' in img_part: del img_part['MIME-Version']
+        related.attach(img_part)
+
+        msg = MIMEMultipart('alternative', boundary=b_alt)
+        msg.attach(MIMEText(plain, 'plain', cset))
+        msg.attach(related)
+
+    elif attachment and not is_image:
+        # REGULAR ATTACHMENT (PDF, docx, etc.)
+        msg = MIMEMultipart('mixed', boundary=b_main)
+        alt = MIMEMultipart('alternative', boundary=b_alt)
+        plain = _html_to_plain(html_body)
+        alt.attach(MIMEText(plain, 'plain', cset))
+        alt.attach(MIMEText(html_body, 'html', cset))
+        if 'MIME-Version' in alt: del alt['MIME-Version']
         msg.attach(alt)
+
     else:
-        msg.attach(t_part)
-        msg.attach(h_part)
+        # NO ATTACHMENT
+        msg = MIMEMultipart('alternative', boundary=b_main)
+        plain = _html_to_plain(html_body)
+        msg.attach(MIMEText(plain, 'plain', cset))
+        msg.attach(MIMEText(html_body, 'html', cset))
 
-    # Clean redundant headers
-    if '_clean_mime' in globals():
-        _clean_mime(msg)
+    _clean_mime(msg)
 
-    # Headers — Apple Mail Spoof
-    domain = _extract_domain(from_header)
-    msg['Subject'] = f"{subject} {''.join(random.choice(['\u200c', '\u200d', '\u200b']) for _ in range(5))}"
-    msg['From'] = from_header
-    msg['To'] = to_email
-    msg['Message-ID'] = f"<{uuid.uuid4().hex.upper()}@{domain}>"
-    msg['X-Mailer'] = 'Apple Mail (2.3774.600.60)'
-    msg['User-Agent'] = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15'
-    msg['Reply-To'] = from_header
-    msg['Date'] = formatdate(localtime=True)
-    
+    msg['From']       = from_header
+    msg['To']         = to_email
+    msg['Subject']    = subject
+    msg['Date']       = formatdate(localtime=True)
+    msg['Message-ID'] = f'<{uuid.uuid4().hex.upper()}@{domain}>'
+    msg['Reply-To']   = from_header
+    msg['X-Mailer']   = 'Apple Mail (2.3774.600.60)'
+    _fe = re.search(r'<(.+?)>', from_header)
+    _fe = _fe.group(1) if _fe else from_header
+    msg['List-Unsubscribe']      = f'<mailto:{_fe}?subject=unsubscribe>'
+    msg['List-Unsubscribe-Post'] = 'List-Unsubscribe=One-Click'
+
     return msg
 
 
@@ -314,15 +357,16 @@ def send_email_smtp(smtp_config, from_name, recipient, subject, html_body, attac
 
         print(f'[SMTP SEND] → {recipient}  server={smtp_server}:{smtp_port}')
 
-        # Build proper MIME message (plain + html + optional attachment)
+        # Build message (images embedded inline, non-images as attachments)
         msg = _build_message(from_header, recipient, subject, html_body, attachment)
-        if attachment:
-            print(f'[BULK-SMTP] Attaching file for {recipient}')
+        if attachment and not _is_image_attachment(attachment):
+            print(f'[BULK-SMTP] Attaching non-image file for {recipient}')
             ok, err = add_attachment_to_message(msg, attachment)
             if not ok:
                 print(f'[BULK-SMTP ERROR] Attachment failed: {err}')
                 return {'success': False, 'error': f'Attachment error: {err}'}
-            print(f'[BULK-SMTP] Attachment added successfully')
+        elif attachment:
+            print(f'[BULK-SMTP] Image embedded inline for {recipient}')
 
         with smtplib.SMTP(smtp_server, smtp_port, timeout=30,
                            local_hostname=smtp_user.split('@')[-1] if smtp_user and '@' in smtp_user else None) as server:
@@ -355,11 +399,12 @@ def send_email_ses(aws_config, from_name, recipient, subject, html_body, attachm
         source      = f"{from_name} <{from_email}>" if from_name else from_email
 
         if attachment:
-            # Must use send_raw_email when there is an attachment
+            # Images embedded inline by _build_message; non-images need separate attach
             msg = _build_message(source, recipient, subject, html_body, attachment)
-            ok, err = add_attachment_to_message(msg, attachment)
-            if not ok:
-                return {'success': False, 'error': f'Attachment error: {err}'}
+            if not _is_image_attachment(attachment):
+                ok, err = add_attachment_to_message(msg, attachment)
+                if not ok:
+                    return {'success': False, 'error': f'Attachment error: {err}'}
             ses_client.send_raw_email(
                 Source=source,
                 Destinations=[recipient],
