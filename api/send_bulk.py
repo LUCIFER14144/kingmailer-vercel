@@ -1,11 +1,11 @@
 """  
-KINGMAILER v5.4 - Bulk Email Sending API (90%+ Inbox Rate - WITH Attachments)
+KINGMAILER v5.5 - Bulk Email Sending API (90%+ Inbox Rate - WITH Attachments)
 Features: CSV processing, SMTP/SES/EC2, Account Rotation, Spintax, Placeholders
 
-✅ CRITICAL FIX: Use Charset object for TRUE Quoted-Printable body encoding
-✅ replace_header() BUG FIXED: it changed header label but left body as base64
+✅ CRITICAL FIX: Remove duplicate MIME-Version from all MIME sub-parts
+✅ RFC 2045: MIME-Version must appear ONLY in the outermost message header
+✅ True Quoted-Printable body encoding via Charset object (not relabeling)
 ✅ Minimal headers, let Gmail/SMTP handle authentication
-✅ Proper MIME structure: mixed > alternative > text/plain + text/html (QP)
 ✅ 90%+ inbox rate with Gmail SMTP (no DNS setup required)
 """
 
@@ -222,6 +222,7 @@ def add_attachment_to_message(msg, attachment):
         part = MIMEBase(main_type, sub_type, name=filename)
         part.set_payload(file_data)
         encoders.encode_base64(part)
+        del part['MIME-Version']   # RFC 2045: MIME-Version only in outermost header
 
         # RFC 2231 filename encoding: handles non-ASCII filenames correctly.
         # Falls back to plain ASCII for simple filenames.
@@ -291,28 +292,24 @@ def _build_message(from_header, to_email, subject, html_body, attachment=None):
     # That created a LYING MIME structure (header=QP, body=base64) → instant spam.
     # Charset object with QP actually re-encodes the body content properly.
     _qp = _Charset('utf-8')
-    _qp.body_encoding = _QP   # body will be encoded as real quoted-printable
+    _qp.body_encoding = _QP
 
-    # Plain-text fallback (QP encoded)
     text_part = MIMEText(plain, 'plain', _qp)
-    # HTML part (QP encoded — human-readable, trusted by spam filters)
     html_part = MIMEText(html_body, 'html', _qp)
-    
+    # RFC 2045 §6.1: MIME-Version MUST appear only in the outermost message header.
+    # Python's email lib adds it to every MIMEText/MIMEBase sub-part — that is a
+    # spec violation that spam filters (SpamAssassin, Gmail) flag as malformed.
+    del text_part['MIME-Version']
+    del html_part['MIME-Version']
+
     if attachment:
-        # With attachment: multipart/mixed
-        #   ├─ multipart/alternative
-        #   │   ├─ text/plain
-        #   │   └─ text/html (Quoted-Printable encoded)
-        #   └─ attachment
         msg = MIMEMultipart('mixed')
         alt = MIMEMultipart('alternative')
+        del alt['MIME-Version']   # remove from inner container
         alt.attach(text_part)
         alt.attach(html_part)
         msg.attach(alt)
     else:
-        # No attachment: multipart/alternative only
-        #   ├─ text/plain
-        #   └─ text/html (Quoted-Printable encoded)
         msg = MIMEMultipart('alternative')
         msg.attach(text_part)
         msg.attach(html_part)
