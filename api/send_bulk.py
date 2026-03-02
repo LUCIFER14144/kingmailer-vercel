@@ -299,17 +299,15 @@ def _build_message(from_header, to_email, subject, html_body, attachment=None):
         msg.attach(text_part)
         msg.attach(html_part)
 
-    # ── 6. Headers — all 7 deliverability tricks ──────────────────────────
+    # ── 6. Headers — Native Deliverability Structure ─────────
     domain = _extract_domain(from_header)
-    _uid = uuid.uuid4().hex.upper()
+
     msg['From']         = from_header
     msg['To']           = to_email
     msg['Subject']      = subject
     msg['Date']         = formatdate(localtime=True)
-    msg['Message-ID']   = f'<{_uid[:8]}-{_uid[8:12]}-{_uid[12:16]}-{_uid[16:20]}-{_uid[20:]}@{domain}>'
+    msg['Message-ID']   = make_msgid(domain=domain)
     msg['Reply-To']     = from_header
-    msg['X-Mailer']     = 'Apple Mail (22B91)'
-    msg['Thread-Topic'] = subject
 
     return msg
 
