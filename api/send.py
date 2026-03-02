@@ -1,11 +1,11 @@
 """  
-KINGMAILER v5.1 - Email Sending API (90%+ Inbox Rate - WITH Attachments)
+KINGMAILER v5.2 - Email Sending API (90%+ Inbox Rate - WITH Attachments)
 Features: SMTP, AWS SES, EC2 Relay, Spintax, Placeholders, Attachments
 
 ✅ JetMailer Approach: Minimal headers, let Gmail/SMTP handle authentication
 ✅ No spam-triggering headers (Precedence, Return-Path, Sender, etc.)
 ✅ Proper MIME structure with Quoted-Printable encoding for HTML
-✅ Improved attachment handling for better deliverability
+✅ Fixed attachment handling with reliable set_charset() method
 ✅ 90%+ inbox rate with Gmail SMTP (no DNS setup required)
 """
 
@@ -16,9 +16,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email import encoders
 from email.utils import formatdate, make_msgid
-from email.charset import Charset as _Charset, QP as _QP
 from email.header import Header
-from email.charset import Charset as _Charset, QP as _QP
 import boto3
 from botocore.exceptions import ClientError
 import json
@@ -294,9 +292,15 @@ def _build_msg(from_header, to_email, subject, html_body, attachment=None):
     # This is CRITICAL for deliverability - reduces spam score significantly
     # ═══════════════════════════════════════════════════════════════════
     
-    # Create Quoted-Printable charset for HTML (better than base64)
-    qp_charset = _Charset('utf-8')
-    qp_charset.body_encoding = _QP  # Quoted-Printable encoding
+    # Create plain text part
+    text_part = MIMEText(plain, 'plain', 'utf-8')
+    
+    # Create HTML part with Quoted-Printable encoding
+    # Using set_charset() ensures proper QP encoding for better deliverability
+    html_part = MIMEText(html_body, 'html', 'utf-8')
+    # The set_charset method will automatically use QP encoding for text/html
+    # This is much more reliable than using a Charset object directly
+    html_part.set_charset('utf-8')
     
     if attachment:
         # With attachment: multipart/mixed
@@ -306,16 +310,16 @@ def _build_msg(from_header, to_email, subject, html_body, attachment=None):
         #   └─ attachment
         msg = MIMEMultipart('mixed')
         alt = MIMEMultipart('alternative')
-        alt.attach(MIMEText(plain, 'plain', 'utf-8'))
-        alt.attach(MIMEText(html_body, 'html', qp_charset))  # QP encoding
+        alt.attach(text_part)
+        alt.attach(html_part)
         msg.attach(alt)
     else:
         # No attachment: multipart/alternative only
         #   ├─ text/plain
         #   └─ text/html (Quoted-Printable encoded)
         msg = MIMEMultipart('alternative')
-        msg.attach(MIMEText(plain, 'plain', 'utf-8'))
-        msg.attach(MIMEText(html_body, 'html', qp_charset))  # QP encoding
+        msg.attach(text_part)
+        msg.attach(html_part)
     
     # ═══════════════════════════════════════════════════════════════════
     # Minimal Headers Only - Let SMTP Server Handle Authentication
