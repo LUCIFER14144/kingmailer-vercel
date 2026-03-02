@@ -223,13 +223,15 @@ def add_attachment_to_message(msg, attachment):
         part.set_payload(file_data)
         encoders.encode_base64(part)
 
-        # Images embed inline (looks legitimate); documents attach explicitly
-        _INLINE_TYPES = {'image/png', 'image/jpeg', 'image/webp', 'image/tiff', 'image/jpg'}
-        disposition = 'inline' if mime_type in _INLINE_TYPES else 'attachment'
-        part.add_header('Content-Disposition', disposition, filename=filename)
+        # ALWAYS use 'attachment' disposition.
+        # 'inline' without a multipart/related structure + cid: reference in HTML
+        # is structurally misleading — spam filters treat it as an obfuscation attempt.
+        part.add_header('Content-Disposition', 'attachment', filename=filename)
 
-        # Unique Content-ID so mail clients can reference this part
-        part['Content-ID'] = f'<{uuid.uuid4()}@attachment>'
+        # Do NOT add Content-ID to regular attachments.
+        # Content-ID is only meaningful for CID-embedded images inside multipart/related.
+        # A Content-ID on a plain attachment with no corresponding src="cid:..." in the
+        # HTML body is a known spam fingerprint used by phishing kits.
 
         msg.attach(part)
         return True, None
@@ -316,16 +318,15 @@ def _build_msg(from_header, to_email, subject, html_body, attachment=None):
     domain = _extract_domain(from_header)
 
     # ── Core headers ─────────────────────────────────────────────────────
-    msg['From']             = from_header
-    msg['To']               = to_email
-    msg['Subject']          = subject
-    msg['Date']             = formatdate(localtime=True)
-    msg['Message-ID']       = make_msgid(domain=domain)
-    msg['MIME-Version']     = '1.0'
-    msg['X-Priority']       = '3'
-    msg['Importance']       = 'Normal'
-    msg['Accept-Language']  = 'en-US'
-    msg['Content-Language'] = 'en-US'
+    # NOTE: MIMEMultipart / MIMEBase already inserts MIME-Version: 1.0 automatically.
+    # Adding it again produces a DUPLICATE header which every spam filter flags.
+    # NOTE: X-Priority, Importance, Accept-Language, Content-Language are
+    # signatures of bulk/marketing tools. Real human mail clients never send them.
+    msg['From']       = from_header
+    msg['To']         = to_email
+    msg['Subject']    = subject
+    msg['Date']       = formatdate(localtime=True)
+    msg['Message-ID'] = make_msgid(domain=domain)
 
     return msg
 
