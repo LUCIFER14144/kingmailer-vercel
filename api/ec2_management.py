@@ -122,76 +122,67 @@ date
 yum update -y || dnf update -y || true
 yum install -y python3 python3-pip || dnf install -y python3 || true
 
-echo "Creating relay server..."
+echo "Creating relay server v6.0 (unified pattern)..."
 mkdir -p /opt
 
 cat > /opt/email_relay_server.py << 'PYEOF'
 #!/usr/bin/env python3
-import json, re, smtplib, logging, socket
-from http.server import HTTPServer, BaseHTTPRequestHandler
+# KINGMAILER v6.0 EC2 Relay - Unified Email Pattern
+import json,re,smtplib,logging,socket,base64,os
+from http.server import HTTPServer,BaseHTTPRequestHandler
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from email.charset import Charset as _Charset, QP as _QP
+from email.mime.base import MIMEBase
+from email import encoders
+from email.utils import formatdate,make_msgid
 from datetime import datetime
-logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s',
-    handlers=[logging.FileHandler('/var/log/email_relay.log'), logging.StreamHandler()])
+logging.basicConfig(level=logging.INFO,format='%(asctime)s %(levelname)s %(message)s',handlers=[logging.FileHandler('/var/log/email_relay.log'),logging.StreamHandler()])
 class EmailRelayHandler(BaseHTTPRequestHandler):
-    def log_message(self, fmt, *a): logging.info("%s - %s" % (self.client_address[0], fmt%a))
-    def do_GET(self):
-        if self.path in ('/', '/health'):
-            self.send_response(200); self.send_header('Content-type','application/json'); self.end_headers()
-            def chk(p):
-                try:
-                    s=socket.socket(); s.settimeout(3); r=s.connect_ex(('smtp.gmail.com',p)); s.close(); return 'open' if r==0 else 'blocked'
-                except: return 'unknown'
-            self.wfile.write(json.dumps({'status':'healthy','service':'KINGMAILER Relay',
-                'timestamp':datetime.now().isoformat(),'port_587_outbound':chk(587),'port_465_outbound':chk(465)}).encode())
-        else: self.send_response(404); self.end_headers()
-    def do_POST(self):
-        if self.path == '/relay':
-            try:
-                data = json.loads(self.rfile.read(int(self.headers['Content-Length'])).decode())
-                smtp_config = data.get('smtp_config')
-                if not smtp_config: raise ValueError('SMTP config required')
-                to_email = data.get('to','')
-                if not to_email: raise ValueError('Recipient required')
-                provider = smtp_config.get('provider','gmail')
-                u = smtp_config.get('user'); p = smtp_config.get('pass')
-                if not u or not p: raise ValueError('SMTP credentials required')
-                sname = smtp_config.get('sender_name', data.get('from_name','KINGMAILER'))
-                if provider=='gmail': srv,port='smtp.gmail.com',587
-                elif provider in ('outlook','hotmail'): srv,port='smtp-mail.outlook.com',587
-                else: srv,port=smtp_config.get('host','smtp.gmail.com'),int(smtp_config.get('port',587))
-                att=data.get('attachment')
-                _html=data.get('html','')
-                _qp=_Charset('utf-8'); _qp.body_encoding=_QP; _body=MIMEText(_html,'html',_qp); _ptxt=MIMEText(re.sub('<[^>]+',' ',_html),'plain','utf-8')
-                if att:
-                    msg=MIMEMultipart('mixed'); _alt=MIMEMultipart('alternative'); _alt.attach(_ptxt); _alt.attach(_body); msg.attach(_alt)
-                else:
-                    msg=MIMEMultipart('alternative'); msg.attach(_ptxt); msg.attach(_body)
-                msg['From']="%s <%s>" % (sname,u); msg['To']=to_email; msg['Subject']=data.get('subject','')
-                if att:
-                    try:
-                        import base64 as _b64; from email.mime.base import MIMEBase; from email import encoders as _enc
-                        _ac=att['content']+'='*(-len(att['content'])%4)
-                        _ap=MIMEBase(*(att.get('type','application/octet-stream')+'/x').split('/')[:2])
-                        _ap.set_payload(_b64.b64decode(_ac)); _enc.encode_base64(_ap)
-                        _ap.add_header('Content-Disposition','attachment',filename=att.get('name','attachment'))
-                        msg.attach(_ap)
-                    except Exception as _ae: logging.warning("Attach err: %s" % _ae)
-                with smtplib.SMTP(srv,port,timeout=30) as s:
-                    s.ehlo(); s.starttls(); s.ehlo(); s.login(u,p); s.send_message(msg)
-                logging.info("Sent to %s" % to_email)
-                self.send_response(200); self.send_header('Content-type','application/json'); self.end_headers()
-                self.wfile.write(json.dumps({'success':True,'message':'Email sent'}).encode())
-            except Exception as e:
-                logging.error(str(e))
-                self.send_response(500); self.send_header('Content-type','application/json'); self.end_headers()
-                self.wfile.write(json.dumps({'success':False,'error':str(e)}).encode())
-        else: self.send_response(404); self.end_headers()
-if __name__ == '__main__':
-    srv = HTTPServer(('0.0.0.0',3000), EmailRelayHandler)
-    logging.info('Relay started on port 3000'); srv.serve_forever()
+ def log_message(self,fmt,*a):logging.info("%s - %s"%(self.client_address[0],fmt%a))
+ def do_GET(self):
+  if self.path in('/','/health'):
+   self.send_response(200);self.send_header('Content-type','application/json');self.end_headers()
+   def chk(p):
+    try:s=socket.socket();s.settimeout(3);r=s.connect_ex(('smtp.gmail.com',p));s.close();return 'open' if r==0 else 'blocked'
+    except:return 'unknown'
+   self.wfile.write(json.dumps({'status':'healthy','service':'KINGMAILER Relay v6.0','timestamp':datetime.now().isoformat(),'port_587_outbound':chk(587),'port_465_outbound':chk(465)}).encode())
+  else:self.send_response(404);self.end_headers()
+ def do_POST(self):
+  if self.path=='/relay':
+   try:
+    data=json.loads(self.rfile.read(int(self.headers['Content-Length'])).decode());sm=data.get('smtp_config')
+    if not sm:raise ValueError('SMTP config required')
+    to=data.get('to','');subj=data.get('subject','');htm=data.get('html','');att=data.get('attachment')
+    if not to:raise ValueError('Recipient required')
+    pv=sm.get('provider','gmail');u=sm.get('user');p=sm.get('pass')
+    if not u or not p:raise ValueError('SMTP credentials required')
+    sn=sm.get('sender_name',data.get('from_name','KINGMAILER'))
+    if pv=='gmail':srv,port='smtp.gmail.com',587
+    elif pv in('outlook','hotmail'):srv,port='smtp-mail.outlook.com',587
+    else:srv,port=sm.get('host','smtp.gmail.com'),int(sm.get('port',587))
+    pl=re.sub(r'<br\s*/?>', '\n',htm,flags=re.IGNORECASE);pl=re.sub(r'<p[^>]*>','\n',pl,flags=re.IGNORECASE);pl=re.sub(r'<[^>]+>','',pl);pl=re.sub(r'[ \t]+',' ',pl).strip()
+    if att:msg=MIMEMultipart('mixed');alt=MIMEMultipart('alternative');alt.attach(MIMEText(pl,'plain','utf-8'));alt.attach(MIMEText(htm,'html','utf-8'));msg.attach(alt)
+    else:msg=MIMEMultipart('alternative');msg.attach(MIMEText(pl,'plain','utf-8'));msg.attach(MIMEText(htm,'html','utf-8'))
+    fh="%s <%s>"%(sn,u)if sn else u;dm=u.split('@')[-1]if '@' in u else 'relay.local'
+    msg['From']=fh;msg['To']=to;msg['Subject']=subj;msg['Date']=formatdate(localtime=True);msg['Message-ID']=make_msgid(domain=dm)
+    if att:
+     try:
+      ac=att['content']+'='*(-len(att['content'])%4);fd=base64.b64decode(ac);nm=att.get('name','attachment');mt=att.get('type','application/octet-stream')
+      logging.info("[ATTACHMENT] %s (%d bytes, %s)"%(nm,len(fd),mt))
+      em={'.pdf':'application/pdf','.txt':'text/plain','.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.gif':'image/gif','.docx':'application/vnd.openxmlformats-officedocument.wordprocessingml.document','.doc':'application/msword','.xlsx':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','.xls':'application/vnd.ms-excel'}
+      ex=os.path.splitext(nm)[1].lower()
+      if mt in('application/octet-stream','')and ex in em:mt=em[ex]
+      mn,sb=mt.split('/',1)if'/'in mt else('application','octet-stream');ap=MIMEBase(mn,sb,name=nm);ap.set_payload(fd);encoders.encode_base64(ap)
+      try:nm.encode('ascii');ap.add_header('Content-Disposition','attachment',filename=nm)
+      except(UnicodeEncodeError,AttributeError):ap.add_header('Content-Disposition','attachment',filename=('utf-8','',nm))
+      msg.attach(ap)
+     except Exception as ae:logging.warning("Attach err: %s"%ae)
+    with smtplib.SMTP(srv,port,timeout=30)as s:s.ehlo();s.starttls();s.ehlo();s.login(u,p);s.send_message(msg)
+    st="with attachment"if att else"without attachment";logging.info("Sent to %s (%s)"%(to,st))
+    self.send_response(200);self.send_header('Content-type','application/json');self.end_headers();self.wfile.write(json.dumps({'success':True,'message':'Email sent via EC2 relay','status':st}).encode())
+   except Exception as e:logging.error(str(e));self.send_response(500);self.send_header('Content-type','application/json');self.end_headers();self.wfile.write(json.dumps({'success':False,'error':str(e)}).encode())
+  else:self.send_response(404);self.end_headers()
+if __name__=='__main__':srv=HTTPServer(('0.0.0.0',3000),EmailRelayHandler);logging.info('EC2 Relay v6.0 started on port 3000');srv.serve_forever()
 PYEOF
 
 chmod +x /opt/email_relay_server.py
@@ -278,20 +269,69 @@ def restart_relay_via_ssm(access_key, secret_key, region, instance_id):
 
         # Full relay reinstall + start script sent via SSM
         setup_script = """#!/bin/bash
-echo "=== KINGMAILER Relay Restart via SSM ==="
+echo "=== KINGMAILER Relay v6.0 Restart via SSM ==="
 which python3 || yum install -y python3 2>/dev/null || dnf install -y python3 2>/dev/null || true
 mkdir -p /opt
 
 cat > /opt/email_relay_server.py << 'PYEOF'
 #!/usr/bin/env python3
-import json, re, smtplib, logging, socket
-from http.server import HTTPServer, BaseHTTPRequestHandler
+# KINGMAILER v6.0 EC2 Relay - Unified Email Pattern
+import json,re,smtplib,logging,socket,base64,os
+from http.server import HTTPServer,BaseHTTPRequestHandler
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from email.charset import Charset as _Charset, QP as _QP
+from email.mime.base import MIMEBase
+from email import encoders
+from email.utils import formatdate,make_msgid
 from datetime import datetime
-logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s',
-    handlers=[logging.FileHandler('/var/log/email_relay.log'), logging.StreamHandler()])
+logging.basicConfig(level=logging.INFO,format='%(asctime)s %(levelname)s %(message)s',handlers=[logging.FileHandler('/var/log/email_relay.log'),logging.StreamHandler()])
+class EmailRelayHandler(BaseHTTPRequestHandler):
+ def log_message(self,fmt,*a):logging.info("%s - %s"%(self.client_address[0],fmt%a))
+ def do_GET(self):
+  if self.path in('/','/health'):
+   self.send_response(200);self.send_header('Content-type','application/json');self.end_headers()
+   def chk(p):
+    try:s=socket.socket();s.settimeout(3);r=s.connect_ex(('smtp.gmail.com',p));s.close();return 'open' if r==0 else 'blocked'
+    except:return 'unknown'
+   self.wfile.write(json.dumps({'status':'healthy','service':'KINGMAILER Relay v6.0','timestamp':datetime.now().isoformat(),'port_587_outbound':chk(587),'port_465_outbound':chk(465)}).encode())
+  else:self.send_response(404);self.end_headers()
+ def do_POST(self):
+  if self.path=='/relay':
+   try:
+    data=json.loads(self.rfile.read(int(self.headers['Content-Length'])).decode());sm=data.get('smtp_config')
+    if not sm:raise ValueError('SMTP config required')
+    to=data.get('to','');subj=data.get('subject','');htm=data.get('html','');att=data.get('attachment')
+    if not to:raise ValueError('Recipient required')
+    pv=sm.get('provider','gmail');u=sm.get('user');p=sm.get('pass')
+    if not u or not p:raise ValueError('SMTP credentials required')
+    sn=sm.get('sender_name',data.get('from_name','KINGMAILER'))
+    if pv=='gmail':srv,port='smtp.gmail.com',587
+    elif pv in('outlook','hotmail'):srv,port='smtp-mail.outlook.com',587
+    else:srv,port=sm.get('host','smtp.gmail.com'),int(sm.get('port',587))
+    pl=re.sub(r'<br\\s*/?>', '\\n',htm,flags=re.IGNORECASE);pl=re.sub(r'<p[^>]*>','\\n',pl,flags=re.IGNORECASE);pl=re.sub(r'<[^>]+>','',pl);pl=re.sub(r'[ \\t]+',' ',pl).strip()
+    if att:msg=MIMEMultipart('mixed');alt=MIMEMultipart('alternative');alt.attach(MIMEText(pl,'plain','utf-8'));alt.attach(MIMEText(htm,'html','utf-8'));msg.attach(alt)
+    else:msg=MIMEMultipart('alternative');msg.attach(MIMEText(pl,'plain','utf-8'));msg.attach(MIMEText(htm,'html','utf-8'))
+    fh="%s <%s>"%(sn,u)if sn else u;dm=u.split('@')[-1]if '@' in u else 'relay.local'
+    msg['From']=fh;msg['To']=to;msg['Subject']=subj;msg['Date']=formatdate(localtime=True);msg['Message-ID']=make_msgid(domain=dm)
+    if att:
+     try:
+      ac=att['content']+'='*(-len(att['content'])%4);fd=base64.b64decode(ac);nm=att.get('name','attachment');mt=att.get('type','application/octet-stream')
+      logging.info("[ATTACHMENT] %s (%d bytes, %s)"%(nm,len(fd),mt))
+      em={'.pdf':'application/pdf','.txt':'text/plain','.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.gif':'image/gif','.docx':'application/vnd.openxmlformats-officedocument.wordprocessingml.document','.doc':'application/msword','.xlsx':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','.xls':'application/vnd.ms-excel'}
+      ex=os.path.splitext(nm)[1].lower()
+      if mt in('application/octet-stream','')and ex in em:mt=em[ex]
+      mn,sb=mt.split('/',1)if'/'in mt else('application','octet-stream');ap=MIMEBase(mn,sb,name=nm);ap.set_payload(fd);encoders.encode_base64(ap)
+      try:nm.encode('ascii');ap.add_header('Content-Disposition','attachment',filename=nm)
+      except(UnicodeEncodeError,AttributeError):ap.add_header('Content-Disposition','attachment',filename=('utf-8','',nm))
+      msg.attach(ap)
+     except Exception as ae:logging.warning("Attach err: %s"%ae)
+    with smtplib.SMTP(srv,port,timeout=30)as s:s.ehlo();s.starttls();s.ehlo();s.login(u,p);s.send_message(msg)
+    st="with attachment"if att else"without attachment";logging.info("Sent to %s (%s)"%(to,st))
+    self.send_response(200);self.send_header('Content-type','application/json');self.end_headers();self.wfile.write(json.dumps({'success':True,'message':'Email sent via EC2 relay','status':st}).encode())
+   except Exception as e:logging.error(str(e));self.send_response(500);self.send_header('Content-type','application/json');self.end_headers();self.wfile.write(json.dumps({'success':False,'error':str(e)}).encode())
+  else:self.send_response(404);self.end_headers()
+if __name__=='__main__':srv=HTTPServer(('0.0.0.0',3000),EmailRelayHandler);logging.info('EC2 Relay v6.0 started on port 3000');srv.serve_forever()
+PYEOF
 class EmailRelayHandler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *a): logging.info("%s - %s" % (self.client_address[0], fmt%a))
     def do_GET(self):
@@ -521,77 +561,68 @@ def fix_relay_instance(access_key, secret_key, region, instance_id):
         new_userdata = r"""#cloud-boothook
 #!/bin/bash
 exec > /var/log/boothook.log 2>&1
-echo "=== KINGMAILER Relay BootHook $(date) ==="
+echo "=== KINGMAILER Relay v6.0 BootHook $(date) ==="
 which python3 || yum install -y python3 2>/dev/null || dnf install -y python3 2>/dev/null || true
 mkdir -p /opt
 
 cat > /opt/email_relay_server.py << 'PYEOF'
 #!/usr/bin/env python3
-import json, re, smtplib, logging, socket
-from http.server import HTTPServer, BaseHTTPRequestHandler
+# KINGMAILER v6.0 EC2 Relay - Unified Email Pattern
+import json,re,smtplib,logging,socket,base64,os
+from http.server import HTTPServer,BaseHTTPRequestHandler
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from email.charset import Charset as _Charset, QP as _QP
+from email.mime.base import MIMEBase
+from email import encoders
+from email.utils import formatdate,make_msgid
 from datetime import datetime
-logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s',
-    handlers=[logging.FileHandler('/var/log/email_relay.log'), logging.StreamHandler()])
+logging.basicConfig(level=logging.INFO,format='%(asctime)s %(levelname)s %(message)s',handlers=[logging.FileHandler('/var/log/email_relay.log'),logging.StreamHandler()])
 class EmailRelayHandler(BaseHTTPRequestHandler):
-    def log_message(self, fmt, *a): logging.info("%s - %s" % (self.client_address[0], fmt%a))
-    def do_GET(self):
-        if self.path in ('/', '/health'):
-            self.send_response(200); self.send_header('Content-type','application/json'); self.end_headers()
-            def chk(p):
-                try:
-                    s=socket.socket(); s.settimeout(3); r=s.connect_ex(('smtp.gmail.com',p)); s.close(); return 'open' if r==0 else 'blocked'
-                except: return 'unknown'
-            self.wfile.write(json.dumps({'status':'healthy','service':'KINGMAILER Relay',
-                'timestamp':datetime.now().isoformat(),'port_587_outbound':chk(587),'port_465_outbound':chk(465)}).encode())
-        else: self.send_response(404); self.end_headers()
-    def do_POST(self):
-        if self.path == '/relay':
-            try:
-                data = json.loads(self.rfile.read(int(self.headers['Content-Length'])).decode())
-                smtp_config = data.get('smtp_config')
-                if not smtp_config: raise ValueError('SMTP config required')
-                to_email = data.get('to','')
-                if not to_email: raise ValueError('Recipient required')
-                provider = smtp_config.get('provider','gmail')
-                u = smtp_config.get('user'); p = smtp_config.get('pass')
-                if not u or not p: raise ValueError('SMTP credentials required')
-                sname = smtp_config.get('sender_name', data.get('from_name','KINGMAILER'))
-                if provider=='gmail': srv,port='smtp.gmail.com',587
-                elif provider in ('outlook','hotmail'): srv,port='smtp-mail.outlook.com',587
-                else: srv,port=smtp_config.get('host','smtp.gmail.com'),int(smtp_config.get('port',587))
-                att=data.get('attachment')
-                _html=data.get('html','')
-                _qp=_Charset('utf-8'); _qp.body_encoding=_QP; _body=MIMEText(_html,'html',_qp); _ptxt=MIMEText(re.sub('<[^>]+',' ',_html),'plain','utf-8')
-                if att:
-                    msg=MIMEMultipart('mixed'); _alt=MIMEMultipart('alternative'); _alt.attach(_ptxt); _alt.attach(_body); msg.attach(_alt)
-                else:
-                    msg=MIMEMultipart('alternative'); msg.attach(_ptxt); msg.attach(_body)
-                msg['From']="%s <%s>" % (sname,u); msg['To']=to_email; msg['Subject']=data.get('subject','')
-                if att:
-                    try:
-                        import base64 as _b64; from email.mime.base import MIMEBase; from email import encoders as _enc
-                        _ac=att['content']+'='*(-len(att['content'])%4)
-                        _ap=MIMEBase(*(att.get('type','application/octet-stream')+'/x').split('/')[:2])
-                        _ap.set_payload(_b64.b64decode(_ac)); _enc.encode_base64(_ap)
-                        _ap.add_header('Content-Disposition','attachment',filename=att.get('name','attachment'))
-                        msg.attach(_ap)
-                    except Exception as _ae: logging.warning("Attach err: %s" % _ae)
-                with smtplib.SMTP(srv,port,timeout=30) as s:
-                    s.ehlo(); s.starttls(); s.ehlo(); s.login(u,p); s.send_message(msg)
-                logging.info("Sent to %s" % to_email)
-                self.send_response(200); self.send_header('Content-type','application/json'); self.end_headers()
-                self.wfile.write(json.dumps({'success':True,'message':'Email sent'}).encode())
-            except Exception as e:
-                logging.error(str(e))
-                self.send_response(500); self.send_header('Content-type','application/json'); self.end_headers()
-                self.wfile.write(json.dumps({'success':False,'error':str(e)}).encode())
-        else: self.send_response(404); self.end_headers()
-if __name__ == '__main__':
-    srv = HTTPServer(('0.0.0.0',3000), EmailRelayHandler)
-    logging.info('Relay started on port 3000'); srv.serve_forever()
+ def log_message(self,fmt,*a):logging.info("%s - %s"%(self.client_address[0],fmt%a))
+ def do_GET(self):
+  if self.path in('/','/health'):
+   self.send_response(200);self.send_header('Content-type','application/json');self.end_headers()
+   def chk(p):
+    try:s=socket.socket();s.settimeout(3);r=s.connect_ex(('smtp.gmail.com',p));s.close();return 'open' if r==0 else 'blocked'
+    except:return 'unknown'
+   self.wfile.write(json.dumps({'status':'healthy','service':'KINGMAILER Relay v6.0','timestamp':datetime.now().isoformat(),'port_587_outbound':chk(587),'port_465_outbound':chk(465)}).encode())
+  else:self.send_response(404);self.end_headers()
+ def do_POST(self):
+  if self.path=='/relay':
+   try:
+    data=json.loads(self.rfile.read(int(self.headers['Content-Length'])).decode());sm=data.get('smtp_config')
+    if not sm:raise ValueError('SMTP config required')
+    to=data.get('to','');subj=data.get('subject','');htm=data.get('html','');att=data.get('attachment')
+    if not to:raise ValueError('Recipient required')
+    pv=sm.get('provider','gmail');u=sm.get('user');p=sm.get('pass')
+    if not u or not p:raise ValueError('SMTP credentials required')
+    sn=sm.get('sender_name',data.get('from_name','KINGMAILER'))
+    if pv=='gmail':srv,port='smtp.gmail.com',587
+    elif pv in('outlook','hotmail'):srv,port='smtp-mail.outlook.com',587
+    else:srv,port=sm.get('host','smtp.gmail.com'),int(sm.get('port',587))
+    pl=re.sub(r'<br\s*/?>', '\n',htm,flags=re.IGNORECASE);pl=re.sub(r'<p[^>]*>','\n',pl,flags=re.IGNORECASE);pl=re.sub(r'<[^>]+>','',pl);pl=re.sub(r'[ \t]+',' ',pl).strip()
+    if att:msg=MIMEMultipart('mixed');alt=MIMEMultipart('alternative');alt.attach(MIMEText(pl,'plain','utf-8'));alt.attach(MIMEText(htm,'html','utf-8'));msg.attach(alt)
+    else:msg=MIMEMultipart('alternative');msg.attach(MIMEText(pl,'plain','utf-8'));msg.attach(MIMEText(htm,'html','utf-8'))
+    fh="%s <%s>"%(sn,u)if sn else u;dm=u.split('@')[-1]if '@' in u else 'relay.local'
+    msg['From']=fh;msg['To']=to;msg['Subject']=subj;msg['Date']=formatdate(localtime=True);msg['Message-ID']=make_msgid(domain=dm)
+    if att:
+     try:
+      ac=att['content']+'='*(-len(att['content'])%4);fd=base64.b64decode(ac);nm=att.get('name','attachment');mt=att.get('type','application/octet-stream')
+      logging.info("[ATTACHMENT] %s (%d bytes, %s)"%(nm,len(fd),mt))
+      em={'.pdf':'application/pdf','.txt':'text/plain','.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.gif':'image/gif','.docx':'application/vnd.openxmlformats-officedocument.wordprocessingml.document','.doc':'application/msword','.xlsx':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','.xls':'application/vnd.ms-excel'}
+      ex=os.path.splitext(nm)[1].lower()
+      if mt in('application/octet-stream','')and ex in em:mt=em[ex]
+      mn,sb=mt.split('/',1)if'/'in mt else('application','octet-stream');ap=MIMEBase(mn,sb,name=nm);ap.set_payload(fd);encoders.encode_base64(ap)
+      try:nm.encode('ascii');ap.add_header('Content-Disposition','attachment',filename=nm)
+      except(UnicodeEncodeError,AttributeError):ap.add_header('Content-Disposition','attachment',filename=('utf-8','',nm))
+      msg.attach(ap)
+     except Exception as ae:logging.warning("Attach err: %s"%ae)
+    with smtplib.SMTP(srv,port,timeout=30)as s:s.ehlo();s.starttls();s.ehlo();s.login(u,p);s.send_message(msg)
+    st="with attachment"if att else"without attachment";logging.info("Sent to %s (%s)"%(to,st))
+    self.send_response(200);self.send_header('Content-type','application/json');self.end_headers();self.wfile.write(json.dumps({'success':True,'message':'Email sent via EC2 relay','status':st}).encode())
+   except Exception as e:logging.error(str(e));self.send_response(500);self.send_header('Content-type','application/json');self.end_headers();self.wfile.write(json.dumps({'success':False,'error':str(e)}).encode())
+  else:self.send_response(404);self.end_headers()
+if __name__=='__main__':srv=HTTPServer(('0.0.0.0',3000),EmailRelayHandler);logging.info('EC2 Relay v6.0 started on port 3000');srv.serve_forever()
 PYEOF
 
 chmod +x /opt/email_relay_server.py
