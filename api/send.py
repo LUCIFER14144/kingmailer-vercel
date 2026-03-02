@@ -1,7 +1,7 @@
 """
-KINGMAILER v4.1 - Enhanced Email Sending API
+KINGMAILER v4.2 - Enhanced Email Sending API
 Features: SMTP, AWS SES, EC2 Relay, Spintax, Template Tags
-Inbox Fix: Proper MIME structure, RFC 2231 filenames, anti-spam headers
+Inbox Fix: Minimal spam-clean headers, proper MIME structure, RFC 2231 attachment filenames
 """
 
 from http.server import BaseHTTPRequestHandler
@@ -11,8 +11,6 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email import encoders
 from email.utils import formatdate, make_msgid
-from email.header import Header
-from email.charset import Charset as _Charset, QP as _QP
 import boto3
 from botocore.exceptions import ClientError
 import json
@@ -24,163 +22,90 @@ from datetime import datetime
 import base64
 import uuid
 
-
-# Spintax Processor
 def process_spintax(text):
-    """Process spintax syntax: {option1|option2|option3}"""
-    if not text:
-        return text
+    if not text: return text
     pattern = r'\{([^{}]+)\}'
     def replace_fn(match):
         options = match.group(1).split('|')
         return random.choice(options).strip()
-    max_iter = 10
-    iteration = 0
+    max_iter = 10; iteration = 0
     while '{' in text and '|' in text and iteration < max_iter:
-        text = re.sub(pattern, replace_fn, text)
-        iteration += 1
+        text = re.sub(pattern, replace_fn, text); iteration += 1
     return text
 
+_US_FIRST = ['James','John','Robert','Michael','William','David','Richard','Joseph','Thomas','Charles','Mary','Patricia','Jennifer','Linda','Barbara','Elizabeth','Susan','Jessica','Sarah','Karen','Emily','Amanda','Stephanie','Rebecca','Laura','Sharon','Cynthia','Dorothy','Amy','Anna']
+_US_LAST  = ['Smith','Johnson','Williams','Brown','Jones','Garcia','Miller','Davis','Rodriguez','Martinez','Wilson','Anderson','Taylor','Thomas','Hernandez','Moore','Martin','Jackson','Thompson','White']
+_US_CITIES = [('New York','NY','10001'),('Los Angeles','CA','90001'),('Chicago','IL','60601'),('Houston','TX','77001'),('Phoenix','AZ','85001'),('Philadelphia','PA','19101'),('San Antonio','TX','78201'),('San Diego','CA','92101'),('Dallas','TX','75201'),('Austin','TX','78701'),('Seattle','WA','98101'),('Denver','CO','80201'),('Nashville','TN','37201'),('Charlotte','NC','28201'),('Boston','MA','02101'),('Las Vegas','NV','89101'),('Miami','FL','33101'),('Atlanta','GA','30301'),('Portland','OR','97201'),('Detroit','MI','48201')]
+_US_STREETS   = ['Main St','Oak Ave','Maple Dr','Pine Blvd','Cedar Lane','Elm Rd','Washington Blvd','Park Ave','Lake Dr','Hillside Way','Sunset Blvd','River Rd','Forest Ave','Valley Dr','Summit Rd']
+_US_COMPANIES = ['Apex Solutions LLC','Bright Path Inc','Cascade Digital Corp','Delta Group','Everest Ventures','Frontier Services Co','Global Tech Inc','Harbor Networks LLC','Inland Systems Corp','Jade Analytics','Keystone Consulting','Lighthouse Media','Meridian Group LLC','Nexus Innovations','Oakwood Industries','Pinnacle Growth Inc','Quantum Systems','Ridgeline Corp','Summit Partners LLC','Trident Enterprises']
+_US_PRODUCTS  = ['Premium Membership','Express Delivery','Annual Plan','Business Package','Standard Subscription','Pro License','Elite Bundle','Starter Kit','Enterprise Plan','Monthly Service','Digital Package','Advanced Suite']
 
-# ── Placeholder data pools ──────────────────────────────────────────────────
-_US_FIRST = ['James','John','Robert','Michael','William','David','Richard','Joseph','Thomas','Charles',
-             'Mary','Patricia','Jennifer','Linda','Barbara','Elizabeth','Susan','Jessica','Sarah','Karen',
-             'Emily','Amanda','Stephanie','Rebecca','Laura','Sharon','Cynthia','Dorothy','Amy','Anna']
-_US_LAST  = ['Smith','Johnson','Williams','Brown','Jones','Garcia','Miller','Davis','Rodriguez','Martinez',
-             'Wilson','Anderson','Taylor','Thomas','Hernandez','Moore','Martin','Jackson','Thompson','White']
-_US_CITIES = [
-    ('New York','NY','10001'),('Los Angeles','CA','90001'),('Chicago','IL','60601'),
-    ('Houston','TX','77001'),('Phoenix','AZ','85001'),('Philadelphia','PA','19101'),
-    ('San Antonio','TX','78201'),('San Diego','CA','92101'),('Dallas','TX','75201'),
-    ('Austin','TX','78701'),('Seattle','WA','98101'),('Denver','CO','80201'),
-    ('Nashville','TN','37201'),('Charlotte','NC','28201'),('Boston','MA','02101'),
-    ('Las Vegas','NV','89101'),('Miami','FL','33101'),('Atlanta','GA','30301'),
-    ('Portland','OR','97201'),('Detroit','MI','48201'),
-]
-_US_STREETS   = ['Main St','Oak Ave','Maple Dr','Pine Blvd','Cedar Lane','Elm Rd',
-                 'Washington Blvd','Park Ave','Lake Dr','Hillside Way','Sunset Blvd',
-                 'River Rd','Forest Ave','Valley Dr','Summit Rd']
-_US_COMPANIES = ['Apex Solutions LLC','Bright Path Inc','Cascade Digital Corp','Delta Group',
-                 'Everest Ventures','Frontier Services Co','Global Tech Inc','Harbor Networks LLC',
-                 'Inland Systems Corp','Jade Analytics','Keystone Consulting','Lighthouse Media',
-                 'Meridian Group LLC','Nexus Innovations','Oakwood Industries','Pinnacle Growth Inc',
-                 'Quantum Systems','Ridgeline Corp','Summit Partners LLC','Trident Enterprises']
-_US_PRODUCTS  = ['Premium Membership','Express Delivery','Annual Plan','Business Package',
-                 'Standard Subscription','Pro License','Elite Bundle','Starter Kit',
-                 'Enterprise Plan','Monthly Service','Digital Package','Advanced Suite']
-
-
-def _rnd_num(n):
-    return ''.join(random.choices(string.digits, k=n))
-def _rnd_alpha(n):
-    return ''.join(random.choices(string.ascii_lowercase, k=n))
+def _rnd_num(n): return ''.join(random.choices(string.digits, k=n))
+def _rnd_alpha(n): return ''.join(random.choices(string.ascii_lowercase, k=n))
 def _rnd_alphanum(n, upper=False):
     pool = (string.ascii_uppercase if upper else string.ascii_lowercase) + string.digits
     return ''.join(random.choices(pool, k=n))
 
-
 def build_tag_map(recipient_email='', sender_name='', sender_email='', csv_row=None):
-    """Build a fresh mapping of all $tag and {{tag}} placeholder values."""
-    first = random.choice(_US_FIRST)
-    last  = random.choice(_US_LAST)
+    first = random.choice(_US_FIRST); last = random.choice(_US_LAST)
     city, state, zipcode = random.choice(_US_CITIES)
-    sn = random.randint(100, 9999)
-    st = random.choice(_US_STREETS)
+    sn = random.randint(100, 9999); st = random.choice(_US_STREETS)
     ts13 = str(int(datetime.now().timestamp() * 1000))[:13]
     m = {
-        'name':          recipient_email.split('@')[0] if recipient_email else (first+' '+last),
-        'email':         recipient_email,
-        'recipient':     recipient_email,
-        'recipientName': first + ' ' + last,
-        'sender':        sender_email,
-        'sendername':    sender_name or (first + ' ' + last),
-        'sendertag':     f"{sender_name} <{sender_email}>" if sender_name else sender_email,
-        'randName':      f"{first} {last}",
-        'rnd_company_us': random.choice(_US_COMPANIES),
-        'address':       f"{sn} {st}, {city}, {state} {zipcode}",
-        'street':        f"{sn} {st}",
-        'city':          city,
-        'state':         state,
-        'zipcode':       zipcode,
-        'zip':           zipcode,
-        'invcnumber':    'INV-' + _rnd_num(8),
-        'ordernumber':   'ORD-' + _rnd_num(8),
-        'product':       random.choice(_US_PRODUCTS),
-        'amount':        f"${random.randint(999, 99999)/100:.2f}",
-        'charges':       f"${random.randint(499, 49999)/100:.2f}",
-        'quantity':      str(random.randint(1, 99)),
-        'number':        _rnd_num(6),
-        'date':          datetime.now().strftime('%B %d, %Y'),
-        'time':          datetime.now().strftime('%I:%M %p'),
-        'year':          str(datetime.now().year),
-        'id':            _rnd_num(10),
-        'random_name':   f"{first} {last}",
-        'company':       random.choice(_US_COMPANIES),
-        'company_name':  random.choice(_US_COMPANIES),
-        '13_digit':      ts13,
-        'unique_id':     ts13,
-        'unique13digit': ts13,
-        'random_6':      ''.join(random.choices(string.ascii_letters + string.digits, k=6)),
-        'random_8':      ''.join(random.choices(string.ascii_letters + string.digits, k=8)),
-        'unique16_484':      f"{_rnd_num(4)}-{_rnd_num(8)}-{_rnd_num(4)}",
-        'unique16_565':      f"{_rnd_num(5)}-{_rnd_num(6)}-{_rnd_num(5)}",
-        'unique16_4444':     f"{_rnd_num(4)}-{_rnd_num(4)}-{_rnd_num(4)}-{_rnd_num(4)}",
-        'unique16_88':       f"{_rnd_num(8)}-{_rnd_num(8)}",
-        'unique14alphanum':  _rnd_alphanum(14, upper=True),
-        'unique11alphanum':  _rnd_alphanum(11, upper=True),
-        'unique14alpha':     _rnd_alpha(14).upper(),
-        'alpha_random_small': _rnd_alpha(6),
-        'alpha_short':        _rnd_alpha(4),
+        'name': recipient_email.split('@')[0] if recipient_email else (first+' '+last),
+        'email': recipient_email, 'recipient': recipient_email,
+        'recipientName': first+' '+last, 'sender': sender_email,
+        'sendername': sender_name or (first+' '+last),
+        'sendertag': f"{sender_name} <{sender_email}>" if sender_name else sender_email,
+        'randName': f"{first} {last}", 'rnd_company_us': random.choice(_US_COMPANIES),
+        'address': f"{sn} {st}, {city}, {state} {zipcode}",
+        'street': f"{sn} {st}", 'city': city, 'state': state, 'zipcode': zipcode, 'zip': zipcode,
+        'invcnumber': 'INV-'+_rnd_num(8), 'ordernumber': 'ORD-'+_rnd_num(8),
+        'product': random.choice(_US_PRODUCTS),
+        'amount': f"${random.randint(999,99999)/100:.2f}",
+        'charges': f"${random.randint(499,49999)/100:.2f}",
+        'quantity': str(random.randint(1,99)), 'number': _rnd_num(6),
+        'date': datetime.now().strftime('%B %d, %Y'), 'time': datetime.now().strftime('%I:%M %p'),
+        'year': str(datetime.now().year), 'id': _rnd_num(10),
+        'random_name': f"{first} {last}", 'company': random.choice(_US_COMPANIES),
+        'company_name': random.choice(_US_COMPANIES),
+        '13_digit': ts13, 'unique_id': ts13, 'unique13digit': ts13,
+        'random_6': ''.join(random.choices(string.ascii_letters+string.digits, k=6)),
+        'random_8': ''.join(random.choices(string.ascii_letters+string.digits, k=8)),
+        'unique16_484': f"{_rnd_num(4)}-{_rnd_num(8)}-{_rnd_num(4)}",
+        'unique16_565': f"{_rnd_num(5)}-{_rnd_num(6)}-{_rnd_num(5)}",
+        'unique16_4444': f"{_rnd_num(4)}-{_rnd_num(4)}-{_rnd_num(4)}-{_rnd_num(4)}",
+        'unique16_88': f"{_rnd_num(8)}-{_rnd_num(8)}",
+        'unique14alphanum': _rnd_alphanum(14, upper=True),
+        'unique11alphanum': _rnd_alphanum(11, upper=True),
+        'unique14alpha': _rnd_alpha(14).upper(),
+        'alpha_random_small': _rnd_alpha(6), 'alpha_short': _rnd_alpha(4),
         'random_three_chars': _rnd_alphanum(3),
     }
     if csv_row:
         for k, v in csv_row.items():
-            if k:
-                m[k] = str(v)
+            if k: m[k] = str(v)
     return m
 
-
 def replace_template_tags(text, recipient_email='', sender_name='', sender_email='', csv_row=None):
-    """Replace ALL $tag and {{tag}} placeholders in text."""
-    if not text:
-        return text
+    if not text: return text
     tag_map = build_tag_map(recipient_email, sender_name, sender_email, csv_row)
     sorted_keys = sorted(tag_map.keys(), key=len, reverse=True)
     for key in sorted_keys:
         val = str(tag_map[key])
-        # Use lambda to prevent re.sub from interpreting \ in val as backreferences
-        text = re.sub(r'\{\{' + re.escape(key) + r'\}\}', lambda m, v=val: v, text, flags=re.IGNORECASE)
-        text = re.sub(r'\$' + re.escape(key) + r'(?=[^a-zA-Z0-9_]|$)', lambda m, v=val: v, text)
+        text = re.sub(r'\{\{'+re.escape(key)+r'\}\}', lambda m,v=val: v, text, flags=re.IGNORECASE)
+        text = re.sub(r'\$'+re.escape(key)+r'(?=[^a-zA-Z0-9_]|$)', lambda m,v=val: v, text)
     return text
-
 
 def replace_csv_row_tags(text, row):
-    """Replace {{column}} placeholders with CSV row values."""
-    if not text or not row:
-        return text
+    if not text or not row: return text
     for key, value in row.items():
-        text = re.sub(r'\{\{' + re.escape(key) + r'\}\}', str(value), text, flags=re.IGNORECASE)
+        text = re.sub(r'\{\{'+re.escape(key)+r'\}\}', str(value), text, flags=re.IGNORECASE)
     return text
 
-
-def _rfc2231_filename(filename):
-    """Encode filename using RFC 2231 for proper Content-Disposition (avoids spam triggers)."""
-    try:
-        filename.encode('ascii')
-        return filename  # pure ASCII — no encoding needed
-    except UnicodeEncodeError:
-        from urllib.parse import quote
-        return f"UTF-8''{quote(filename, safe='')}"
-
-
 def add_attachment_to_message(msg, attachment):
-    """Attach a base64-encoded file with proper MIME structure for inbox delivery.
-    - Images: Content-Disposition inline  (viewable content, less suspicious)
-    - Documents: Content-Disposition attachment
-    Returns (True, None) on success or (False, error_str).
-    """
-    if not attachment:
-        return True, None
+    """Attach file with RFC 2231 filename encoding. Returns (True,None) or (False,err_str)."""
+    if not attachment: return True, None
     try:
         import os as _os
         raw_b64 = attachment['content']
@@ -188,252 +113,161 @@ def add_attachment_to_message(msg, attachment):
         file_data = base64.b64decode(raw_b64)
         mime_type = attachment.get('type', 'application/octet-stream')
         filename  = attachment.get('name', 'attachment')
-
-        # Extension → proper MIME type map
         _EXT_MAP = {
-            '.pdf':  'application/pdf',
-            '.txt':  'text/plain',
-            '.png':  'image/png',
-            '.jpg':  'image/jpeg',
-            '.jpeg': 'image/jpeg',
-            # .gif files produced by canvas are actually JPEG bytes — use .jpg extension
-            '.gif':  'image/jpeg',
-            '.webp': 'image/webp',
-            '.tiff': 'image/tiff',
-            '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-            '.doc':  'application/msword',
-            '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            '.xls':  'application/vnd.ms-excel',
-            '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-            # HTML/HTM: treat as octet-stream to prevent inline rendering & spam triggers
-            '.html': 'application/octet-stream',
-            '.htm':  'application/octet-stream',
+            '.pdf':'application/pdf','.txt':'text/plain',
+            '.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg',
+            '.gif':'image/gif','.webp':'image/webp','.tiff':'image/tiff',
+            '.docx':'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            '.doc':'application/msword',
+            '.xlsx':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            '.xls':'application/vnd.ms-excel',
+            '.pptx':'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            '.html':'application/octet-stream','.htm':'application/octet-stream',
         }
         ext = _os.path.splitext(filename)[1].lower()
-        # Fix .gif→JPEG mismatch: rename extension so content matches declared type
-        if ext == '.gif':
-            filename = _os.path.splitext(filename)[0] + '.jpg'
-            ext = '.jpg'
         if mime_type in ('application/octet-stream', '') and ext in _EXT_MAP:
             mime_type = _EXT_MAP[ext]
-
-        main_type, sub_type = mime_type.split('/', 1) if '/' in mime_type else ('application', 'octet-stream')
-
-        # Build MIME part — pass name= directly to constructor for proper quoting
-        part = MIMEBase(main_type, sub_type, name=filename)
+        main_type, sub_type = mime_type.split('/',1) if '/' in mime_type else ('application','octet-stream')
+        part = MIMEBase(main_type, sub_type)
         part.set_payload(file_data)
         encoders.encode_base64(part)
-
-        # Always use 'attachment' disposition.
-        # 'inline' inside multipart/mixed without a matching cid: reference in the HTML body
-        # is the exact signature of phishing emails — spam filters (SpamAssassin, Barracuda,
-        # Proofpoint) flag this pattern hard. True inline images belong in multipart/related.
-        part.add_header('Content-Disposition', 'attachment', filename=filename)
-        # Do NOT add Content-ID to regular attachments.
-        # Content-ID is only valid for multipart/related inline parts (cid: images).
-        # Adding it to a PDF/image attachment is a header-mismatch spam signal.
-
+        try:
+            filename.encode('ascii')
+            part.add_header('Content-Disposition', 'attachment', filename=filename)
+        except UnicodeEncodeError:
+            part.add_header('Content-Disposition', 'attachment', filename=('utf-8','',filename))
         msg.attach(part)
         return True, None
     except Exception as e:
         return False, str(e)
 
 def _html_to_plain(html):
-    """Strip HTML tags to produce a plain-text fallback."""
     text = re.sub(r'<br\s*/?>', '\n', html, flags=re.IGNORECASE)
     text = re.sub(r'<p[^>]*>', '\n', text, flags=re.IGNORECASE)
     text = re.sub(r'</p>', '\n', text, flags=re.IGNORECASE)
-    text = re.sub(r'<li[^>]*>', '\n• ', text, flags=re.IGNORECASE)
+    text = re.sub(r'<li[^>]*>', '\n\u2022 ', text, flags=re.IGNORECASE)
     text = re.sub(r'<[^>]+>', '', text)
     text = re.sub(r'[ \t]+', ' ', text)
     text = re.sub(r'\n{3,}', '\n\n', text)
     return text.strip()
 
-
 def _extract_domain(from_header):
-    """Extract clean domain from From header like 'Name <user@domain.com>'."""
     if '@' in from_header:
         part = from_header.split('@')[-1]
-        # Remove trailing > or whitespace
         domain = re.sub(r'[>\s].*$', '', part).strip()
         return domain if domain else 'mail.local'
     return 'mail.local'
 
-
-
 def _is_html(text):
-    """Return True if text contains at least one HTML tag like <p>, <br>, <div>."""
     return bool(re.search(r'<[a-z][a-z0-9]*[\s>/]', text or '', re.IGNORECASE))
 
 def _plain_to_html(text):
-    """Convert plain text with newlines into a properly structured HTML email body.
-    Paragraphs separated by blank lines, single newlines become <br>.
-    """
     import html as _html_mod
-    # Escape HTML entities first
     escaped = _html_mod.escape(text)
-    # Split on blank lines → paragraphs
     paragraphs = re.split(r'\n\s*\n', escaped)
     html_parts = []
     for para in paragraphs:
-        # Single newlines within a paragraph → <br>
         para_html = para.replace('\n', '<br>')
         html_parts.append(f'<p style="margin:0 0 1em 0;line-height:1.6;">{para_html}</p>')
     body = '\n'.join(html_parts)
-    return (
-        '<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;'
-        'color:#222;max-width:650px;margin:0 auto;padding:20px;">'
-        + body + '</div>'
-    )
+    return ('<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#222;max-width:650px;margin:0 auto;padding:20px;">' + body + '</div>')
 
 def _build_msg(from_header, to_email, subject, html_body, attachment=None):
-    """Build a properly structured MIME message optimised for inbox delivery.
-    Auto-detects plain text vs HTML and wraps plain text properly.
+    """Build MIME message with minimal, spam-filter-safe headers.
+    Removed: X-Priority, Importance, Accept-Language, Content-Language
+    Added:   Reply-To, X-Mailer
     """
-    # If body has no HTML tags, convert \n → <p>/<br> so lines display correctly
     if not _is_html(html_body):
         html_body = _plain_to_html(html_body)
     plain = _html_to_plain(html_body)
 
-    # Inner multipart/alternative carries text/plain + text/html
     alt = MIMEMultipart('alternative')
-    # Plain text MUST come before HTML (RFC 2046 §5.1.4)
     alt.attach(MIMEText(plain, 'plain', 'utf-8'))
-
-    # HTML part — natively use utf-8 charset which handles encoding properly
-    html_part = MIMEText(html_body, 'html', 'utf-8')
-    alt.attach(html_part)
+    alt.attach(MIMEText(html_body, 'html', 'utf-8'))
 
     if attachment:
-        # multipart/mixed is the outer wrapper when there is a file attachment
         msg = MIMEMultipart('mixed')
         msg.attach(alt)
     else:
         msg = alt
 
     domain = _extract_domain(from_header)
-
-    # ── Core headers ─────────────────────────────────────────────────────
-    msg['From']             = from_header
-    msg['To']               = to_email
-    msg['Subject']          = subject
-    msg['Date']             = formatdate(localtime=True)
-    msg['Message-ID']       = make_msgid(domain=domain)
-    # Do NOT set MIME-Version manually — Python email library adds it automatically.
-    # Setting it manually creates a DUPLICATE MIME-Version header, which is an RFC
-    # violation and a confirmed spam trigger on Gmail, Outlook and Yahoo.
-    msg['X-Priority']       = '3'
-    msg['Importance']       = 'Normal'
-    msg['Accept-Language']  = 'en-US'
-    msg['Content-Language'] = 'en-US'
-
+    msg['From']       = from_header
+    msg['To']         = to_email
+    msg['Subject']    = subject
+    msg['Date']       = formatdate(localtime=True)
+    msg['Message-ID'] = make_msgid(domain=domain)
+    msg['Reply-To']   = from_header
+    msg['X-Mailer']   = 'KINGMAILER'
     return msg
 
-
 def send_via_smtp(smtp_config, from_name, to_email, subject, html_body, attachment=None):
-    """Send email via SMTP (Gmail or custom server)"""
     try:
-        is_gmail = smtp_config.get('provider') == 'gmail'
+        is_gmail    = smtp_config.get('provider') == 'gmail'
         smtp_server = 'smtp.gmail.com' if is_gmail else smtp_config.get('host', 'smtp.gmail.com')
-        smtp_port   = 587             if is_gmail else int(smtp_config.get('port', 587))
-
-        smtp_user = smtp_config.get('user')
-        smtp_pass = smtp_config.get('pass')
-        # from_name is the caller-provided name (may be random per-email).
-        # smtp_config.sender_name is the account default — used only when from_name is empty.
+        smtp_port   = 587 if is_gmail else int(smtp_config.get('port', 587))
+        smtp_user   = smtp_config.get('user')
+        smtp_pass   = smtp_config.get('pass')
         sender_name = from_name or smtp_config.get('sender_name') or ''
         from_header = f"{sender_name} <{smtp_user}>" if sender_name else smtp_user
 
         msg = _build_msg(from_header, to_email, subject, html_body, attachment)
-
         if attachment:
             att_ok, att_err = add_attachment_to_message(msg, attachment)
             if not att_ok:
                 return {'success': False, 'error': f'Attachment error: {att_err}'}
 
         with smtplib.SMTP(smtp_server, smtp_port, timeout=30) as server:
-            server.ehlo()
-            server.starttls()
-            server.ehlo()
+            server.ehlo(); server.starttls(); server.ehlo()
             server.login(smtp_user, smtp_pass)
             server.send_message(msg)
-
         return {'success': True, 'message': f'Email sent via SMTP to {to_email}'}
-
     except smtplib.SMTPAuthenticationError:
-        return {'success': False, 'error': 'SMTP authentication failed — check your Gmail app password'}
+        return {'success': False, 'error': 'SMTP authentication failed \u2014 check your Gmail app password'}
     except smtplib.SMTPRecipientsRefused:
         return {'success': False, 'error': f'Recipient address rejected: {to_email}'}
     except Exception as e:
         return {'success': False, 'error': f'SMTP error: {str(e)}'}
 
-
 def send_via_ses(aws_config, from_name, to_email, subject, html_body, attachment=None):
-    """Send email via AWS SES"""
     try:
-        ses_client = boto3.client(
-            'ses',
-            region_name=aws_config.get('region', 'us-east-1'),
+        ses_client = boto3.client('ses',
+            region_name=aws_config.get('region','us-east-1'),
             aws_access_key_id=aws_config.get('access_key'),
-            aws_secret_access_key=aws_config.get('secret_key')
-        )
-        
+            aws_secret_access_key=aws_config.get('secret_key'))
         from_email = aws_config.get('from_email', 'noreply@example.com')
         source = f"{from_name} <{from_email}>" if from_name else from_email
-
         if attachment:
             msg = _build_msg(source, to_email, subject, html_body, attachment)
             att_ok, att_err = add_attachment_to_message(msg, attachment)
             if not att_ok:
                 return {'success': False, 'error': f'Attachment error: {att_err}'}
-            response = ses_client.send_raw_email(
-                Source=source, Destinations=[to_email],
-                RawMessage={'Data': msg.as_string()}
-            )
+            response = ses_client.send_raw_email(Source=source, Destinations=[to_email],
+                RawMessage={'Data': msg.as_string()})
         else:
-            response = ses_client.send_email(
-                Source=source,
+            response = ses_client.send_email(Source=source,
                 Destination={'ToAddresses': [to_email]},
-                Message={
-                    'Subject': {'Data': subject, 'Charset': 'UTF-8'},
-                    'Body': {'Html': {'Data': html_body, 'Charset': 'UTF-8'}}
-                }
-            )
-        
+                Message={'Subject': {'Data': subject, 'Charset': 'UTF-8'},
+                    'Body': {'Text': {'Data': _html_to_plain(html_body), 'Charset': 'UTF-8'},
+                             'Html': {'Data': html_body, 'Charset': 'UTF-8'}}})
         return {'success': True, 'message': f'Email sent via SES to {to_email}', 'message_id': response['MessageId']}
     except Exception as e:
         return {'success': False, 'error': f'SES error: {str(e)}'}
 
-
 def send_via_ec2(ec2_url, smtp_config, from_name, to_email, subject, html_body, attachment=None):
-    """Send email via EC2 relay endpoint (JetMailer style - authenticated SMTP)"""
     try:
-        payload = {
-            'from_name': from_name,
-            'to': to_email,
-            'subject': subject,
-            'html': html_body,
-            'smtp_config': smtp_config  # Pass SMTP credentials to relay
-        }
-        if attachment:
-            payload['attachment'] = attachment
-        
+        payload = {'from_name': from_name, 'to': to_email, 'subject': subject,
+                   'html': html_body, 'smtp_config': smtp_config}
+        if attachment: payload['attachment'] = attachment
         data = json.dumps(payload).encode('utf-8')
         req = urllib.request.Request(ec2_url, data=data, method='POST')
         req.add_header('Content-Type', 'application/json')
-        req.add_header('User-Agent', 'KINGMAILER/4.0')
-        
+        req.add_header('User-Agent', 'KINGMAILER/4.2')
         with urllib.request.urlopen(req, timeout=30) as response:
             result = json.loads(response.read().decode('utf-8'))
-            return {
-                'success': True,
-                'message': f'Email sent via EC2 to {to_email}',
-                'details': result
-            }
-    
+            return {'success': True, 'message': f'Email sent via EC2 to {to_email}', 'details': result}
     except Exception as e:
         return {'success': False, 'error': f'EC2 relay failed: {str(e)}'}
-
 
 class handler(BaseHTTPRequestHandler):
     def do_POST(self):
@@ -441,16 +275,16 @@ class handler(BaseHTTPRequestHandler):
             content_length = int(self.headers['Content-Length'])
             post_data = self.rfile.read(content_length)
             data = json.loads(post_data.decode('utf-8'))
-            
-            to_email = data.get('to', '').strip()
-            subject = data.get('subject', 'No Subject')
-            html_body = data.get('html', '')
-            from_name = data.get('from_name', 'KINGMAILER')
-            from_email = data.get('from_email', '')
+
+            to_email    = data.get('to', '').strip()
+            subject     = data.get('subject', 'No Subject')
+            html_body   = data.get('html', '')
+            from_name   = data.get('from_name', 'KINGMAILER')
+            from_email  = data.get('from_email', '')
             send_method = data.get('method', 'smtp')
-            csv_row = data.get('csv_row', {})
-            attachment = data.get('attachment')  # {name, content (base64), type}
-            
+            csv_row     = data.get('csv_row', {})
+            attachment  = data.get('attachment')
+
             if not to_email:
                 self.send_response(400)
                 self.send_header('Content-type', 'application/json')
@@ -458,94 +292,67 @@ class handler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(json.dumps({'success': False, 'error': 'Recipient email required'}).encode())
                 return
-            
-            # Process spintax in subject and body
-            subject = process_spintax(subject)
-            html_body = process_spintax(html_body)
-            
-            # Replace CSV row placeholders first (so column values override generics)
-            if csv_row:
-                subject = replace_csv_row_tags(subject, csv_row)
-                html_body = replace_csv_row_tags(html_body, csv_row)
-            
-            # Extract sender info for $sendername etc.
-            _smtp_cfg  = data.get('smtp_config') or {}
-            _aws_cfg   = data.get('aws_config')  or {}
-            _s_name = (_smtp_cfg.get('sender_name') or
-                       data.get('from_name') or 'KINGMAILER')
-            _s_email = (_smtp_cfg.get('user') or
-                        _aws_cfg.get('from_email') or
-                        data.get('from_email') or '')
 
-            # Replace standard template tags ($tag and {{tag}} syntax)
-            subject   = replace_template_tags(subject,   recipient_email=to_email,
-                                               sender_name=_s_name, sender_email=_s_email,
-                                               csv_row=csv_row)
-            html_body = replace_template_tags(html_body, recipient_email=to_email,
-                                               sender_name=_s_name, sender_email=_s_email,
-                                               csv_row=csv_row)
-            
-            # Route to appropriate sending method
-            if send_method == 'smtp' or send_method == 'gmail':
+            subject   = process_spintax(subject)
+            html_body = process_spintax(html_body)
+            if csv_row:
+                subject   = replace_csv_row_tags(subject, csv_row)
+                html_body = replace_csv_row_tags(html_body, csv_row)
+
+            _smtp_cfg = data.get('smtp_config') or {}
+            _aws_cfg  = data.get('aws_config')  or {}
+            _s_name   = _smtp_cfg.get('sender_name') or data.get('from_name') or 'KINGMAILER'
+            _s_email  = _smtp_cfg.get('user') or _aws_cfg.get('from_email') or data.get('from_email') or ''
+
+            subject   = replace_template_tags(subject,   recipient_email=to_email, sender_name=_s_name, sender_email=_s_email, csv_row=csv_row)
+            html_body = replace_template_tags(html_body, recipient_email=to_email, sender_name=_s_name, sender_email=_s_email, csv_row=csv_row)
+
+            if send_method in ('smtp', 'gmail'):
                 smtp_config = data.get('smtp_config')
                 if not smtp_config:
-                    self.send_response(400)
-                    self.send_header('Content-type', 'application/json')
-                    self.send_header('Access-Control-Allow-Origin', '*')
-                    self.end_headers()
-                    self.wfile.write(json.dumps({'success': False, 'error': 'SMTP config required'}).encode())
-                    return
+                    self.send_response(400); self.send_header('Content-type','application/json')
+                    self.send_header('Access-Control-Allow-Origin','*'); self.end_headers()
+                    self.wfile.write(json.dumps({'success': False, 'error': 'SMTP config required'}).encode()); return
                 result = send_via_smtp(smtp_config, from_name, to_email, subject, html_body, attachment)
-            
             elif send_method == 'ses':
                 aws_config = data.get('aws_config')
                 if not aws_config:
-                    self.send_response(400)
-                    self.send_header('Content-type', 'application/json')
-                    self.send_header('Access-Control-Allow-Origin', '*')
-                    self.end_headers()
-                    self.wfile.write(json.dumps({'success': False, 'error': 'AWS SES config required'}).encode())
-                    return
+                    self.send_response(400); self.send_header('Content-type','application/json')
+                    self.send_header('Access-Control-Allow-Origin','*'); self.end_headers()
+                    self.wfile.write(json.dumps({'success': False, 'error': 'AWS SES config required'}).encode()); return
                 result = send_via_ses(aws_config, from_name, to_email, subject, html_body, attachment)
-            
             elif send_method == 'ec2':
-                # EC2 Relay - Route email through EC2 IP on port 3000
                 ec2_instance = data.get('ec2_instance')
-                smtp_config = data.get('smtp_config')  # Optional - used if provided
-                
+                smtp_config  = data.get('smtp_config')
                 if ec2_instance and isinstance(ec2_instance, dict):
                     ec2_ip = ec2_instance.get('public_ip')
                     if ec2_ip and ec2_ip not in ('N/A', 'Pending...'):
                         ec2_url = f'http://{ec2_ip}:3000/relay'
-                        result = send_via_ec2(ec2_url, smtp_config, from_name, to_email, subject, html_body, attachment)
-                        if result['success']:
-                            result['message'] = f'Email sent via EC2 IP {ec2_ip} to {to_email}'
+                        result  = send_via_ec2(ec2_url, smtp_config, from_name, to_email, subject, html_body, attachment)
+                        if result['success']: result['message'] = f'Email sent via EC2 IP {ec2_ip} to {to_email}'
                     else:
                         result = {'success': False, 'error': 'EC2 instance has no public IP yet'}
                 else:
                     ec2_url = data.get('ec2_url')
-                    if not ec2_url:
-                        result = {'success': False, 'error': 'No EC2 instance selected or instance not ready'}
-                    else:
-                        result = send_via_ec2(ec2_url, smtp_config, from_name, to_email, subject, html_body, attachment)
-            
+                    if not ec2_url: result = {'success': False, 'error': 'No EC2 instance selected or instance not ready'}
+                    else: result = send_via_ec2(ec2_url, smtp_config, from_name, to_email, subject, html_body, attachment)
             else:
                 result = {'success': False, 'error': f'Unknown send method: {send_method}'}
-            
+
             status_code = 200 if result['success'] else 400
             self.send_response(status_code)
             self.send_header('Content-type', 'application/json')
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
             self.wfile.write(json.dumps(result).encode())
-        
+
         except Exception as e:
             self.send_response(500)
             self.send_header('Content-type', 'application/json')
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
             self.wfile.write(json.dumps({'success': False, 'error': str(e)}).encode())
-    
+
     def do_OPTIONS(self):
         self.send_response(200)
         self.send_header('Access-Control-Allow-Origin', '*')
