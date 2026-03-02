@@ -200,14 +200,9 @@ def add_attachment_to_message(msg, attachment):
 
         main_type, sub_type = mime_type.split('/', 1) if '/' in mime_type else ('application', 'octet-stream')
 
-        # Use MIMEImage for images, MIMEApplication for everything else.
-        # This matches what Apple Mail and Outlook produce — spam filters trust it more
-        # than the generic MIMEBase + encode_base64 approach.
-        if main_type == 'image':
-            part = MIMEImage(file_data, _subtype=sub_type, name=filename)
-        else:
-            # MIMEApplication auto-encodes base64 and sets Content-Transfer-Encoding
-            part = MIMEApplication(file_data, _subtype=sub_type, Name=filename)
+        part = MIMEBase(main_type, sub_type, name=filename)
+        part.set_payload(file_data)
+        encoders.encode_base64(part)
 
         del part['MIME-Version']   # RFC 2045: MIME-Version only in outermost header
 
@@ -298,15 +293,16 @@ def _build_msg(from_header, to_email, subject, html_body, attachment=None):
     text_part = MIMEText(plain, 'plain', _qp)
     html_part = MIMEText(html_body, 'html', _qp)
     # RFC 2045 §6.1: MIME-Version MUST appear only in the outermost message header
-    del text_part['MIME-Version']
-    del html_part['MIME-Version']
+    # However, strict gateways like SES drop base64 body encoding without MIME-Version on inner parts.
+    # del text_part['MIME-Version']
+    # del html_part['MIME-Version']
 
     # ── 5. MIME structure ───────────────────────────────────────────
     if attachment:
         # mixed > alternative (no MIME-Version on inner containers/parts)
         msg = MIMEMultipart('mixed')
         alt = MIMEMultipart('alternative')
-        del alt['MIME-Version']
+        # del alt['MIME-Version']
         alt.attach(text_part)
         alt.attach(html_part)
         msg.attach(alt)
