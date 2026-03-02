@@ -387,6 +387,10 @@
                     <input type="file" id="csvFileInput" accept=".csv,.txt" style="display: none;"
                         onchange="handleFileUpload(event)">
                     <button class="btn btn-secondary" onclick="switchInputMode()">🔄 Switch Mode</button>
+                    <button class="btn btn-secondary" onclick="fillGmassEmails()" style="font-size: 13px;">📧
+                        Gmass</button>
+                    <button class="btn btn-secondary" onclick="fillEmailToolHubEmails()" style="font-size: 13px;">🛠️
+                        Email Tool Hub</button>
                     <span id="inputModeLabel" style="padding: 8px; color: #888;">Mode: CSV Format</span>
                 </div>
                 <textarea id="bulkCsv" rows="8"
@@ -968,7 +972,8 @@
 
             <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;">
                 <button class="btn btn-primary" onclick="saveAwsCredentials()">💾 Save AWS Credentials</button>
-                <button class="btn btn-secondary" onclick="testAwsCredentials()" style="border:1px solid rgba(6,182,212,.35);color:#67e8f9;">🔬 Test AWS Credentials</button>
+                <button class="btn btn-secondary" onclick="testAwsCredentials()"
+                    style="border:1px solid rgba(6,182,212,.35);color:#67e8f9;">🔬 Test AWS Credentials</button>
             </div>
             <div id="awsTestResult" class="result-box" style="display:none;margin-top:12px;"></div>
 

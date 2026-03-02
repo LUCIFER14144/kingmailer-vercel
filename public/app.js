@@ -887,6 +887,60 @@ function switchInputMode() {
     }
 }
 
+// Fill Gmass Seed Emails
+function fillGmassEmails() {
+    if (inputMode !== 'simple') {
+        switchInputMode();
+    }
+    const gmassEmails = [
+        "ajaygoel999@gmail.com",
+        "test@chromecompete.com",
+        "test@ajaygoel.org",
+        "me@dropboxslideshow.com",
+        "test@wordzen.com",
+        "rajgoel8477@gmail.com",
+        "rajanderson8477@gmail.com",
+        "rajwilson8477@gmail.com",
+        "briansmith8477@gmail.com",
+        "oliviasmith8477@gmail.com",
+        "ashsmith8477@gmail.com",
+        "shellysmith8477@gmail.com",
+        "ajay@madsciencekidz.com",
+        "ajay2@ctopowered.com",
+        "ajay@arena.tec.br"
+    ];
+    document.getElementById('bulkCsv').value = gmassEmails.join('\n');
+    updateBulkStats();
+}
+
+// Fill Email Tool Hub Seed Emails
+function fillEmailToolHubEmails() {
+    if (inputMode !== 'simple') {
+        switchInputMode();
+    }
+    const ethEmails = [
+        "pepapihsyd@gmail.com",
+        "dcruzjovita651@gmail.com",
+        "doctsashawn@gmail.com",
+        "foodazmaofficial@gmail.com",
+        "stellajamsonusa@gmail.com",
+        "thomasadward5@gmail.com",
+        "watsonjetpeter@gmail.com",
+        "syedtestm@yahoo.com",
+        "vexabyteofficial@yahoo.com",
+        "jordanmercus1975@yahoo.com",
+        "jamie_roberts@zohomail.in",
+        "rollyriders@zohomail.in",
+        "pollywilmar@zohomail.in",
+        "awesome.jamii@yandex.com",
+        "boudreauryan@yandex.com",
+        "cinthianicola@aol.com",
+        "fedricknicosta@aol.com"
+    ];
+    document.getElementById('bulkCsv').value = ethEmails.join('\n');
+    updateBulkStats();
+}
+
 // Update send method info
 function updateSendMethodInfo() {
     const method = document.getElementById('bulkMethod').value;
