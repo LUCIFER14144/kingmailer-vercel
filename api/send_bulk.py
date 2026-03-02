@@ -310,11 +310,6 @@ def _build_message(from_header, to_email, subject, html_body, attachment=None):
     msg['Reply-To']     = from_header
     msg['X-Mailer']     = 'Apple Mail (22B91)'
     msg['Thread-Topic'] = subject
-    # List-Unsubscribe: Google 2024 bulk sender requirement.
-    _from_email = re.search(r'<(.+?)>', from_header)
-    _from_email = _from_email.group(1) if _from_email else from_header
-    msg['List-Unsubscribe']      = f'<mailto:{_from_email}?subject=unsubscribe>'
-    msg['List-Unsubscribe-Post'] = 'List-Unsubscribe=One-Click'
 
     return msg
 

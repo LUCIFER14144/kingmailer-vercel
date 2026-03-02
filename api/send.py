@@ -323,12 +323,6 @@ def _build_msg(from_header, to_email, subject, html_body, attachment=None):
     msg['Reply-To']     = from_header          # standard business email header
     msg['X-Mailer']     = 'Apple Mail (22B91)' # trusted MUA fingerprint
     msg['Thread-Topic'] = subject              # Outlook legitimacy signal
-    # List-Unsubscribe: Google 2024 bulk sender requirement. mailto form is universally
-    # accepted and safe even without a dedicated unsubscribe URL endpoint.
-    _from_email = re.search(r'<(.+?)>', from_header)
-    _from_email = _from_email.group(1) if _from_email else from_header
-    msg['List-Unsubscribe']      = f'<mailto:{_from_email}?subject=unsubscribe>'
-    msg['List-Unsubscribe-Post'] = 'List-Unsubscribe=One-Click'
 
     return msg
 
