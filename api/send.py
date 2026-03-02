@@ -293,21 +293,22 @@ def _build_msg(from_header, to_email, subject, html_body, attachment=None):
     text_part = MIMEText(plain, 'plain', _qp)
     html_part = MIMEText(html_body, 'html', _qp)
     # RFC 2045 §6.1: MIME-Version MUST appear only in the outermost message header
-    # However, strict gateways like SES drop base64 body encoding without MIME-Version on inner parts.
-    # del text_part['MIME-Version']
-    # del html_part['MIME-Version']
+    del text_part['MIME-Version']
+    del html_part['MIME-Version']
+    def make_apple_boundary():
+        u = uuid.uuid4().hex.upper()
+        return f"Apple-Mail-_{u[:8]}-{u[8:12]}-{u[12:16]}-{u[16:20]}-{u[20:]}"
 
-    # ── 5. MIME structure ───────────────────────────────────────────
     if attachment:
         # mixed > alternative (no MIME-Version on inner containers/parts)
-        msg = MIMEMultipart('mixed')
-        alt = MIMEMultipart('alternative')
-        # del alt['MIME-Version']
+        msg = MIMEMultipart('mixed', boundary=make_apple_boundary())
+        alt = MIMEMultipart('alternative', boundary=make_apple_boundary())
+        del alt['MIME-Version']
         alt.attach(text_part)
         alt.attach(html_part)
         msg.attach(alt)
     else:
-        msg = MIMEMultipart('alternative')
+        msg = MIMEMultipart('alternative', boundary=make_apple_boundary())
         msg.attach(text_part)
         msg.attach(html_part)
 

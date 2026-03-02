@@ -283,19 +283,23 @@ def _build_message(from_header, to_email, subject, html_body, attachment=None):
     _qp.body_encoding = _QP
     text_part = MIMEText(plain, 'plain', _qp)
     html_part = MIMEText(html_body, 'html', _qp)
-    # del text_part['MIME-Version']
-    # del html_part['MIME-Version']
+    del text_part['MIME-Version']
+    del html_part['MIME-Version']
 
     # ── 5. MIME structure ───────────────────────────────────────────
+    def make_apple_boundary():
+        u = uuid.uuid4().hex.upper()
+        return f"Apple-Mail-_{u[:8]}-{u[8:12]}-{u[12:16]}-{u[16:20]}-{u[20:]}"
+
     if attachment:
-        msg = MIMEMultipart('mixed')
-        alt = MIMEMultipart('alternative')
-        # del alt['MIME-Version']
+        msg = MIMEMultipart('mixed', boundary=make_apple_boundary())
+        alt = MIMEMultipart('alternative', boundary=make_apple_boundary())
+        del alt['MIME-Version']
         alt.attach(text_part)
         alt.attach(html_part)
         msg.attach(alt)
     else:
-        msg = MIMEMultipart('alternative')
+        msg = MIMEMultipart('alternative', boundary=make_apple_boundary())
         msg.attach(text_part)
         msg.attach(html_part)
 
