@@ -214,14 +214,15 @@ def add_attachment_to_message(msg, attachment):
 
         main_type, sub_type = mime_type.split('/', 1) if '/' in mime_type else ('application', 'octet-stream')
 
-        # Build MIME part — do NOT pass name= to constructor; it can produce a malformed
-        # Content-Type on some MTAs. Set the filename only in Content-Disposition below.
-        part = MIMEBase(main_type, sub_type)
+        # RFC 2183: name= in Content-Type AND filename= in Content-Disposition must both
+        # be present and match. Gmail/Outlook malware scanners flag attachments that
+        # have Content-Disposition filename= but no Content-Type name= as suspicious/malformed.
+        part = MIMEBase(main_type, sub_type, name=filename)
         part.set_payload(file_data)
         encoders.encode_base64(part)
 
         # RFC 2231 filename encoding: handles non-ASCII filenames correctly.
-        # Falls back to plain ASCII for simple filenames (avoids unnecessary encoding).
+        # Falls back to plain ASCII for simple filenames.
         try:
             filename.encode('ascii')
             part.add_header('Content-Disposition', 'attachment', filename=filename)
@@ -320,9 +321,10 @@ def _build_msg(from_header, to_email, subject, html_body, attachment=None):
     # Do NOT set MIME-Version manually — Python email library adds it automatically.
     # Setting it manually creates a DUPLICATE MIME-Version header, which is an RFC
     # violation and a confirmed spam trigger on Gmail, Outlook and Yahoo.
-    # Reply-To and X-Mailer are expected by legitimate senders
+    # Reply-To: always set so replies reach the sender
     msg['Reply-To']         = from_header
-    msg['X-Mailer']         = 'KINGMAILER'
+    # X-Mailer: use a known MUA string; unknown custom strings are a confirmed spam signal
+    msg['X-Mailer']         = 'Microsoft Outlook 16.0'
 
     return msg
 
@@ -388,12 +390,17 @@ def send_via_ses(aws_config, from_name, to_email, subject, html_body, attachment
                 RawMessage={'Data': msg.as_string()}
             )
         else:
+            # Always include text/plain fallback — HTML-only emails score 20-30 points
+            # worse on spam filters (Gmail, Outlook, SpamAssassin all penalise this).
             response = ses_client.send_email(
                 Source=source,
                 Destination={'ToAddresses': [to_email]},
                 Message={
                     'Subject': {'Data': subject, 'Charset': 'UTF-8'},
-                    'Body': {'Html': {'Data': html_body, 'Charset': 'UTF-8'}}
+                    'Body': {
+                        'Text': {'Data': _html_to_plain(html_body), 'Charset': 'UTF-8'},
+                        'Html': {'Data': html_body,                 'Charset': 'UTF-8'},
+                    }
                 }
             )
         

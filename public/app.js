@@ -1687,12 +1687,15 @@ async function safeFetchJson(url, options) {
 // Check attachment size before sending (Vercel body limit ≈ 4.5 MB)
 function attachmentTooLarge(attachment, resultElementId) {
     if (!attachment) return false;
-    const bytes = Math.ceil(attachment.content.length * 0.75);
-    const mb = bytes / (1024 * 1024);
-    if (mb > 3.5) {
+    // Check base64 char count directly — Vercel body limit is 4.5 MB total.
+    // Base64 inflates by ~33%, so 3 MB of base64 chars ≈ 2.25 MB actual file.
+    // Keeping the check at 3 MB base64 leaves headroom for the email body + headers.
+    const MAX_B64_CHARS = 3 * 1024 * 1024; // 3 MB of base64 characters
+    if (attachment.content && attachment.content.length > MAX_B64_CHARS) {
+        const mb = (attachment.content.length / (1024 * 1024)).toFixed(1);
         showResult(resultElementId,
-            `❌ Attachment is ~${mb.toFixed(1)} MB — too large for Vercel (4.5 MB limit).<br>` +
-            `Try: switch format to <strong>HTML</strong>, or use a smaller/simpler HTML file.`, 'error');
+            `❌ Attachment is ~${mb} MB (base64) — too large for Vercel (4.5 MB total limit).<br>` +
+            `Keep attachments under 2 MB actual file size. Try switching to <strong>HTML</strong> format or compress the file.`, 'error');
         return true;
     }
     return false;
