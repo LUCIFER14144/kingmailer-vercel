@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -139,6 +140,7 @@
         }
     </style>
 </head>
+
 <body>
     <div class="login-container">
         <div class="logo">👑 KINGMAILER</div>
@@ -164,7 +166,7 @@
     <script>
         async function handleLogin(event) {
             event.preventDefault();
-            
+
             const username = document.getElementById('username').value.trim();
             const password = document.getElementById('password').value.trim();
             const statusDiv = document.getElementById('status');
@@ -174,24 +176,31 @@
                 return;
             }
 
+            // Generate or retrieve HWID
+            let hwid = localStorage.getItem('kingmailer_hwid');
+            if (!hwid) {
+                hwid = 'browser_' + Math.random().toString(36).substr(2, 9) + Date.now().toString(36);
+                localStorage.setItem('kingmailer_hwid', hwid);
+            }
+
             showStatus('Authenticating...', 'info');
 
             try {
                 const response = await fetch('/api/login', {
                     method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({username, password})
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password, hwid })
                 });
 
                 const data = await response.json();
 
                 if (data.success) {
                     showStatus('✅ Login successful! Redirecting...', 'success');
-                    
+
                     // Store session
                     localStorage.setItem('kingmailer_session', data.token || 'authenticated');
                     localStorage.setItem('kingmailer_user', username);
-                    
+
                     // Redirect to dashboard
                     setTimeout(() => {
                         window.location.href = '/';
@@ -220,4 +229,5 @@
         });
     </script>
 </body>
+
 </html>
