@@ -104,7 +104,7 @@ Status: healthy
 ### Error: "Cannot reach relay server"
 **Solutions:**
 1. Wait 10-15 min after instance creation
-2. Check security group allows port 8080
+2. Check security group allows port 3000
 3. Click "Refresh List" to update instance data
 4. SSH and check: `sudo systemctl status email-relay`
 

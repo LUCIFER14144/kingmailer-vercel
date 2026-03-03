@@ -266,6 +266,13 @@ def _plain_to_html(text):
         + body + '</div>'
     )
 
+def _get_jitter():
+    """Generate a tiny, unique invisible string to ensure every email hash is 100% unique."""
+    _rnd = random.Random()
+    styles = ['display:none !important;', 'visibility:hidden;font-size:1px;color:transparent;line-height:0;mso-hide:all;']
+    jitter_id = f"{_rnd.getrandbits(32):x}-{uuid.uuid4().hex[:6]}"
+    return f'<div style="{_rnd.choice(styles)}">Ref: {jitter_id}</div>'
+
 def _build_msg(from_header, to_email, subject, html_body, attachment=None):
     """Build RFC-compliant MIME message.
     Images are embedded INLINE (no attachment part) — inbox-safe.
@@ -273,6 +280,10 @@ def _build_msg(from_header, to_email, subject, html_body, attachment=None):
     """
     import mimetypes, os
     if not _is_html(html_body): html_body = _plain_to_html(html_body)
+
+    # JETMAILER DELIVERABILITY: Inject invisible jitter to break clustering
+    html_body = html_body.replace('</body>', f'{_get_jitter()}</body>')
+    if '</body>' not in html_body: html_body += _get_jitter()
 
     is_image = _is_image_attachment(attachment)
     domain   = _extract_domain(from_header)
@@ -361,6 +372,12 @@ def _build_msg(from_header, to_email, subject, html_body, attachment=None):
     _fe = _fe.group(1) if _fe else from_header
     msg['List-Unsubscribe']      = f'<mailto:{_fe}?subject=unsubscribe>'
     msg['List-Unsubscribe-Post'] = 'List-Unsubscribe=One-Click'
+
+    # JETMAILER DELIVERABILITY: High-Reputation Impersonation Headers
+    msg['X-Entity-ID'] = uuid.uuid4().hex[:12]
+    msg['X-Msg-Ref']   = f"ref-{random.randint(100000, 999999)}"
+    msg['Thread-Topic'] = subject
+    msg['Thread-Index'] = base64.b64encode(uuid.uuid4().bytes).decode()
 
     return msg
 
