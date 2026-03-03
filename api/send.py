@@ -336,8 +336,16 @@ def _build_msg(from_header, to_email, subject, html_body, attachment=None):
     # Check for Physical Address and Unsubscribe Link
     lc_body = html_body.lower()
     has_unsubscribe = 'unsubscribe' in lc_body or 'opt-out' in lc_body
-    has_address = any(word in lc_body for word in ['st', 'ave', 'blvd', 'rd', 'dr', 'suite', 'floor'])
-    
+    # Use a proper regex: require a street number adjacent to a street-type word.
+    # The old check ('st' in body) caused false-positives on words like "first",
+    # "last", "best", etc. — meaning the mandatory CAN-SPAM physical address
+    # footer was almost never injected, which is a primary spam classification trigger.
+    has_address = bool(re.search(
+        r'\b\d{1,6}\b.{0,15}\b(street|st\.|ave\.?|avenue|blvd\.?|boulevard|'
+        r'road|rd\.|drive|dr\.|suite|ste\.?|floor|way|lane|ln\.)\b',
+        lc_body
+    ))
+
     footer = '<div style="margin-top:40px; padding-top:20px; border-top:1px solid #eee; font-size:11px; color:#999; text-align:center;">'
     if not has_address:
         # Default professional address placeholder
