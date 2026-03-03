@@ -19,7 +19,11 @@ AWS_CREDENTIALS = None
 # Using string concatenation (no f-strings, no heredocs) avoids ALL escaping issues
 _RELAY_SCRIPT = (
     '#!/usr/bin/env python3\n'
-    'import json,re,smtplib,logging,socket,base64,os\n'
+    '# KINGMAILER Relay v8.2 — Raw SMTP Proxy\n'
+    '# New: accepts pre-built MIME bytes (type=raw) — all deliverability tricks\n'
+    '# applied on Vercel, relay just does sendmail() via EC2 IP.\n'
+    '# Legacy: still handles JSON format for backward compat.\n'
+    'import json,re,smtplib,logging,socket,base64,os,uuid\n'
     'from http.server import HTTPServer,BaseHTTPRequestHandler\n'
     'from email.mime.text import MIMEText\n'
     'from email.mime.multipart import MIMEMultipart\n'
@@ -27,8 +31,17 @@ _RELAY_SCRIPT = (
     'from email import encoders\n'
     'from email.utils import formatdate,make_msgid\n'
     'from datetime import datetime\n'
-    'logging.basicConfig(level=logging.INFO,format="%(asctime)s %(levelname)s %(message)s",'
-    'handlers=[logging.FileHandler("/var/log/email_relay.log"),logging.StreamHandler()])\n'
+    'logging.basicConfig(level=logging.INFO,format="%(asctime)s %(levelname)s %(message)s",\n'
+    ' handlers=[logging.FileHandler("/var/log/email_relay.log"),logging.StreamHandler()])\n'
+    '\n'
+    'def _smtp_connect(sm):\n'
+    ' """Return (server, port) tuple from smtp_config."""\n'
+    ' pv=sm.get("provider","gmail")\n'
+    ' if pv=="gmail":return "smtp.gmail.com",587\n'
+    ' if pv in("outlook","hotmail"):return "smtp-mail.outlook.com",587\n'
+    ' if pv=="yahoo":return "smtp.mail.yahoo.com",587\n'
+    ' return sm.get("host","smtp.gmail.com"),int(sm.get("port",587))\n'
+    '\n'
     'class R(BaseHTTPRequestHandler):\n'
     ' def log_message(self,f,*a):logging.info("%s %s"%(self.client_address[0],f%a))\n'
     ' def do_GET(self):\n'
@@ -38,59 +51,90 @@ _RELAY_SCRIPT = (
     '    try:\n'
     '     s=socket.socket();s.settimeout(3);r=s.connect_ex(("smtp.gmail.com",p));s.close();return "open" if r==0 else "blocked"\n'
     '    except:return "unknown"\n'
-    '   self.wfile.write(json.dumps({"status":"healthy","service":"KINGMAILER Relay v7.0","timestamp":datetime.now().isoformat(),"port_587_outbound":c(587),"port_465_outbound":c(465)}).encode())\n'
+    '   self.wfile.write(json.dumps({"status":"healthy","service":"KINGMAILER Relay v8.2","timestamp":datetime.now().isoformat(),"port_587_outbound":c(587),"port_465_outbound":c(465)}).encode())\n'
     '  else:self.send_response(404);self.end_headers()\n'
+    '\n'
     ' def do_POST(self):\n'
     '  if self.path=="/relay":\n'
     '   try:\n'
     '    d=json.loads(self.rfile.read(int(self.headers["Content-Length"])).decode())\n'
     '    sm=d.get("smtp_config")\n'
     '    if not sm:raise ValueError("SMTP config required")\n'
+    '    u=sm.get("user");p=sm.get("pass")\n'
+    '    if not u or not p:raise ValueError("SMTP credentials required")\n'
+    '    srv,port=_smtp_connect(sm)\n'
+    '    dm=u.split("@")[-1] if "@" in u else "relay.local"\n'
+    '\n'
+    '    # ── NEW: raw pre-built MIME path (all tricks applied on Vercel) ─────\n'
+    '    if d.get("type")=="raw":\n'
+    '     raw=base64.b64decode(d["raw_email"]+"="*(-len(d["raw_email"])%4))\n'
+    '     fa=d.get("from_addr",u);ta=d.get("to_addr","")\n'
+    '     if not ta:raise ValueError("to_addr required for raw mode")\n'
+    '     with smtplib.SMTP(srv,port,timeout=30,local_hostname=dm) as s:\n'
+    '      s.ehlo();s.starttls();s.ehlo();s.login(u,p)\n'
+    '      s.sendmail(fa,[ta],raw)\n'
+    '     logging.info("RAW sent to %s via %s"%(ta,srv))\n'
+    '     self.send_response(200);self.send_header("Content-type","application/json");self.end_headers()\n'
+    '     self.wfile.write(json.dumps({"success":True,"message":"Email sent (raw mode) via EC2 relay"}).encode())\n'
+    '     return\n'
+    '\n'
+    '    # ── LEGACY: JSON path (fallback for old code versions) ──────────────\n'
     '    to=d.get("to","");subj=d.get("subject","");htm=d.get("html","");att=d.get("attachment")\n'
     '    if not to:raise ValueError("Recipient required")\n'
-    '    pv=sm.get("provider","gmail");u=sm.get("user");p=sm.get("pass")\n'
-    '    if not u or not p:raise ValueError("SMTP credentials required")\n'
-    '    sn=sm.get("sender_name",d.get("from_name","KINGMAILER"))\n'
-    '    if pv=="gmail":srv,port="smtp.gmail.com",587\n'
-    '    elif pv in("outlook","hotmail"):srv,port="smtp-mail.outlook.com",587\n'
-    '    else:srv,port=sm.get("host","smtp.gmail.com"),int(sm.get("port",587))\n'
+    '    sn=d.get("from_name") or sm.get("sender_name","")\n'
+    '    try:sn.encode("ascii")\n'
+    '    except:import email.header as _eh;sn=_eh.Header(sn,"utf-8").encode()\n'
+    '    jr="<!-- mid:"+uuid.uuid4().hex[:8]+" -->\\n"\n'
+    '    htm=(htm.replace("</body>",jr+"</body>") if "</body>" in htm else htm+jr)\n'
     '    pl=re.sub(r"<br\\s*/?>","\\n",htm,flags=re.IGNORECASE)\n'
     '    pl=re.sub(r"<p[^>]*>","\\n",pl,flags=re.IGNORECASE)\n'
     '    pl=re.sub(r"<[^>]+>","",pl)\n'
     '    pl=re.sub(r"[ \\t]+"," ",pl).strip()\n'
+    '    fh="%s <%s>"%(sn,u) if sn else u\n'
     '    if att:\n'
     '     msg=MIMEMultipart("mixed");alt=MIMEMultipart("alternative")\n'
-    '     alt.attach(MIMEText(pl,"plain","utf-8"));alt.attach(MIMEText(htm,"html","utf-8"))\n'
+    '     _tp=MIMEText(pl,"plain","utf-8");_th=MIMEText(htm,"html","utf-8")\n'
+    '     for _p in [_tp,_th]:\n'
+    '      if "MIME-Version" in _p:del _p["MIME-Version"]\n'
+    '     alt.attach(_tp);alt.attach(_th)\n'
+    '     if "MIME-Version" in alt:del alt["MIME-Version"]\n'
     '     msg.attach(alt)\n'
     '    else:\n'
     '     msg=MIMEMultipart("alternative")\n'
-    '     msg.attach(MIMEText(pl,"plain","utf-8"));msg.attach(MIMEText(htm,"html","utf-8"))\n'
-    '    fh="%s <%s>"%(sn,u) if sn else u\n'
-    '    dm=u.split("@")[-1] if "@" in u else "relay.local"\n'
+    '     _tp=MIMEText(pl,"plain","utf-8");_th=MIMEText(htm,"html","utf-8")\n'
+    '     for _p in [_tp,_th]:\n'
+    '      if "MIME-Version" in _p:del _p["MIME-Version"]\n'
+    '     msg.attach(_tp);msg.attach(_th)\n'
     '    msg["From"]=fh;msg["To"]=to;msg["Subject"]=subj\n'
     '    msg["Date"]=formatdate(localtime=True);msg["Message-ID"]=make_msgid(domain=dm)\n'
+    '    msg["Reply-To"]=fh\n'
+    '    _fe=re.search(r"<(.+?)>",fh);_fe=_fe.group(1) if _fe else fh\n'
+    '    msg["List-Unsubscribe"]="<mailto:"+_fe+"?subject=unsubscribe>"\n'
     '    if att:\n'
     '     try:\n'
     '      ac=att["content"]+"="*(-len(att["content"])%4)\n'
     '      fd=base64.b64decode(ac);nm=att.get("name","attachment");mt=att.get("type","application/octet-stream")\n'
     '      mn,sb=mt.split("/",1) if "/" in mt else ("application","octet-stream")\n'
-    '      ap=MIMEBase(mn,sb,name=nm);ap.set_payload(fd);encoders.encode_base64(ap)\n'
-    '      ap.add_header("Content-Disposition","attachment",filename=nm);msg.attach(ap)\n'
+    '      ap=MIMEBase(mn,sb);ap.set_param("name",nm);ap.set_payload(fd);encoders.encode_base64(ap)\n'
+    '      ap.add_header("Content-Disposition","attachment",filename=nm)\n'
+    '      if "MIME-Version" in ap:del ap["MIME-Version"]\n'
+    '      msg.attach(ap)\n'
     '     except Exception as ae:logging.warning("Attach err: %s"%ae)\n'
-    '    with smtplib.SMTP(srv,port,timeout=30) as s:\n'
+    '    with smtplib.SMTP(srv,port,timeout=30,local_hostname=dm) as s:\n'
     '     s.ehlo();s.starttls();s.ehlo();s.login(u,p);s.send_message(msg)\n'
-    '    logging.info("Sent to %s"%to)\n'
+    '    logging.info("LEGACY sent to %s"%to)\n'
     '    self.send_response(200);self.send_header("Content-type","application/json");self.end_headers()\n'
     '    self.wfile.write(json.dumps({"success":True,"message":"Email sent via EC2 relay"}).encode())\n'
     '   except Exception as e:\n'
-    '    logging.error(str(e));self.send_response(500)\n'
-    '    self.send_header("Content-type","application/json");self.end_headers()\n'
+    '    logging.error("RELAY ERROR: %s"%str(e))\n'
+    '    self.send_response(500);self.send_header("Content-type","application/json");self.end_headers()\n'
     '    self.wfile.write(json.dumps({"success":False,"error":str(e)}).encode())\n'
     '  else:self.send_response(404);self.end_headers()\n'
+    '\n'
     'if __name__=="__main__":\n'
-    ' srv=HTTPServer(("0.0.0.0",3000),R)\n'
-    ' logging.info("KINGMAILER Relay v7.0 started on port 3000")\n'
-    ' srv.serve_forever()\n'
+    ' srv2=HTTPServer(("0.0.0.0",3000),R)\n'
+    ' logging.info("KINGMAILER Relay v8.0 started on port 3000")\n'
+    ' srv2.serve_forever()\n'
 )
 _RELAY_B64 = _b64.b64encode(_RELAY_SCRIPT.encode('utf-8')).decode('ascii')
 
@@ -109,11 +153,24 @@ def get_latest_amazon_linux_ami(ec2_client):
         if not response['Images']:
             # Fallback to region-specific AMI map (as of Feb 2026)
             ami_map = {
-                'us-east-1': 'ami-0277155c3f0ab2930',
-                'us-west-2': 'ami-0a7d051a1c4b54f65',
-                'eu-west-1': 'ami-00385a401487aefa4',
+                'us-east-1':      'ami-0277155c3f0ab2930',
+                'us-east-2':      'ami-0a5d7a8e4c04a7b6e',
+                'us-west-1':      'ami-04e914639d0cca79c',
+                'us-west-2':      'ami-0a7d051a1c4b54f65',
+                'eu-west-1':      'ami-00385a401487aefa4',
+                'eu-west-2':      'ami-02ac6b6b72b7ddfbd',
+                'eu-west-3':      'ami-0c6e6c4d3c4e7c7c3',
+                'eu-central-1':   'ami-04e601abe3e1a910f',
+                'eu-north-1':     'ami-07e00e6e9c4fd6cce',
                 'ap-southeast-1': 'ami-04677bdaa3c2b6e24',
-                'ap-south-1': 'ami-0f58b397bc5c1f2e8'
+                'ap-southeast-2': 'ami-00a54b0b9b44f4094',
+                'ap-northeast-1': 'ami-092c3564a82a31df7',
+                'ap-northeast-2': 'ami-09e70258ddbdf3c90',
+                'ap-south-1':     'ami-0f58b397bc5c1f2e8',
+                'ap-east-1':      'ami-0bfb6a7bb5e44cff4',
+                'sa-east-1':      'ami-04e1b59f8a9e2aeb3',
+                'ca-central-1':   'ami-0fb7b22f2bc24ac61',
+                'me-south-1':     'ami-034a706a11d7f06d7',
             }
             return ami_map.get(ec2_client.meta.region_name, ami_map['us-east-1'])
         
@@ -123,11 +180,24 @@ def get_latest_amazon_linux_ami(ec2_client):
     except Exception:
         # Fallback AMI map
         ami_map = {
-            'us-east-1': 'ami-0277155c3f0ab2930',
-            'us-west-2': 'ami-0a7d051a1c4b54f65',
-            'eu-west-1': 'ami-00385a401487aefa4',
+            'us-east-1':      'ami-0277155c3f0ab2930',
+            'us-east-2':      'ami-0a5d7a8e4c04a7b6e',
+            'us-west-1':      'ami-04e914639d0cca79c',
+            'us-west-2':      'ami-0a7d051a1c4b54f65',
+            'eu-west-1':      'ami-00385a401487aefa4',
+            'eu-west-2':      'ami-02ac6b6b72b7ddfbd',
+            'eu-west-3':      'ami-0c6e6c4d3c4e7c7c3',
+            'eu-central-1':   'ami-04e601abe3e1a910f',
+            'eu-north-1':     'ami-07e00e6e9c4fd6cce',
             'ap-southeast-1': 'ami-04677bdaa3c2b6e24',
-            'ap-south-1': 'ami-0f58b397bc5c1f2e8'
+            'ap-southeast-2': 'ami-00a54b0b9b44f4094',
+            'ap-northeast-1': 'ami-092c3564a82a31df7',
+            'ap-northeast-2': 'ami-09e70258ddbdf3c90',
+            'ap-south-1':     'ami-0f58b397bc5c1f2e8',
+            'ap-east-1':      'ami-0bfb6a7bb5e44cff4',
+            'sa-east-1':      'ami-04e1b59f8a9e2aeb3',
+            'ca-central-1':   'ami-0fb7b22f2bc24ac61',
+            'me-south-1':     'ami-034a706a11d7f06d7',
         }
         return ami_map.get(ec2_client.meta.region_name, ami_map['us-east-1'])
 

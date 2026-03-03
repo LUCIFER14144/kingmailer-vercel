@@ -231,23 +231,25 @@ def _html_to_plain(html):
 
 
 def minimize_spam_keywords(text):
-    """Automatically replace high-risk spam words with clean alternatives."""
+    """Automatically replace high-risk spam words with clean alternatives.
+    Protects URLs and HTML attribute values from corruption.
+    """
     if not text: return text
-    replacements = {
-        r'\bFree\b': 'Complementary',
-        r'\bUrgent\b': 'Priority',
-        r'\bImportant\b': 'Significant',
-        r'\bCritical\b': 'Vital',
-        r'\bAlert\b': 'Notification',
-        r'\bGuarantee\b': 'Assurance',
-        r'\bNo cost\b': 'At no expense',
-        r'\bLimited time\b': 'Short window',
-        r'\bAct now\b': 'Respond soon',
-        r'\bWinner\b': 'Selected',
-        r'\bCash\b': 'Funds',
-        r'\b!!!\b': '.',
-    }
-    for pattern, repl in replacements.items():
+    replacements = [
+        (r'(?<![=/\w])\bFree\b(?![=/\w.-])', 'Complementary'),
+        (r'(?<![=/\w])\bUrgent\b(?![=/\w.-])', 'Priority'),
+        (r'(?<![=/\w])\bImportant\b(?![=/\w.-])', 'Significant'),
+        (r'(?<![=/\w])\bCritical\b(?![=/\w.-])', 'Vital'),
+        (r'(?<![=/\w])\bAlert\b(?![=/\w.-])', 'Notification'),
+        (r'(?<![=/\w])\bGuarantee\b(?![=/\w.-])', 'Assurance'),
+        (r'(?<![=/\w])\bNo cost\b', 'At no expense'),
+        (r'(?<![=/\w])\bLimited time\b', 'Short window'),
+        (r'(?<![=/\w])\bAct now\b', 'Respond soon'),
+        (r'(?<![=/\w])\bWinner\b(?![=/\w.-])', 'Selected'),
+        (r'(?<![=/\w])\bCash\b(?![=/\w.-])', 'Funds'),
+        (r'!{3,}', '.'),
+    ]
+    for pattern, repl in replacements:
         text = re.sub(pattern, repl, text, flags=re.IGNORECASE)
     return text
 
@@ -309,16 +311,18 @@ def _encode_subject(subject):
 
 def _make_from_header(sender_name, email_addr):
     """Build RFC-compliant From/Reply-To header.
-    Properly RFC 2047-encodes non-ASCII display names.
-    Checks for 'KINGMAILER' and strips it to avoid default branding.
+    Properly RFC 2047-encodes non-ASCII display names (German umlauts, French accents, etc.)
+    so that email headers never contain raw non-ASCII bytes.
     """
-    if not sender_name or sender_name.upper() == 'KINGMAILER':
+    if not sender_name:
         return email_addr
     try:
         sender_name.encode('ascii')
+        # ASCII name — use formataddr to correctly quote special chars (commas, quotes…)
         from email.utils import formataddr as _fmt
         return _fmt((sender_name, email_addr))
     except (UnicodeEncodeError, UnicodeDecodeError):
+        # Non-ASCII name: RFC 2047 encoded-word format
         from email.header import Header as _Hdr
         return '{} <{}>'.format(_Hdr(sender_name, 'utf-8').encode(), email_addr)
 
@@ -437,17 +441,11 @@ def send_via_smtp(smtp_config, from_name, to_email, subject, html_body, attachme
 
         smtp_user = smtp_config.get('user')
         smtp_pass = smtp_config.get('pass')
-        
-        # Priority: from_name (passed from API call) > smtp_config.sender_name
-        _frontend_name = (from_name or '').strip()
-        _config_name = (smtp_config.get('sender_name') or '').strip()
-        
-        # Clear 'KINGMAILER' from both sources
-        if _frontend_name.upper() == 'KINGMAILER': _frontend_name = ''
-        if _config_name.upper() == 'KINGMAILER': _config_name = ''
-        
-        sender_name = _frontend_name or _config_name
-        from_header = _make_from_header(sender_name, smtp_user)
+        # Sanitize: treat 'KINGMAILER' as empty (legacy default, not a real name)
+        _cfg_sn = smtp_config.get('sender_name') or ''
+        if _cfg_sn == 'KINGMAILER': _cfg_sn = ''
+        sender_name = from_name if from_name and from_name != 'KINGMAILER' else _cfg_sn
+        from_header = _make_from_header(sender_name, smtp_user) if sender_name else smtp_user
 
         # _build_msg handles ALL attachment types (image + non-image) internally
         msg = _build_msg(from_header, to_email, subject, html_body, attachment)
@@ -505,16 +503,11 @@ def send_via_ec2(ec2_url, smtp_config, from_name, to_email, subject, html_body, 
             return {'success': False, 'error': 'No SMTP config provided for EC2 relay'}
 
         smtp_user = smtp_config.get('user', '')
-        
-        # Priority: from_name (passed from API call) > smtp_config.sender_name
-        _frontend_name = (from_name or '').strip()
-        _config_name = (smtp_config.get('sender_name') or '').strip()
-        
-        if _frontend_name.upper() == 'KINGMAILER': _frontend_name = ''
-        if _config_name.upper() == 'KINGMAILER': _config_name = ''
-        
-        sender_name = _frontend_name or _config_name
-        from_header = _make_from_header(sender_name, smtp_user)
+        # Sanitize: treat 'KINGMAILER' as empty (legacy default, not a real name)
+        _cfg_sn = smtp_config.get('sender_name', '')
+        if _cfg_sn == 'KINGMAILER': _cfg_sn = ''
+        sender_name = from_name if from_name and from_name != 'KINGMAILER' else _cfg_sn
+        from_header = _make_from_header(sender_name, smtp_user) if sender_name else smtp_user
 
         # ── Build the fully deliverability-optimized MIME message on Vercel ────────
         # _build_msg handles ALL attachment types internally (no separate call needed)
@@ -582,6 +575,15 @@ class handler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({'success': False, 'error': 'Recipient email required'}).encode())
                 return
             
+            # Basic email validation
+            if not re.match(r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$', to_email):
+                self.send_response(400)
+                self.send_header('Content-type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': False, 'error': f'Invalid email format: {to_email}'}).encode())
+                return
+            
             # Process spintax in subject and body
             subject = process_spintax(subject)
             html_body = process_spintax(html_body)
@@ -591,34 +593,30 @@ class handler(BaseHTTPRequestHandler):
                 subject = replace_csv_row_tags(subject, csv_row)
                 html_body = replace_csv_row_tags(html_body, csv_row)
             
-            # Extract sender info for $tag / {{tag}} placeholders
+            # Extract sender info for $sendername etc.
             _smtp_cfg  = data.get('smtp_config') or {}
             _aws_cfg   = data.get('aws_config')  or {}
-            
-            # Resolve sender email (used in template tags and as a name fallback)
-            _s_email = (_smtp_cfg.get('user') or 
-                        _aws_cfg.get('from_email') or 
+            # from_name from frontend takes priority (it's the random/manual name)
+            # Only fall back to smtp_config.sender_name if from_name is missing/empty/KINGMAILER
+            _raw_from = data.get('from_name', '')
+            _cfg_name = _smtp_cfg.get('sender_name', '')
+            if _cfg_name == 'KINGMAILER': _cfg_name = ''  # legacy default, treat as empty
+            _s_name = (_raw_from if _raw_from and _raw_from != 'KINGMAILER'
+                       else _cfg_name
+                       or _smtp_cfg.get('user', '')
+                       or _aws_cfg.get('from_email', '')
+                       or '')
+            _s_email = (_smtp_cfg.get('user') or
+                        _aws_cfg.get('from_email') or
                         data.get('from_email') or '')
 
-            # Resolve sender name: frontend random/manual > smtp config > fallback to email
-            _raw_from_name = (from_name or '').strip()
-            if _raw_from_name.upper() == 'KINGMAILER': _raw_from_name = ''
-            
-            _cfg_name = (_smtp_cfg.get('sender_name') or '').strip()
-            if _cfg_name.upper() == 'KINGMAILER': _cfg_name = ''
-            
-            _final_sender_name = _raw_from_name or _cfg_name or _s_email
-            
-            # Replace template tags ($tag and {{tag}} syntax)
+            # Replace standard template tags ($tag and {{tag}} syntax)
             subject   = replace_template_tags(subject,   recipient_email=to_email,
-                                               sender_name=_final_sender_name, sender_email=_s_email,
+                                               sender_name=_s_name, sender_email=_s_email,
                                                csv_row=csv_row)
             html_body = replace_template_tags(html_body, recipient_email=to_email,
-                                               sender_name=_final_sender_name, sender_email=_s_email,
+                                               sender_name=_s_name, sender_email=_s_email,
                                                csv_row=csv_row)
-            
-            # Update from_name for sending functions to use the cleaned name
-            from_name = _final_sender_name
             
             # Minimize Spam Trigger words
             subject = minimize_spam_keywords(subject)

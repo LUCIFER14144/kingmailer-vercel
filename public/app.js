@@ -1143,6 +1143,9 @@ async function sendSingleEmail() {
 
         if (data.success) {
             const usedName = data.from_name || _singleFromName;
+            // Track send count for warmup
+            const _trackUser = config.smtp_config ? config.smtp_config.user : (config.aws_config ? config.aws_config.from_email : '');
+            if (_trackUser) recordSend(_trackUser);
             showResult('singleResult', `✅ ${data.message} &nbsp;<span style="color:#aaa;font-size:12px;">(sent as: <b>${usedName}</b>)</span>`, 'success');
         } else {
             showResult('singleResult', `❌ ${data.error}`, 'error');
@@ -1267,6 +1270,17 @@ async function sendBulkEmails() {
         const row = rows[i];
         const toEmail = row['email'];
 
+        // Basic email validation — skip obviously invalid addresses
+        if (!toEmail || !toEmail.includes('@') || !toEmail.includes('.') || toEmail.length < 5) {
+            failed++;
+            const skipLine = document.createElement('div');
+            skipLine.style.color = '#f59e0b';
+            skipLine.textContent = `[${i + 1}/${rows.length}] ⚠️ Skipped invalid: ${toEmail || '(empty)'}`;
+            document.getElementById('bulkLogContent').appendChild(skipLine);
+            updateBulkProgress(sent, failed, rows.length);
+            continue;
+        }
+
         // Build payload for this email
         // Pick subject: random from pool, or the field value (server resolves spintax per-email)
         const _pickSubject = _useSubjectPool
@@ -1287,15 +1301,23 @@ async function sendBulkEmails() {
 
         // Sender name — random per email if enabled, using selected country name bank
         const _isRandName = (document.getElementById('bulkRandomSenderName') || {}).checked;
-        let _bulkFromName = '';
         if (_isRandName) {
+            // Use the country dropdown to pick the right name bank (not hardcoded US)
             const _randCountry = (document.getElementById('bulkNameCountry') || {}).value || 'us';
-            _bulkFromName = _randomNameFromCountry(_randCountry);
+            emailPayload.from_name = _randomNameFromCountry(_randCountry);
+            emailPayload.random_sender_name = false; // Already resolved on frontend
         } else {
             const _sName = (document.getElementById('bulkSenderName') || {}).value.trim();
-            _bulkFromName = _sName;
+            // Resolve from current SMTP account (use smtpAccounts directly, not emailPayload.smtp_config which isn't set yet)
+            const _curSmtp = (method === 'smtp' || method === 'ec2') && smtpAccounts.length > 0
+                ? smtpAccounts[rotateIdx % smtpAccounts.length]
+                : null;
+            const _cfgSenderName = _curSmtp ? (_curSmtp.sender_name || '') : '';
+            emailPayload.from_name = _sName
+                || (_cfgSenderName && _cfgSenderName !== 'KINGMAILER' ? _cfgSenderName : '')
+                || (_curSmtp ? (_curSmtp.user || '') : '')
+                || '';
         }
-        emailPayload.from_name = _bulkFromName;
 
         if (method === 'smtp') {
             emailPayload.smtp_config = smtpAccounts[rotateIdx % smtpAccounts.length];
@@ -1334,8 +1356,8 @@ async function sendBulkEmails() {
         const logLine = document.createElement('div');
         logLine.style.color = '#aaa';
         // Show sender name in log so user can verify random names are working
-        const _logName = emailPayload.from_name || 'Account Default';
-        logLine.textContent = `[${i + 1}/${rows.length}] Sending to ${toEmail} (From: "${_logName}")...`;
+        const _logName = emailPayload.from_name || '?';
+        logLine.textContent = `[${i + 1}/${rows.length}] Sending to ${toEmail} (as: ${_logName})...`;
         document.getElementById('bulkLogContent').appendChild(logLine);
         document.getElementById('bulkLog').scrollTop = document.getElementById('bulkLog').scrollHeight;
 
@@ -1348,6 +1370,9 @@ async function sendBulkEmails() {
 
             if (result.success) {
                 sent++;
+                // Track send for warmup
+                const _bTrackUser = emailPayload.smtp_config ? emailPayload.smtp_config.user : (emailPayload.aws_config ? emailPayload.aws_config.from_email : '');
+                if (_bTrackUser) recordSend(_bTrackUser);
                 logLine.style.color = '#00ff9d';
                 logLine.textContent = `[${i + 1}/${rows.length}] ✅ ${toEmail}`;
             } else {
@@ -2732,3 +2757,156 @@ async function _exportViaCanvas(html, format, filename, setStatus, triggerDownlo
         iframe.srcdoc = html;
     });
 }
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ── DELIVERABILITY CHECKER ───────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+
+function autoFillDomainFromSmtp() {
+    if (smtpAccounts.length > 0) {
+        const user = smtpAccounts[0].user || '';
+        if (user.includes('@')) {
+            document.getElementById('delivCheckDomain').value = user.split('@')[1];
+        }
+    } else {
+        alert('No SMTP accounts configured. Add one in the SMTP Config tab first.');
+    }
+}
+
+async function runDeliverabilityCheck() {
+    const input = (document.getElementById('delivCheckDomain') || {}).value.trim();
+    if (!input) {
+        showResult('delivResult', '⚠️ Please enter a domain or SMTP email address', 'error');
+        return;
+    }
+
+    const domain = input.includes('@') ? input.split('@')[1] : input;
+    showResult('delivResult', `🔍 Checking ${domain}... (SPF, DKIM, DMARC, MX)`, 'info');
+    document.getElementById('delivScoreCard').style.display = 'none';
+    document.getElementById('delivChecks').style.display = 'none';
+
+    try {
+        const resp = await fetch('/api/deliverability', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'check_domain', domain, smtp_user: input })
+        });
+        const data = await resp.json();
+
+        if (!data.success) {
+            showResult('delivResult', `❌ ${data.error}`, 'error');
+            return;
+        }
+
+        // Show score card
+        const scoreCard = document.getElementById('delivScoreCard');
+        const scoreCircle = document.getElementById('delivScoreCircle');
+        const scoreLabel = document.getElementById('delivScoreLabel');
+        const scoreSummary = document.getElementById('delivScoreSummary');
+        scoreCard.style.display = 'block';
+
+        const score = data.score || 0;
+        let scoreColor, scoreText;
+        if (score >= 80) { scoreColor = '#22c55e'; scoreText = 'Excellent'; }
+        else if (score >= 60) { scoreColor = '#f59e0b'; scoreText = 'Needs Improvement'; }
+        else if (score >= 40) { scoreColor = '#f97316'; scoreText = 'Poor'; }
+        else { scoreColor = '#ef4444'; scoreText = 'Critical Issues'; }
+
+        scoreCircle.style.border = `4px solid ${scoreColor}`;
+        scoreCircle.style.color = scoreColor;
+        scoreCircle.textContent = score;
+        scoreLabel.style.color = scoreColor;
+        scoreLabel.textContent = `Deliverability Score: ${scoreText}`;
+        scoreSummary.textContent = `Domain: ${domain} — ${score}/100 points`;
+
+        // Show check results
+        const checksDiv = document.getElementById('delivChecks');
+        checksDiv.style.display = 'block';
+
+        const checksList = document.getElementById('delivChecksList');
+        const checks = data.checks || {};
+        let checksHtml = '';
+
+        for (const [name, check] of Object.entries(checks)) {
+            const label = name.toUpperCase();
+            const sev = check.severity || 'warning';
+            const icon = sev === 'ok' ? '✅' : sev === 'critical' ? '❌' : '⚠️';
+            const color = sev === 'ok' ? '#22c55e' : sev === 'critical' ? '#ef4444' : '#f59e0b';
+            const bg = sev === 'ok' ? 'rgba(34,197,94,0.08)' : sev === 'critical' ? 'rgba(239,68,68,0.08)' : 'rgba(245,158,11,0.08)';
+
+            checksHtml += `
+                <div style="padding:12px;margin:8px 0;border-radius:8px;background:${bg};border-left:3px solid ${color};">
+                    <div style="font-weight:600;color:${color};">${icon} ${label}: ${check.status || 'UNKNOWN'}</div>
+                    <div style="font-size:12px;color:#94a3b8;margin-top:4px;">${check.message || ''}</div>
+                    ${check.record ? `<div style="font-size:11px;color:#64748b;margin-top:4px;font-family:monospace;word-break:break-all;">${check.record}</div>` : ''}
+                    ${check.fix ? `<div style="font-size:12px;color:#60a5fa;margin-top:6px;white-space:pre-wrap;">💡 ${check.fix}</div>` : ''}
+                </div>`;
+        }
+        checksList.innerHTML = checksHtml;
+
+        // Show recommendations
+        const recsDiv = document.getElementById('delivRecommendations');
+        const recs = data.recommendations || [];
+        let recsHtml = '';
+
+        for (const rec of recs) {
+            const sevColor = rec.severity === 'critical' ? '#ef4444' : rec.severity === 'warning' ? '#f59e0b' : rec.severity === 'ok' ? '#22c55e' : '#60a5fa';
+            const sevIcon = rec.severity === 'critical' ? '🔴' : rec.severity === 'warning' ? '🟡' : rec.severity === 'ok' ? '🟢' : '🔵';
+            recsHtml += `
+                <div style="padding:12px;margin:8px 0;border-radius:8px;background:#0f172a;border-left:3px solid ${sevColor};">
+                    <div style="font-weight:600;">${sevIcon} ${rec.title}</div>
+                    ${rec.detail ? `<div style="font-size:12px;color:#94a3b8;margin-top:4px;white-space:pre-wrap;">${rec.detail}</div>` : ''}
+                    ${rec.impact ? `<div style="font-size:11px;color:#64748b;margin-top:4px;">Impact: ${rec.impact}</div>` : ''}
+                </div>`;
+        }
+        recsDiv.innerHTML = recsHtml;
+
+        showResult('delivResult', `✅ Check complete for <strong>${domain}</strong> — Score: <strong style="color:${scoreColor};">${score}/100</strong>`, 'success');
+
+    } catch (err) {
+        showResult('delivResult', `❌ Check failed: ${err.message}`, 'error');
+    }
+}
+
+// Checklist counter
+document.addEventListener('change', function (e) {
+    if (e.target.classList.contains('deliv-check')) {
+        const all = document.querySelectorAll('.deliv-check');
+        const checked = document.querySelectorAll('.deliv-check:checked');
+        const countEl = document.getElementById('delivChecklistCount');
+        if (countEl) countEl.textContent = `${checked.length}/${all.length} completed`;
+    }
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ── WARMUP TRACKING (daily send limits per account) ──────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+
+const WARMUP_KEY = 'km_warmup_v1';
+
+function getWarmupData() {
+    try { return JSON.parse(localStorage.getItem(WARMUP_KEY) || '{}'); } catch { return {}; }
+}
+
+function saveWarmupData(data) {
+    localStorage.setItem(WARMUP_KEY, JSON.stringify(data));
+}
+
+function recordSend(accountUser) {
+    const today = new Date().toISOString().slice(0, 10);
+    const data = getWarmupData();
+    if (!data[accountUser]) data[accountUser] = {};
+    if (!data[accountUser][today]) data[accountUser][today] = 0;
+    data[accountUser][today]++;
+    saveWarmupData(data);
+    return data[accountUser][today];
+}
+
+function getTodaySendCount(accountUser) {
+    const today = new Date().toISOString().slice(0, 10);
+    const data = getWarmupData();
+    return (data[accountUser] && data[accountUser][today]) || 0;
+}
+
+// ── safeFetchJson is defined earlier in this file ────────────────────────────

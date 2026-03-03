@@ -81,6 +81,7 @@
             <button class="tab-btn" data-tab="smtp">SMTP Config</button>
             <button class="tab-btn" data-tab="ses">AWS SES</button>
             <button class="tab-btn" data-tab="ec2">EC2 Relay</button>
+            <button class="tab-btn" data-tab="deliverability" style="background:linear-gradient(135deg,#059669,#10b981);color:#fff;">🛡️ Deliverability</button>
         </div>
 
         <!-- Tab: Single Email -->
@@ -747,52 +748,6 @@
                 </div>
             </div>
 
-            <!-- Sender Name Override (Bulk) -->
-            <div
-                style="margin-bottom:12px; padding:12px; background:#1e1e2e; border-radius:8px; border:1px solid #3a3a5a;">
-                <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
-                    <strong style="color:#00ff9d; font-size:13px;">👤 Sender Name</strong>
-                    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
-                        <input type="checkbox" id="bulkRandomSenderName" onchange="toggleRandomSenderName('bulk')"
-                            style="width:16px;height:16px;">
-                        <span style="color:#f59e0b;font-size:13px;">🎲 Random Name per email</span>
-                    </label>
-                    <span style="color:#888;font-size:11px;">(overrides SMTP sender name)</span>
-                </div>
-                <div id="bulkSenderNameRow" style="margin-top:8px;display:flex;gap:8px;align-items:center;">
-                    <input type="text" id="bulkSenderName"
-                        placeholder="e.g. John Doe  (leave blank to use SMTP account name)" style="flex:1;">
-                </div>
-                <div id="bulkRandomNamePreview" style="display:none;margin-top:8px;">
-                    <div style="font-size:11px;color:var(--text-dim);margin-bottom:5px;">Examples: <span
-                            id="randomNameExamples" style="color:var(--warning);"></span></div>
-                    <div class="country-selector" id="bulkCountrySelector">
-                        <label>Name Country:</label>
-                        <select id="bulkNameCountry" onchange="updateRandomNameExamples('bulk')"
-                            style="padding:5px 10px;border-radius:6px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);color:var(--text);font-size:.78rem;">
-                            <option value="us">🇺🇸 United States</option>
-                            <option value="uk">🇬🇧 United Kingdom</option>
-                            <option value="ca">🇨🇦 Canada</option>
-                            <option value="au">🇦🇺 Australia</option>
-                            <option value="nz">🇳🇿 New Zealand</option>
-                            <option value="de">🇩🇪 Germany</option>
-                            <option value="fr">🇫🇷 France</option>
-                            <option value="it">🇮🇹 Italy</option>
-                            <option value="es">🇪🇸 Spain</option>
-                            <option value="nl">🇳🇱 Netherlands</option>
-                            <option value="se">🇸🇪 Sweden</option>
-                            <option value="pl">🇵🇱 Poland</option>
-                            <option value="br">🇧🇷 Brazil</option>
-                            <option value="mx">🇲🇽 Mexico</option>
-                            <option value="in">🇮🇳 India</option>
-                            <option value="jp">🇯🇵 Japan</option>
-                            <option value="sg">🇸🇬 Singapore</option>
-                            <option value="ae">🇦🇪 UAE</option>
-                        </select>
-                    </div>
-                </div>
-            </div>
-
             <!-- SMTP Batch Settings -->
             <div class="batch-section" id="smtpBatchSection">
                 <div class="batch-section-title">⚙️ SMTP Batch Settings &nbsp;<span id="batchModeLabel"
@@ -1140,6 +1095,103 @@
                 4. When sending emails via EC2 Relay method, emails originate from YOUR EC2 IP<br>
                 5. NO special setup needed - uses dedicated relay server on port 3000<br>
                 6. This gives you a dedicated IP for maximum inbox delivery
+            </div>
+        </div>
+
+        <!-- Tab: Deliverability Checker -->
+        <div class="tab-content" id="deliverability">
+            <h2>🛡️ Deliverability Diagnostic</h2>
+            <p style="color:#888;font-size:13px;margin-bottom:16px;">Check your domain's email authentication records (SPF, DKIM, DMARC) and get actionable recommendations to improve inbox placement.</p>
+
+            <div class="form-group">
+                <label>Domain or SMTP Email:</label>
+                <div style="display:flex;gap:8px;">
+                    <input type="text" id="delivCheckDomain" placeholder="example.com or user@example.com" style="flex:1;">
+                    <button class="btn" onclick="runDeliverabilityCheck()" style="background:linear-gradient(135deg,#059669,#10b981);white-space:nowrap;">🔍 Run Check</button>
+                </div>
+                <button class="btn" onclick="autoFillDomainFromSmtp()" style="margin-top:6px;font-size:11px;background:#334155;padding:4px 10px;">Auto-fill from SMTP accounts</button>
+            </div>
+
+            <div id="delivResult" class="result-box" style="display:none;"></div>
+
+            <!-- Score Card -->
+            <div id="delivScoreCard" style="display:none;margin:16px 0;padding:20px;border-radius:12px;background:linear-gradient(135deg,#1e293b,#0f172a);border:1px solid #334155;">
+                <div style="display:flex;align-items:center;gap:20px;flex-wrap:wrap;">
+                    <div id="delivScoreCircle" style="width:80px;height:80px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:800;flex-shrink:0;"></div>
+                    <div>
+                        <div id="delivScoreLabel" style="font-size:18px;font-weight:700;"></div>
+                        <div id="delivScoreSummary" style="font-size:13px;color:#94a3b8;margin-top:4px;"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Check Results -->
+            <div id="delivChecks" style="display:none;">
+                <h3 style="margin-top:24px;">📋 Authentication Results</h3>
+                <div id="delivChecksList"></div>
+
+                <h3 style="margin-top:24px;">🎯 Recommendations</h3>
+                <div id="delivRecommendations"></div>
+            </div>
+
+            <!-- Warmup Guide -->
+            <div style="margin-top:24px;padding:20px;border-radius:12px;background:#1e293b;border:1px solid #334155;">
+                <h3 style="margin-top:0;">📈 IP Warmup Schedule</h3>
+                <p style="color:#94a3b8;font-size:12px;">Follow this schedule when using a new sending IP or domain:</p>
+                <table style="width:100%;border-collapse:collapse;font-size:13px;margin-top:12px;">
+                    <tr style="border-bottom:1px solid #334155;">
+                        <th style="text-align:left;padding:8px;color:#94a3b8;">Period</th>
+                        <th style="text-align:left;padding:8px;color:#94a3b8;">Daily Volume</th>
+                        <th style="text-align:left;padding:8px;color:#94a3b8;">Focus</th>
+                    </tr>
+                    <tr style="border-bottom:1px solid #1e293b;"><td style="padding:8px;">Day 1-3</td><td style="padding:8px;color:#22c55e;font-weight:600;">50/day</td><td style="padding:8px;color:#94a3b8;">Send to engaged contacts only</td></tr>
+                    <tr style="border-bottom:1px solid #1e293b;"><td style="padding:8px;">Day 4-7</td><td style="padding:8px;color:#22c55e;font-weight:600;">100/day</td><td style="padding:8px;color:#94a3b8;">Monitor bounce rate (&lt;2%)</td></tr>
+                    <tr style="border-bottom:1px solid #1e293b;"><td style="padding:8px;">Day 8-14</td><td style="padding:8px;color:#f59e0b;font-weight:600;">250/day</td><td style="padding:8px;color:#94a3b8;">Check spam complaints (&lt;0.1%)</td></tr>
+                    <tr style="border-bottom:1px solid #1e293b;"><td style="padding:8px;">Day 15-21</td><td style="padding:8px;color:#f59e0b;font-weight:600;">500/day</td><td style="padding:8px;color:#94a3b8;">Maintain consistent volume</td></tr>
+                    <tr><td style="padding:8px;">Day 22-30</td><td style="padding:8px;color:#ef4444;font-weight:600;">1000/day</td><td style="padding:8px;color:#94a3b8;">Increase only if metrics are good</td></tr>
+                </table>
+                <div style="margin-top:12px;padding:10px;background:#0f172a;border-radius:8px;border-left:3px solid #ef4444;">
+                    <p style="color:#f87171;font-size:12px;margin:0;font-weight:600;">⚠️ STOP Rules:</p>
+                    <ul style="color:#94a3b8;font-size:12px;margin:6px 0 0 16px;padding:0;">
+                        <li>If bounce rate exceeds 2% — clean your list</li>
+                        <li>If spam complaint rate exceeds 0.1% — investigate content</li>
+                        <li>If open rate drops below 5% — check spam folder placement</li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- Pre-Deployment Checklist -->
+            <div style="margin-top:24px;padding:20px;border-radius:12px;background:#1e293b;border:1px solid #334155;">
+                <h3 style="margin-top:0;">✅ Pre-Send Checklist</h3>
+                <div style="display:grid;gap:8px;font-size:13px;" id="delivChecklist">
+                    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;"><input type="checkbox" class="deliv-check"> SPF record valid and includes all sending IPs</label>
+                    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;"><input type="checkbox" class="deliv-check"> DKIM signature configured and verified</label>
+                    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;"><input type="checkbox" class="deliv-check"> DMARC policy set (p=none minimum)</label>
+                    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;"><input type="checkbox" class="deliv-check"> MX records properly configured</label>
+                    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;"><input type="checkbox" class="deliv-check"> Sending IP not on any blacklist</label>
+                    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;"><input type="checkbox" class="deliv-check"> Sender name randomization verified</label>
+                    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;"><input type="checkbox" class="deliv-check"> Unsubscribe link working in email footer</label>
+                    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;"><input type="checkbox" class="deliv-check"> Physical address included in footer</label>
+                    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;"><input type="checkbox" class="deliv-check"> Tested with <a href="https://www.mail-tester.com" target="_blank" style="color:#60a5fa;">mail-tester.com</a> (score 8+/10)</label>
+                    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;"><input type="checkbox" class="deliv-check"> Sent test emails to Gmail, Outlook, Yahoo</label>
+                    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;"><input type="checkbox" class="deliv-check"> Checked all test emails in inbox (not spam)</label>
+                    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;"><input type="checkbox" class="deliv-check"> IP warmup schedule followed</label>
+                </div>
+                <div style="margin-top:12px;">
+                    <span id="delivChecklistCount" style="font-size:12px;color:#94a3b8;">0/12 completed</span>
+                </div>
+            </div>
+
+            <!-- Testing Tools -->
+            <div style="margin-top:24px;padding:20px;border-radius:12px;background:#1e293b;border:1px solid #334155;">
+                <h3 style="margin-top:0;">🧪 Testing Tools</h3>
+                <div style="display:grid;gap:8px;font-size:13px;">
+                    <a href="https://www.mail-tester.com" target="_blank" style="color:#60a5fa;text-decoration:none;">🔗 Mail-Tester.com — Send test email, get deliverability score (aim for 8+/10)</a>
+                    <a href="https://mxtoolbox.com/blacklists.aspx" target="_blank" style="color:#60a5fa;text-decoration:none;">🔗 MXToolbox Blacklist Check — Verify your IP isn't blacklisted</a>
+                    <a href="https://postmaster.google.com" target="_blank" style="color:#60a5fa;text-decoration:none;">🔗 Google Postmaster Tools — Monitor Gmail delivery reputation</a>
+                    <a href="https://www.learndmarc.com" target="_blank" style="color:#60a5fa;text-decoration:none;">🔗 LearnDMARC.com — Test SPF/DKIM/DMARC in real-time</a>
+                    <a href="https://dmarcian.com/dmarc-inspector/" target="_blank" style="color:#60a5fa;text-decoration:none;">🔗 DMARC Inspector — Validate your DMARC record</a>
+                </div>
             </div>
         </div>
     </div>
