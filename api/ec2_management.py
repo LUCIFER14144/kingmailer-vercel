@@ -52,6 +52,33 @@ def get_latest_amazon_linux_ami(ec2_client):
         return ami_map.get(ec2_client.meta.region_name, ami_map['us-east-1'])
 
 
+def _get_subnet_for_sg(ec2_client, security_group):
+    """
+    Given a security group ID, find the VPC it belongs to and return
+    a suitable subnet ID from that same VPC.
+    Prefers subnets that auto-assign public IPs; falls back to any available subnet.
+    Returns None if lookup fails (caller will handle).
+    """
+    sg_details = ec2_client.describe_security_groups(GroupIds=[security_group])
+    vpc_id = sg_details['SecurityGroups'][0].get('VpcId')
+    if not vpc_id:
+        return None
+
+    subnets_resp = ec2_client.describe_subnets(
+        Filters=[
+            {'Name': 'vpc-id', 'Values': [vpc_id]},
+            {'Name': 'state', 'Values': ['available']}
+        ]
+    )
+    subnets = subnets_resp.get('Subnets', [])
+    if not subnets:
+        return None
+
+    # Prefer subnets with auto-assign public IP; fall back to any available
+    public_subnets = [s for s in subnets if s.get('MapPublicIpOnLaunch')]
+    return (public_subnets or subnets)[0]['SubnetId']
+
+
 def create_ec2_instance(access_key, secret_key, region, keypair_name, security_group=None):
     """Create a new EC2 instance for email sending"""
     try:
@@ -65,9 +92,6 @@ def create_ec2_instance(access_key, secret_key, region, keypair_name, security_g
         # Get the latest Amazon Linux 2 AMI for the region
         ami_id = get_latest_amazon_linux_ami(ec2_client)
         
-        # Track whether we need a specific subnet (for non-default VPC SGs)
-        subnet_id = None
-        
         # Create default security group if not provided
         if not security_group:
             try:
@@ -77,7 +101,7 @@ def create_ec2_instance(access_key, secret_key, region, keypair_name, security_g
                 )
                 security_group = sg_response['GroupId']
                 
-                # Add inbound rules matching user's existing security group setup
+                # Add inbound rules
                 ec2_client.authorize_security_group_ingress(
                     GroupId=security_group,
                     IpPermissions=[
@@ -92,7 +116,7 @@ def create_ec2_instance(access_key, secret_key, region, keypair_name, security_g
                 if 'InvalidGroup.Duplicate' not in str(e):
                     raise
         else:
-            # If custom security group provided, try to add port 3000 (relay server port)
+            # Try to add required ports to the user-provided security group
             try:
                 ec2_client.authorize_security_group_ingress(
                     GroupId=security_group,
@@ -103,46 +127,50 @@ def create_ec2_instance(access_key, secret_key, region, keypair_name, security_g
                         {'IpProtocol': 'tcp', 'FromPort': 22, 'ToPort': 22, 'IpRanges': [{'CidrIp': '0.0.0.0/0'}]}
                     ]
                 )
-            except ClientError as e:
-                # Ignore if rules already exist
-                if 'InvalidPermission.Duplicate' not in str(e):
-                    pass  # Continue anyway, rules might already exist
+            except ClientError:
+                pass  # Rules already exist or other non-fatal issue
 
-            # Look up the VPC this security group belongs to and find a matching subnet.
-            # Without this, run_instances defaults to the default VPC which may not
-            # match the SG's VPC, causing "does not exist in VPC" errors.
-            try:
-                sg_details = ec2_client.describe_security_groups(GroupIds=[security_group])
-                vpc_id = sg_details['SecurityGroups'][0].get('VpcId')
-                if vpc_id:
-                    subnets_resp = ec2_client.describe_subnets(
-                        Filters=[
-                            {'Name': 'vpc-id', 'Values': [vpc_id]},
-                            {'Name': 'state', 'Values': ['available']}
-                        ]
-                    )
-                    if subnets_resp['Subnets']:
-                        # Prefer subnets that auto-assign a public IP so the instance
-                        # gets a reachable public address
-                        public_subnets = [s for s in subnets_resp['Subnets']
-                                          if s.get('MapPublicIpOnLaunch')]
-                        chosen = public_subnets if public_subnets else subnets_resp['Subnets']
-                        subnet_id = chosen[0]['SubnetId']
-            except Exception:
-                pass  # Non-fatal; run_instances will raise a clear error if still wrong
-        
-        # Build instance launch parameters
-        run_params = dict(
-            ImageId=ami_id,
-            InstanceType='t2.micro',
-            KeyName=keypair_name,
-            MinCount=1,
-            MaxCount=1,
-            SecurityGroupIds=[security_group],
-        )
-        # Only specify SubnetId when we have one (non-default VPC scenario)
+        # ------------------------------------------------------------------
+        # Resolve the subnet that belongs to the same VPC as the SG.
+        # Using NetworkInterfaces is the correct AWS pattern for launching
+        # into any VPC (default or custom) with a guaranteed public IP.
+        # This avoids the "security group does not exist in VPC" error that
+        # occurs when SecurityGroupIds and the implicit VPC don't match.
+        # ------------------------------------------------------------------
+        subnet_id = None
+        try:
+            subnet_id = _get_subnet_for_sg(ec2_client, security_group)
+        except Exception:
+            pass  # Will fall back to simple launch below
+
+        # Build NetworkInterfaces spec when we have a subnet (always preferred)
         if subnet_id:
-            run_params['SubnetId'] = subnet_id
+            network_interfaces = [{
+                'DeviceIndex': 0,
+                'SubnetId': subnet_id,
+                'Groups': [security_group],
+                'AssociatePublicIpAddress': True   # always get a public IP
+            }]
+            run_params = dict(
+                ImageId=ami_id,
+                InstanceType='t2.micro',
+                KeyName=keypair_name,
+                MinCount=1,
+                MaxCount=1,
+                NetworkInterfaces=network_interfaces,
+                # NOTE: Do NOT pass SecurityGroupIds/SubnetId at top level
+                # when using NetworkInterfaces — AWS rejects the combination
+            )
+        else:
+            # Fallback: simple launch (works for default-VPC SGs)
+            run_params = dict(
+                ImageId=ami_id,
+                InstanceType='t2.micro',
+                KeyName=keypair_name,
+                MinCount=1,
+                MaxCount=1,
+                SecurityGroupIds=[security_group],
+            )
 
         # Launch instance (t2.micro for cost-effectiveness)
         response = ec2_client.run_instances(
