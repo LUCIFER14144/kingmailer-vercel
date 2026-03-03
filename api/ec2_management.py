@@ -79,6 +79,75 @@ def _get_subnet_for_sg(ec2_client, security_group):
     return (public_subnets or subnets)[0]['SubnetId']
 
 
+def repair_security_group(access_key, secret_key, region, security_group_id):
+    """
+    Force-repair a security group to ensure ALL required ports are open.
+    This is idempotent - safe to call multiple times.
+    Returns details of what was fixed.
+    """
+    try:
+        ec2_client = boto3.client(
+            'ec2',
+            region_name=region,
+            aws_access_key_id=access_key,
+            aws_secret_access_key=secret_key
+        )
+        
+        # Required ports for KINGMAILER relay
+        required_ports = [
+            {'port': 3000, 'desc': 'Relay Server (CRITICAL)'},
+            {'port': 587, 'desc': 'SMTP TLS'},
+            {'port': 465, 'desc': 'SMTP SSL'},
+            {'port': 25, 'desc': 'SMTP'},
+            {'port': 22, 'desc': 'SSH'}
+        ]
+        
+        added_ports = []
+        already_open = []
+        
+        for port_info in required_ports:
+            port = port_info['port']
+            try:
+                ec2_client.authorize_security_group_ingress(
+                    GroupId=security_group_id,
+                    IpPermissions=[{
+                        'IpProtocol': 'tcp',
+                        'FromPort': port,
+                        'ToPort': port,
+                        'IpRanges': [{'CidrIp': '0.0.0.0/0', 'Description': f'KINGMAILER {port_info["desc"]}'}]
+                    }]
+                )
+                added_ports.append(f"{port} ({port_info['desc']})")
+            except ClientError as e:
+                if 'InvalidPermission.Duplicate' in str(e):
+                    already_open.append(f"{port} ({port_info['desc']})")
+                else:
+                    # Unexpected error - still record it
+                    added_ports.append(f"{port} - ERROR: {str(e)[:50]}")
+        
+        message = ''
+        if added_ports:
+            message += f"✅ Opened ports: {', '.join(added_ports)}. "
+        if already_open:
+            message += f"ℹ️ Already open: {', '.join(already_open)}. "
+        if not added_ports and not already_open:
+            message = '⚠️ Could not verify ports (check AWS permissions)'
+        
+        return {
+            'success': True,
+            'security_group_id': security_group_id,
+            'message': message.strip(),
+            'ports_opened': len(added_ports),
+            'ports_already_open': len(already_open)
+        }
+    
+    except Exception as e:
+        return {
+            'success': False,
+            'error': f'Failed to repair security group: {str(e)}'
+        }
+
+
 def create_ec2_instance(access_key, secret_key, region, keypair_name, security_group=None):
     """Create a new EC2 instance for email sending"""
     try:
@@ -1032,7 +1101,7 @@ class handler(BaseHTTPRequestHandler):
                 elif not AWS_CREDENTIALS:
                     result = {'success': False, 'error': 'AWS credentials not configured'}
                 else:
-                    result = fix_security_group(
+                    result = repair_security_group(
                         AWS_CREDENTIALS['access_key'],
                         AWS_CREDENTIALS['secret_key'],
                         AWS_CREDENTIALS['region'],
