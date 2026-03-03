@@ -591,10 +591,16 @@ class handler(BaseHTTPRequestHandler):
                 subject = replace_csv_row_tags(subject, csv_row)
                 html_body = replace_csv_row_tags(html_body, csv_row)
             
-            # Extract sender info for $sendername etc.
+            # Extract sender info for $tag / {{tag}} placeholders
             _smtp_cfg  = data.get('smtp_config') or {}
             _aws_cfg   = data.get('aws_config')  or {}
-            # Priority for placeholder replacement and final send
+            
+            # Resolve sender email (used in template tags and as a name fallback)
+            _s_email = (_smtp_cfg.get('user') or 
+                        _aws_cfg.get('from_email') or 
+                        data.get('from_email') or '')
+
+            # Resolve sender name: frontend random/manual > smtp config > fallback to email
             _raw_from_name = (from_name or '').strip()
             if _raw_from_name.upper() == 'KINGMAILER': _raw_from_name = ''
             
@@ -603,7 +609,7 @@ class handler(BaseHTTPRequestHandler):
             
             _final_sender_name = _raw_from_name or _cfg_name or _s_email
             
-            # Replace standard template tags ($tag and {{tag}} syntax)
+            # Replace template tags ($tag and {{tag}} syntax)
             subject   = replace_template_tags(subject,   recipient_email=to_email,
                                                sender_name=_final_sender_name, sender_email=_s_email,
                                                csv_row=csv_row)
