@@ -219,39 +219,31 @@ def add_attachment_to_message(msg, attachment):
         return False, str(e)
 
 def _html_to_plain(html):
-    """Strip HTML tags to produce a plain-text fallback."""
+    """Strip HTML tags to produce a clean plain-text fallback.
+    Decodes HTML entities so &amp; &lt; &gt; etc. appear correctly in plain text.
+    """
+    import html as _html_lib
     text = re.sub(r'<br\s*/?>', '\n', html, flags=re.IGNORECASE)
     text = re.sub(r'<p[^>]*>', '\n', text, flags=re.IGNORECASE)
     text = re.sub(r'</p>', '\n', text, flags=re.IGNORECASE)
-    text = re.sub(r'<li[^>]*>', '\n• ', text, flags=re.IGNORECASE)
+    text = re.sub(r'<li[^>]*>', '\n\u2022 ', text, flags=re.IGNORECASE)
     text = re.sub(r'<[^>]+>', '', text)
+    text = _html_lib.unescape(text)          # decode &amp; &lt; &gt; &#x…; etc.
     text = re.sub(r'[ \t]+', ' ', text)
     text = re.sub(r'\n{3,}', '\n\n', text)
     return text.strip()
 
 
 def minimize_spam_keywords(text):
-    """Automatically replace high-risk spam words with clean alternatives.
-    Protects URLs and HTML attribute values from corruption.
+    """DEPRECATED — no longer called.
+
+    Word-substitution approaches (Free → Complementary, Important → Significant) are
+    counterproductive against modern ML-based spam classifiers (Gmail, Outlook, SpamAssassin).
+    Unnatural word choices are themselves a spam fingerprint — the filter detects that you
+    are trying to evade it. This function is kept only so existing call-sites don't crash;
+    it is a no-op and will be fully removed in the next major version.
     """
-    if not text: return text
-    replacements = [
-        (r'(?<![=/\w])\bFree\b(?![=/\w.-])', 'Complementary'),
-        (r'(?<![=/\w])\bUrgent\b(?![=/\w.-])', 'Priority'),
-        (r'(?<![=/\w])\bImportant\b(?![=/\w.-])', 'Significant'),
-        (r'(?<![=/\w])\bCritical\b(?![=/\w.-])', 'Vital'),
-        (r'(?<![=/\w])\bAlert\b(?![=/\w.-])', 'Notification'),
-        (r'(?<![=/\w])\bGuarantee\b(?![=/\w.-])', 'Assurance'),
-        (r'(?<![=/\w])\bNo cost\b', 'At no expense'),
-        (r'(?<![=/\w])\bLimited time\b', 'Short window'),
-        (r'(?<![=/\w])\bAct now\b', 'Respond soon'),
-        (r'(?<![=/\w])\bWinner\b(?![=/\w.-])', 'Selected'),
-        (r'(?<![=/\w])\bCash\b(?![=/\w.-])', 'Funds'),
-        (r'!{3,}', '.'),
-    ]
-    for pattern, repl in replacements:
-        text = re.sub(pattern, repl, text, flags=re.IGNORECASE)
-    return text
+    return text  # no-op
 
 def _extract_domain(from_header):
     """Extract clean domain from From header like 'Name <user@domain.com>'."""
@@ -336,28 +328,31 @@ def _build_msg(from_header, to_email, subject, html_body, attachment=None):
     # Check for Physical Address and Unsubscribe Link
     lc_body = html_body.lower()
     has_unsubscribe = 'unsubscribe' in lc_body or 'opt-out' in lc_body
-    # Use a proper regex: require a street number adjacent to a street-type word.
-    # The old check ('st' in body) caused false-positives on words like "first",
-    # "last", "best", etc. — meaning the mandatory CAN-SPAM physical address
-    # footer was almost never injected, which is a primary spam classification trigger.
     has_address = bool(re.search(
         r'\b\d{1,6}\b.{0,15}\b(street|st\.|ave\.?|avenue|blvd\.?|boulevard|'
         r'road|rd\.|drive|dr\.|suite|ste\.?|floor|way|lane|ln\.)\b',
         lc_body
     ))
 
-    footer = '<div style="margin-top:40px; padding-top:20px; border-top:1px solid #eee; font-size:11px; color:#999; text-align:center;">'
-    if not has_address:
-        # Default professional address placeholder
-        footer += '<p>123 Business Way, Suite 500, Ashburn, VA 20147</p>'
-    if not has_unsubscribe:
-        # RFC-compliant unsubscribe link placeholder
-        _fe = re.search(r'<(.+?)>', from_header)
-        _fe = _fe.group(1) if _fe else from_header
-        footer += f'<p>To stop receiving these emails, <a href="mailto:{_fe}?subject=unsubscribe" style="color:#666;">unsubscribe here</a>.</p>'
-    footer += '</div>'
-    
-    if not has_unsubscribe or not has_address:
+    # Only inject footer for emails with enough content to be a commercial message.
+    # Forcing a business address + unsubscribe into a short test/personal email
+    # creates a content mismatch that Gmail's ML classifier reads as suspicious bulk.
+    _plain_preview = _html_to_plain(html_body)
+    _word_count    = len(_plain_preview.split())
+    _needs_footer  = _word_count >= 20 and (not has_unsubscribe or not has_address)
+
+    if _needs_footer:
+        footer = ('<div style="margin-top:40px;padding-top:20px;border-top:1px solid #eee;'
+                  'font-size:11px;color:#999;text-align:center;">')
+        if not has_address:
+            footer += '<p>123 Business Way, Suite 500, Ashburn, VA 20147</p>'
+        if not has_unsubscribe:
+            _fe2 = re.search(r'<(.+?)>', from_header)
+            _fe2 = _fe2.group(1) if _fe2 else from_header
+            footer += (f'<p>To stop receiving these emails, '
+                       f'<a href="mailto:{_fe2}?subject=unsubscribe" '
+                       f'style="color:#666;">unsubscribe here</a>.</p>')
+        footer += '</div>'
         if '</body>' in html_body:
             html_body = html_body.replace('</body>', footer + '</body>')
         else:

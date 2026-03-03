@@ -164,12 +164,16 @@ def replace_template_tags(text, row_data, recipient_email='', sender_name='', se
 # Helper: HTML to plain text
 # ────────────────────────────────────────────────────────
 def _html_to_plain(html):
-    """Strip HTML tags to produce a plain-text fallback."""
+    """Strip HTML tags to produce a clean plain-text fallback.
+    Decodes HTML entities so &amp; &lt; &gt; etc. appear correctly in plain text.
+    """
+    import html as _html_lib
     text = re.sub(r'<br\s*/?>', '\n', html, flags=re.IGNORECASE)
     text = re.sub(r'<p[^>]*>', '\n', text, flags=re.IGNORECASE)
     text = re.sub(r'</p>', '\n', text, flags=re.IGNORECASE)
-    text = re.sub(r'<li[^>]*>', '\n• ', text, flags=re.IGNORECASE)
+    text = re.sub(r'<li[^>]*>', '\n\u2022 ', text, flags=re.IGNORECASE)
     text = re.sub(r'<[^>]+>', '', text)
+    text = _html_lib.unescape(text)          # decode &amp; &lt; &gt; &#x…; etc.
     text = re.sub(r'[ \t]+', ' ', text)
     text = re.sub(r'\n{3,}', '\n\n', text)
     return text.strip()
@@ -221,27 +225,13 @@ def add_attachment_to_message(msg, attachment):
         return False, str(e)
 
 def minimize_spam_keywords(text):
-    """Automatically replace high-risk spam words with clean alternatives.
-    Protects URLs and HTML attribute values from corruption.
+    """DEPRECATED — no longer called.
+
+    Word-substitution (Free → Complementary, Important → Significant) is
+    counterproductive against modern ML-based spam classifiers. Unnatural
+    word choices are themselves a spam fingerprint. This is now a no-op.
     """
-    if not text: return text
-    replacements = [
-        (r'(?<![=/\w])\bFree\b(?![=/\w.-])', 'Complementary'),
-        (r'(?<![=/\w])\bUrgent\b(?![=/\w.-])', 'Priority'),
-        (r'(?<![=/\w])\bImportant\b(?![=/\w.-])', 'Significant'),
-        (r'(?<![=/\w])\bCritical\b(?![=/\w.-])', 'Vital'),
-        (r'(?<![=/\w])\bAlert\b(?![=/\w.-])', 'Notification'),
-        (r'(?<![=/\w])\bGuarantee\b(?![=/\w.-])', 'Assurance'),
-        (r'(?<![=/\w])\bNo cost\b', 'At no expense'),
-        (r'(?<![=/\w])\bLimited time\b', 'Short window'),
-        (r'(?<![=/\w])\bAct now\b', 'Respond soon'),
-        (r'(?<![=/\w])\bWinner\b(?![=/\w.-])', 'Selected'),
-        (r'(?<![=/\w])\bCash\b(?![=/\w.-])', 'Funds'),
-        (r'!{3,}', '.'),
-    ]
-    for pattern, repl in replacements:
-        text = re.sub(pattern, repl, text, flags=re.IGNORECASE)
-    return text
+    return text  # no-op
 
 def _extract_domain(from_header):
     if '@' in from_header:
@@ -319,26 +309,31 @@ def _build_message(from_header, to_email, subject, html_body, attachment=None):
     # ── Deliverability: Mandatory Footer ──
     lc_body = html_body.lower()
     has_unsubscribe = 'unsubscribe' in lc_body or 'opt-out' in lc_body
-    # Use a proper regex: require a street number adjacent to a street-type word.
-    # The old check ('st' in body) caused false-positives on words like "first",
-    # "last", "best", etc. — meaning the mandatory CAN-SPAM physical address
-    # footer was almost never injected, which is a primary spam classification trigger.
     has_address = bool(re.search(
         r'\b\d{1,6}\b.{0,15}\b(street|st\.|ave\.?|avenue|blvd\.?|boulevard|'
         r'road|rd\.|drive|dr\.|suite|ste\.?|floor|way|lane|ln\.)\b',
         lc_body
     ))
 
-    footer = '<div style="margin-top:40px; padding-top:20px; border-top:1px solid #eee; font-size:11px; color:#999; text-align:center;">'
-    if not has_address:
-        footer += '<p>123 Business Way, Suite 500, Ashburn, VA 20147</p>'
-    if not has_unsubscribe:
-        _fe = re.search(r'<(.+?)>', from_header)
-        _fe = _fe.group(1) if _fe else from_header
-        footer += f'<p>To stop receiving these emails, <a href="mailto:{_fe}?subject=unsubscribe" style="color:#666;">unsubscribe here</a>.</p>'
-    footer += '</div>'
-    
-    if not has_unsubscribe or not has_address:
+    # Only inject footer for emails with enough content to be a commercial message.
+    # Forcing a business address + unsubscribe into a short test/personal email
+    # creates a content mismatch that Gmail's ML classifier reads as suspicious bulk.
+    _plain_preview = _html_to_plain(html_body)
+    _word_count    = len(_plain_preview.split())
+    _needs_footer  = _word_count >= 20 and (not has_unsubscribe or not has_address)
+
+    if _needs_footer:
+        footer = ('<div style="margin-top:40px;padding-top:20px;border-top:1px solid #eee;'
+                  'font-size:11px;color:#999;text-align:center;">')
+        if not has_address:
+            footer += '<p>123 Business Way, Suite 500, Ashburn, VA 20147</p>'
+        if not has_unsubscribe:
+            _fe2 = re.search(r'<(.+?)>', from_header)
+            _fe2 = _fe2.group(1) if _fe2 else from_header
+            footer += (f'<p>To stop receiving these emails, '
+                       f'<a href="mailto:{_fe2}?subject=unsubscribe" '
+                       f'style="color:#666;">unsubscribe here</a>.</p>')
+        footer += '</div>'
         if '</body>' in html_body:
             html_body = html_body.replace('</body>', footer + '</body>')
         else:
@@ -362,14 +357,14 @@ def _build_message(from_header, to_email, subject, html_body, attachment=None):
     plain = _html_to_plain(html_body)
 
     if attachment:
-        # ── WITH ATTACHMENT: multipart/mixed wraps body + file ────────────
         msg = MIMEMultipart('mixed')
         alt = MIMEMultipart('alternative')
-        alt.attach(MIMEText(plain, 'plain', cset))
+        txt = MIMEText(plain, 'plain', cset)
+        txt.set_param('format', 'flowed')   # RFC 3676 — real mail-client signal
+        alt.attach(txt)
         alt.attach(MIMEText(html_body, 'html', cset))
         if 'MIME-Version' in alt: del alt['MIME-Version']
         msg.attach(alt)
-        # Attach the file as a proper downloadable MIME part
         try:
             file_data = base64.b64decode(
                 attachment['content'] + '=' * (-len(attachment['content']) % 4)
@@ -389,33 +384,24 @@ def _build_message(from_header, to_email, subject, html_body, attachment=None):
         except Exception as _ae:
             print(f'[BUILD_MESSAGE] Attachment encode error: {_ae}')
     else:
-        # ── NO ATTACHMENT: simple multipart/alternative ───────────────────
         msg = MIMEMultipart('alternative')
-        msg.attach(MIMEText(plain, 'plain', cset))
+        txt = MIMEText(plain, 'plain', cset)
+        txt.set_param('format', 'flowed')   # RFC 3676
+        msg.attach(txt)
         msg.attach(MIMEText(html_body, 'html', cset))
 
     _clean_mime(msg)
 
-    # ── Headers: clean minimal set — every extra header is a potential spam signal ──
-    # DELIBERATELY OMITTED (spam triggers):
-    #   X-Mailer          — fake client identity detected by all major filters
-    #   X-Entity-ID       — non-standard, automated-bulk-sender fingerprint
-    #   X-Msg-Ref         — non-standard, automated-bulk-sender fingerprint
-    #   Thread-Topic      — Outlook MAPI-only header, contradicts any other X-Mailer
-    #   Thread-Index      — same as Thread-Topic
-    #   Importance/X-Priority — bulk-mail markers, push to Promotions/Spam
-    msg['From']       = from_header
-    msg['To']         = to_email
-    msg['Subject']    = _encode_subject(subject)
-    msg['Date']       = formatdate(localtime=True)
-    msg['Message-ID'] = f'<{uuid.uuid4().hex}@{domain}>'
-    msg['Reply-To']   = from_header
+    msg['From']             = from_header
+    msg['To']               = to_email
+    msg['Subject']          = _encode_subject(subject)
+    msg['Date']             = formatdate(localtime=True)
+    msg['Message-ID']       = f'<{uuid.uuid4().hex}@{domain}>'
+    msg['Reply-To']         = from_header
+    msg['Content-Language'] = 'en-US'   # standard for all major ESPs (Mailchimp, SendGrid)
     _fe = re.search(r'<(.+?)>', from_header)
     _fe = _fe.group(1) if _fe else from_header
-    # List-Unsubscribe (mailto-only — no HTTPS endpoint available)
-    msg['List-Unsubscribe']      = f'<mailto:{_fe}?subject=unsubscribe>'
-    # NOTE: List-Unsubscribe-Post requires an HTTPS URL per RFC 8058.
-    # mailto-only unsubscribe is RFC 2369 compliant and widely accepted.
+    msg['List-Unsubscribe'] = f'<mailto:{_fe}?subject=unsubscribe>'
 
     return msg
 
