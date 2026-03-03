@@ -488,6 +488,29 @@ async function saveAwsCredentials() {
     }
 }
 
+async function fixSecurityGroup() {
+    const sg = document.getElementById('ec2SecurityGroup').value;
+    if (!sg && !AWS_CREDENTIALS) {
+        showResult('ec2Result', 'Please enter a Security Group ID or save credentials first', 'error');
+        return;
+    }
+    showResult('ec2Result', '🛡️ Attempting to open ports 3000, 587, 465, 25, 22 on AWS...', 'info');
+    try {
+        const data = await safeFetchJson('/api/ec2_management', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'fix_sg', security_group: sg })
+        });
+        if (data.success) {
+            showResult('ec2Result', data.message, 'success');
+        } else {
+            showResult('ec2Result', `❌ SG Error: ${data.error}<br><br><small>This usually means your AWS keys lack "ec2:AuthorizeSecurityGroupIngress" permission.</small>`, 'error');
+        }
+    } catch (e) {
+        showResult('ec2Result', `❌ Failed: ${e.message}`, 'error');
+    }
+}
+
 // Render the saved AWS credentials card
 function renderSavedAwsCredentials() {
     const savedCreds = localStorage.getItem('aws_credentials');
@@ -773,9 +796,11 @@ async function checkEc2Health() {
                         `;
                     }
                 } else {
+                    const isUnreachable = instance.status === 'unreachable';
                     resultHtml += `
                         <small style="color: #ff6b6b;">
                             ${instance.message}<br>
+                            ${isUnreachable ? '💡 <strong>Fix:</strong> Click "🛡️ Repair Security Group" above to force-open Port 3000.' : ''}
                             ${instance.help ? '💡 ' + instance.help : ''}
                         </small>
                     `;
@@ -821,7 +846,7 @@ function renderEc2Instances(instances) {
                     Region: ${instance.region}<br>
                     State: <span style="color: ${stateColor}; font-weight: bold;">${stateEmoji} ${instance.state.toUpperCase()}</span><br>
                     ${instance.state === 'pending' ? '<span style="color: #f59e0b;">⏳ Initializing... Auto-refreshing every 30s</span><br>' : ''}
-                    ${instance.state === 'running' ? '<span style="color: #00ff9d;">✅ Ready for email relay (port 3000)</span><br>' : ''}
+                    ${instance.state === 'running' ? '<span style="color: #888;">💡 Run "Check Relay Health" below to verify port 3000</span><br>' : ''}
                     Created: ${instance.created_at}
                 </small>
             </div>
