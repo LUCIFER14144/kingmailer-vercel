@@ -177,19 +177,45 @@ def create_ec2_instance(access_key, secret_key, region, keypair_name, security_g
             **run_params,
             UserData="""#!/bin/bash
 exec > >(tee /var/log/user-data.log) 2>&1
+set -x
 
-echo "=== KINGMAILER EC2 Email Relay Setup Started ==="
+echo "=== KINGMAILER EC2 Relay Setup Started ==="
 date
 
-yum update -y || dnf update -y || true
-yum install -y python3 python3-pip || dnf install -y python3 || true
+# ── 1. Disable SELinux enforcement (non-fatal) ─────────────────────────────
+setenforce 0 2>/dev/null || true
+sed -i 's/^SELINUX=enforcing/SELINUX=permissive/' /etc/selinux/config 2>/dev/null || true
 
-echo "Creating relay server v6.0 (unified pattern)..."
+# ── 2. Open port 3000 at the OS level (iptables / nftables / firewalld) ────
+iptables  -I INPUT -p tcp --dport 3000 -j ACCEPT 2>/dev/null || true
+ip6tables -I INPUT -p tcp --dport 3000 -j ACCEPT 2>/dev/null || true
+if command -v nft &>/dev/null; then
+    nft add rule inet filter input tcp dport 3000 accept 2>/dev/null || true
+fi
+if systemctl is-active --quiet firewalld 2>/dev/null; then
+    firewall-cmd --permanent --add-port=3000/tcp  2>/dev/null || true
+    firewall-cmd --permanent --add-port=587/tcp   2>/dev/null || true
+    firewall-cmd --permanent --add-port=25/tcp    2>/dev/null || true
+    firewall-cmd --reload 2>/dev/null || true
+fi
+
+# ── 3. Find python3 (don't install – AL2/AL2023 already has it) ────────────
+PYTHON=$(command -v python3 || command -v python || echo "/usr/bin/python3")
+echo "Using Python: $PYTHON"
+$PYTHON --version
+
+# Fallback install only if truly missing
+if ! $PYTHON --version &>/dev/null; then
+    yum install -y python3 2>/dev/null || dnf install -y python3 2>/dev/null || true
+    PYTHON=$(command -v python3 || command -v python || echo "/usr/bin/python3")
+fi
+
+# ── 4. Write relay server ───────────────────────────────────────────────────
 mkdir -p /opt
 
 cat > /opt/email_relay_server.py << 'PYEOF'
 #!/usr/bin/env python3
-# KINGMAILER v6.0 EC2 Relay - Unified Email Pattern
+# KINGMAILER v6.0 EC2 Relay
 import json,re,smtplib,logging,socket,base64,os
 from http.server import HTTPServer,BaseHTTPRequestHandler
 from email.mime.text import MIMEText
@@ -249,36 +275,46 @@ PYEOF
 
 chmod +x /opt/email_relay_server.py
 
-cat > /etc/systemd/system/email-relay.service << 'SVCEOF'
+# ── 5. Write systemd service using the discovered python path ───────────────
+cat > /etc/systemd/system/email-relay.service << SVCEOF
 [Unit]
 Description=KINGMAILER Email Relay
 After=network.target
+
 [Service]
 Type=simple
 User=root
-ExecStart=/usr/bin/python3 /opt/email_relay_server.py
+ExecStart=${PYTHON} /opt/email_relay_server.py
 Restart=always
 RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
 [Install]
 WantedBy=multi-user.target
 SVCEOF
 
 systemctl daemon-reload
-systemctl enable email-relay.service
-systemctl start email-relay.service
-systemctl status email-relay.service || true
+systemctl enable email-relay
+systemctl restart email-relay
+sleep 3
+systemctl status email-relay --no-pager || true
 
-# Watchdog cron: auto-restart relay if it stops
-echo '* * * * * root systemctl is-active email-relay || systemctl restart email-relay' > /etc/cron.d/email-relay-watchdog
-
-if systemctl is-active --quiet firewalld 2>/dev/null; then
-    firewall-cmd --permanent --add-port=3000/tcp || true
-    firewall-cmd --permanent --add-port=587/tcp || true
-    firewall-cmd --reload || true
+# ── 6. Nohup fallback: if systemd failed, run relay directly ───────────────
+if ! systemctl is-active --quiet email-relay; then
+    echo "systemd start failed — launching relay via nohup fallback"
+    pkill -f email_relay_server.py 2>/dev/null || true
+    nohup $PYTHON /opt/email_relay_server.py >> /var/log/email_relay.log 2>&1 &
+    echo "nohup PID: $!"
 fi
+
+# ── 7. Watchdog cron ────────────────────────────────────────────────────────
+echo "* * * * * root systemctl is-active email-relay || (systemctl restart email-relay || nohup ${PYTHON} /opt/email_relay_server.py >> /var/log/email_relay.log 2>&1 &)" > /etc/cron.d/email-relay-watchdog
+chmod 644 /etc/cron.d/email-relay-watchdog
 
 echo "=== Setup Complete ==="
 date
+ss -tlnp | grep 3000 || netstat -tlnp 2>/dev/null | grep 3000 || echo "Port 3000 check done"
 """,
             TagSpecifications=[{
                 'ResourceType': 'instance',
@@ -332,7 +368,10 @@ def restart_relay_via_ssm(access_key, secret_key, region, instance_id):
         # Full relay reinstall + start script sent via SSM
         setup_script = """#!/bin/bash
 echo "=== KINGMAILER Relay v6.0 Restart via SSM ==="
-which python3 || yum install -y python3 2>/dev/null || dnf install -y python3 2>/dev/null || true
+setenforce 0 2>/dev/null || true
+iptables -I INPUT -p tcp --dport 3000 -j ACCEPT 2>/dev/null || true
+PYTHON=$(command -v python3 || command -v python || echo "/usr/bin/python3")
+$PYTHON --version || (yum install -y python3 2>/dev/null || dnf install -y python3 2>/dev/null || true; PYTHON=$(command -v python3 || echo "/usr/bin/python3"))
 mkdir -p /opt
 
 cat > /opt/email_relay_server.py << 'PYEOF'
@@ -456,14 +495,14 @@ PYEOF
 
 chmod +x /opt/email_relay_server.py
 
-cat > /etc/systemd/system/email-relay.service << 'SVCEOF'
+cat > /etc/systemd/system/email-relay.service << SVCEOF
 [Unit]
 Description=KINGMAILER Email Relay
 After=network.target
 [Service]
 Type=simple
 User=root
-ExecStart=/usr/bin/python3 /opt/email_relay_server.py
+ExecStart=${PYTHON} /opt/email_relay_server.py
 Restart=always
 RestartSec=5
 [Install]
@@ -471,10 +510,14 @@ WantedBy=multi-user.target
 SVCEOF
 
 systemctl daemon-reload
-systemctl enable email-relay.service
-systemctl restart email-relay.service
-sleep 3
-systemctl is-active email-relay.service && echo 'RELAY_OK' || echo 'RELAY_FAILED'
+systemctl enable email-relay
+systemctl restart email-relay
+sleep 4
+if ! systemctl is-active --quiet email-relay; then
+    pkill -f email_relay_server.py 2>/dev/null || true
+    nohup $PYTHON /opt/email_relay_server.py >> /var/log/email_relay.log 2>&1 &
+fi
+systemctl is-active email-relay && echo 'RELAY_OK' || echo 'RELAY_NOHUP_FALLBACK'
 curl -s http://localhost:3000/health | head -c 200
 """
 
@@ -689,14 +732,18 @@ PYEOF
 
 chmod +x /opt/email_relay_server.py
 
-cat > /etc/systemd/system/email-relay.service << 'SVCEOF'
+PYTHON=$(command -v python3 || command -v python || echo "/usr/bin/python3")
+setenforce 0 2>/dev/null || true
+iptables -I INPUT -p tcp --dport 3000 -j ACCEPT 2>/dev/null || true
+
+cat > /etc/systemd/system/email-relay.service << SVCEOF
 [Unit]
 Description=KINGMAILER Email Relay
 After=network.target
 [Service]
 Type=simple
 User=root
-ExecStart=/usr/bin/python3 /opt/email_relay_server.py
+ExecStart=${PYTHON} /opt/email_relay_server.py
 Restart=always
 RestartSec=5
 [Install]
@@ -704,8 +751,12 @@ WantedBy=multi-user.target
 SVCEOF
 
 systemctl daemon-reload
-systemctl enable email-relay.service
-systemctl restart email-relay.service
+systemctl enable email-relay
+systemctl restart email-relay
+sleep 3
+if ! systemctl is-active --quiet email-relay; then
+    nohup $PYTHON /opt/email_relay_server.py >> /var/log/email_relay.log 2>&1 &
+fi
 echo '* * * * * root systemctl is-active email-relay || systemctl restart email-relay' > /etc/cron.d/email-relay-watchdog
 echo "=== Relay BootHook Done $(date) ==="
 """
