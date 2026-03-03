@@ -65,6 +65,9 @@ def create_ec2_instance(access_key, secret_key, region, keypair_name, security_g
         # Get the latest Amazon Linux 2 AMI for the region
         ami_id = get_latest_amazon_linux_ami(ec2_client)
         
+        # Track whether we need a specific subnet (for non-default VPC SGs)
+        subnet_id = None
+        
         # Create default security group if not provided
         if not security_group:
             try:
@@ -104,15 +107,46 @@ def create_ec2_instance(access_key, secret_key, region, keypair_name, security_g
                 # Ignore if rules already exist
                 if 'InvalidPermission.Duplicate' not in str(e):
                     pass  # Continue anyway, rules might already exist
+
+            # Look up the VPC this security group belongs to and find a matching subnet.
+            # Without this, run_instances defaults to the default VPC which may not
+            # match the SG's VPC, causing "does not exist in VPC" errors.
+            try:
+                sg_details = ec2_client.describe_security_groups(GroupIds=[security_group])
+                vpc_id = sg_details['SecurityGroups'][0].get('VpcId')
+                if vpc_id:
+                    subnets_resp = ec2_client.describe_subnets(
+                        Filters=[
+                            {'Name': 'vpc-id', 'Values': [vpc_id]},
+                            {'Name': 'state', 'Values': ['available']}
+                        ]
+                    )
+                    if subnets_resp['Subnets']:
+                        # Prefer subnets that auto-assign a public IP so the instance
+                        # gets a reachable public address
+                        public_subnets = [s for s in subnets_resp['Subnets']
+                                          if s.get('MapPublicIpOnLaunch')]
+                        chosen = public_subnets if public_subnets else subnets_resp['Subnets']
+                        subnet_id = chosen[0]['SubnetId']
+            except Exception:
+                pass  # Non-fatal; run_instances will raise a clear error if still wrong
         
-        # Launch instance (t2.micro for cost-effectiveness)
-        response = ec2_client.run_instances(
+        # Build instance launch parameters
+        run_params = dict(
             ImageId=ami_id,
             InstanceType='t2.micro',
             KeyName=keypair_name,
             MinCount=1,
             MaxCount=1,
             SecurityGroupIds=[security_group],
+        )
+        # Only specify SubnetId when we have one (non-default VPC scenario)
+        if subnet_id:
+            run_params['SubnetId'] = subnet_id
+
+        # Launch instance (t2.micro for cost-effectiveness)
+        response = ec2_client.run_instances(
+            **run_params,
             UserData="""#!/bin/bash
 exec > >(tee /var/log/user-data.log) 2>&1
 
