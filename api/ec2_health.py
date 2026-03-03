@@ -35,15 +35,31 @@ class handler(BaseHTTPRequestHandler):
             for instance in instances:
                 instance_id = instance.get('instance_id')
                 public_ip = instance.get('public_ip')
+                state = instance.get('state', 'unknown')
+                launch_time = instance.get('launch_time', '')
                 
-                if not public_ip or public_ip == 'N/A':
+                if not public_ip or public_ip == 'N/A' or public_ip == 'Pending...':
                     results.append({
                         'instance_id': instance_id,
                         'status': 'no_ip',
                         'healthy': False,
-                        'message': 'Instance has no public IP'
+                        'message': '⏳ Waiting for public IP assignment...',
+                        'help': 'Refresh instances list in 30 seconds'
                     })
                     continue
+                
+                # Calculate instance age in minutes (if launch_time available)
+                instance_age_min = None
+                if launch_time:
+                    try:
+                        from datetime import datetime
+                        # Parse ISO format: 2024-03-03T12:34:56.000Z
+                        if 'T' in launch_time:
+                            lt = datetime.fromisoformat(launch_time.replace('Z', '+00:00'))
+                            age_seconds = (datetime.now(lt.tzinfo) - lt).total_seconds()
+                            instance_age_min = int(age_seconds / 60)
+                    except Exception:
+                        pass
                 
                 # Try to reach health endpoint
                 health_url = f'http://{public_ip}:3000/health'
@@ -74,7 +90,7 @@ class handler(BaseHTTPRequestHandler):
                             'port_587_outbound': port587_status,
                             'port_465_outbound': port465_status,
                             'timestamp': health_data.get('timestamp'),
-                            'info': ''
+                            'info': '✅ Relay server is running and ready'
                         }
                         
                         if has_warning:
@@ -83,17 +99,37 @@ class handler(BaseHTTPRequestHandler):
                         results.append(result_data)
                 except urllib.error.URLError as e:
                     error_msg = str(e)
-                    help_text = 'Check: 1) Wait 5-10 min after creation for setup to complete, 2) Verify security group allows port 3000, 3) SSH and check: systemctl status email-relay, netstat -tlnp | grep 3000'
                     
-                    results.append({
+                    # Smart guidance based on instance age
+                    if instance_age_min is not None:
+                        if instance_age_min < 3:
+                            help_text = f'⏳ Instance is only {instance_age_min} min old. Setup takes 2-4 minutes. Wait 2 more minutes then check health again.'
+                            needs_action = False
+                        elif instance_age_min < 8:
+                            help_text = f'⏳ Instance is {instance_age_min} min old. Almost ready. Try checking health again in 1 minute.'
+                            needs_action = False
+                        else:
+                            help_text = f'❌ Instance is {instance_age_min} min old but relay not responding. Click "Restart Relay" button to fix it automatically via SSM.'
+                            needs_action = True
+                    else:
+                        help_text = 'If instance was just created, wait 3-5 min. If >10 min old, use "Restart Relay" button to auto-fix.'
+                        needs_action = None
+                    
+                    result_obj = {
                         'instance_id': instance_id,
                         'public_ip': public_ip,
                         'status': 'unreachable',
                         'healthy': False,
-                        'message': f'Cannot reach relay server - Connection failed',
+                        'message': f'Cannot reach relay server on port 3000',
                         'error_detail': error_msg,
-                        'help': help_text
-                    })
+                        'help': help_text,
+                        'instance_age_minutes': instance_age_min
+                    }
+                    
+                    if needs_action:
+                        result_obj['needs_restart'] = True
+                    
+                    results.append(result_obj)
                 except Exception as e:
                     results.append({
                         'instance_id': instance_id,

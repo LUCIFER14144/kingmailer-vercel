@@ -124,11 +124,14 @@ def create_ec2_instance(access_key, secret_key, region, keypair_name, security_g
                         {'IpProtocol': 'tcp', 'FromPort': 3000, 'ToPort': 3000, 'IpRanges': [{'CidrIp': '0.0.0.0/0'}]},
                         {'IpProtocol': 'tcp', 'FromPort': 25, 'ToPort': 25, 'IpRanges': [{'CidrIp': '0.0.0.0/0'}]},
                         {'IpProtocol': 'tcp', 'FromPort': 587, 'ToPort': 587, 'IpRanges': [{'CidrIp': '0.0.0.0/0'}]},
+                        {'IpProtocol': 'tcp', 'FromPort': 465, 'ToPort': 465, 'IpRanges': [{'CidrIp': '0.0.0.0/0'}]},
                         {'IpProtocol': 'tcp', 'FromPort': 22, 'ToPort': 22, 'IpRanges': [{'CidrIp': '0.0.0.0/0'}]}
                     ]
                 )
-            except ClientError:
-                pass  # Rules already exist or other non-fatal issue
+            except ClientError as e:
+                # If it's a 'Duplicate' error, it's fine. Otherwise, we should know.
+                if 'InvalidPermission.Duplicate' not in str(e):
+                    print(f"DEBUG: SG Authorization failed: {e}")
 
         # ------------------------------------------------------------------
         # Resolve the subnet that belongs to the same VPC as the SG.
@@ -327,20 +330,34 @@ ss -tlnp | grep 3000 || netstat -tlnp 2>/dev/null | grep 3000 || echo "Port 3000
         
         instance_id = response['Instances'][0]['InstanceId']
         
-        # Wait for instance to get public IP
-        time.sleep(10)
+        # Wait for instance to get public IP (NetworkInterfaces take longer)
+        public_ip = 'Pending...'
+        for attempt in range(12):  # Try for up to 60 seconds
+            time.sleep(5)
+            instances = ec2_client.describe_instances(InstanceIds=[instance_id])
+            instance = instances['Reservations'][0]['Instances'][0]
+            
+            # Check both direct and NetworkInterface locations for public IP
+            public_ip = instance.get('PublicIpAddress')
+            if not public_ip and instance.get('NetworkInterfaces'):
+                # When using NetworkInterfaces spec, IP is nested differently
+                ni = instance['NetworkInterfaces'][0]
+                if ni.get('Association'):
+                    public_ip = ni['Association'].get('PublicIp')
+            
+            if public_ip:
+                break  # Got the IP, exit loop
         
-        # Get instance details
-        instances = ec2_client.describe_instances(InstanceIds=[instance_id])
-        instance = instances['Reservations'][0]['Instances'][0]
-        public_ip = instance.get('PublicIpAddress', 'Pending...')
+        if not public_ip:
+            public_ip = 'Pending...'
         
         return {
             'success': True,
             'instance_id': instance_id,
             'public_ip': public_ip,
             'region': region,
-            'state': instance['State']['Name']
+            'state': instance['State']['Name'],
+            'setup_eta': '⏳ Relay will be ready in 2-3 minutes. Click "Check Health" to verify.'
         }
     
     except ClientError as e:
@@ -432,65 +449,6 @@ class EmailRelayHandler(BaseHTTPRequestHandler):
    except Exception as e:logging.error(str(e));self.send_response(500);self.send_header('Content-type','application/json');self.end_headers();self.wfile.write(json.dumps({'success':False,'error':str(e)}).encode())
   else:self.send_response(404);self.end_headers()
 if __name__=='__main__':srv=HTTPServer(('0.0.0.0',3000),EmailRelayHandler);logging.info('EC2 Relay v6.0 started on port 3000');srv.serve_forever()
-PYEOF
-class EmailRelayHandler(BaseHTTPRequestHandler):
-    def log_message(self, fmt, *a): logging.info("%s - %s" % (self.client_address[0], fmt%a))
-    def do_GET(self):
-        if self.path in ('/', '/health'):
-            self.send_response(200); self.send_header('Content-type','application/json'); self.end_headers()
-            def chk(p):
-                try:
-                    s=socket.socket(); s.settimeout(3); r=s.connect_ex(('smtp.gmail.com',p)); s.close(); return 'open' if r==0 else 'blocked'
-                except: return 'unknown'
-            self.wfile.write(json.dumps({'status':'healthy','service':'KINGMAILER Relay',
-                'timestamp':datetime.now().isoformat(),'port_587_outbound':chk(587),'port_465_outbound':chk(465)}).encode())
-        else: self.send_response(404); self.end_headers()
-    def do_POST(self):
-        if self.path == '/relay':
-            try:
-                data = json.loads(self.rfile.read(int(self.headers['Content-Length'])).decode())
-                smtp_config = data.get('smtp_config')
-                if not smtp_config: raise ValueError('SMTP config required')
-                to_email = data.get('to','')
-                if not to_email: raise ValueError('Recipient required')
-                provider = smtp_config.get('provider','gmail')
-                u = smtp_config.get('user'); p = smtp_config.get('pass')
-                if not u or not p: raise ValueError('SMTP credentials required')
-                sname = smtp_config.get('sender_name', data.get('from_name','KINGMAILER'))
-                if provider=='gmail': srv,port='smtp.gmail.com',587
-                elif provider in ('outlook','hotmail'): srv,port='smtp-mail.outlook.com',587
-                else: srv,port=smtp_config.get('host','smtp.gmail.com'),int(smtp_config.get('port',587))
-                att=data.get('attachment')
-                _html=data.get('html','')
-                _qp=_Charset('utf-8'); _qp.body_encoding=_QP; _body=MIMEText(_html,'html',_qp); _ptxt=MIMEText(re.sub('<[^>]+',' ',_html),'plain','utf-8')
-                if att:
-                    msg=MIMEMultipart('mixed'); _alt=MIMEMultipart('alternative'); _alt.attach(_ptxt); _alt.attach(_body); msg.attach(_alt)
-                else:
-                    msg=MIMEMultipart('alternative'); msg.attach(_ptxt); msg.attach(_body)
-                msg['From']=f"{sname} <{u}>"; msg['To']=to_email
-                msg['Subject']=data.get('subject','')
-                if att:
-                    try:
-                        import base64 as _b64; from email.mime.base import MIMEBase; from email import encoders as _enc
-                        _ac=att['content']+'='*(-len(att['content'])%4)
-                        _ap=MIMEBase(*(att.get('type','application/octet-stream')+'/x').split('/')[:2])
-                        _ap.set_payload(_b64.b64decode(_ac)); _enc.encode_base64(_ap)
-                        _ap.add_header('Content-Disposition','attachment',filename=att.get('name','attachment'))
-                        msg.attach(_ap)
-                    except Exception as _ae: logging.warning(f'Attach err: {_ae}')
-                with smtplib.SMTP(srv,port,timeout=30) as s:
-                    s.ehlo(); s.starttls(); s.ehlo(); s.login(u,p); s.send_message(msg)
-                logging.info(f"Sent to {to_email}")
-                self.send_response(200); self.send_header('Content-type','application/json'); self.end_headers()
-                self.wfile.write(json.dumps({'success':True,'message':'Email sent'}).encode())
-            except Exception as e:
-                logging.error(str(e))
-                self.send_response(500); self.send_header('Content-type','application/json'); self.end_headers()
-                self.wfile.write(json.dumps({'success':False,'error':str(e)}).encode())
-        else: self.send_response(404); self.end_headers()
-if __name__ == '__main__':
-    srv = HTTPServer(('0.0.0.0',3000), EmailRelayHandler)
-    logging.info('Relay started on port 3000'); srv.serve_forever()
 PYEOF
 
 chmod +x /opt/email_relay_server.py
@@ -857,6 +815,28 @@ def list_ec2_instances(access_key, secret_key, region):
             'error': str(e)
         }
 
+def fix_security_group(access_key, secret_key, region, sg_id):
+    """Force-adds all required ingress rules to a security group."""
+    try:
+        ec2 = boto3.client('ec2', region_name=region, aws_access_key_id=access_key, aws_secret_access_key=secret_key)
+        ec2.authorize_security_group_ingress(
+            GroupId=sg_id,
+            IpPermissions=[
+                {'IpProtocol': 'tcp', 'FromPort': 3000, 'ToPort': 3000, 'IpRanges': [{'CidrIp': '0.0.0.0/0'}]},
+                {'IpProtocol': 'tcp', 'FromPort': 25, 'ToPort': 25, 'IpRanges': [{'CidrIp': '0.0.0.0/0'}]},
+                {'IpProtocol': 'tcp', 'FromPort': 587, 'ToPort': 587, 'IpRanges': [{'CidrIp': '0.0.0.0/0'}]},
+                {'IpProtocol': 'tcp', 'FromPort': 465, 'ToPort': 465, 'IpRanges': [{'CidrIp': '0.0.0.0/0'}]},
+                {'IpProtocol': 'tcp', 'FromPort': 22, 'ToPort': 22, 'IpRanges': [{'CidrIp': '0.0.0.0/0'}]}
+            ]
+        )
+        return {'success': True, 'message': f'✅ Security Group {sg_id} rules updated successfully! Port 3000 is now open.'}
+    except ClientError as e:
+        if 'InvalidPermission.Duplicate' in str(e):
+            return {'success': True, 'message': f'ℹ️ Rules already exist for Security Group {sg_id}. If still unreachable, check AWS Network ACLs or Instance Firewall.'}
+        return {'success': False, 'error': str(e)}
+    except Exception as e:
+        return {'success': False, 'error': str(e)}
+
 
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -1036,6 +1016,20 @@ class handler(BaseHTTPRequestHandler):
                         AWS_CREDENTIALS['access_key'],
                         AWS_CREDENTIALS['secret_key'],
                         AWS_CREDENTIALS['region']
+                    )
+            
+            elif action == 'fix_sg':
+                sg_id = data.get('security_group') or (AWS_CREDENTIALS.get('security_group') if AWS_CREDENTIALS else None)
+                if not sg_id:
+                    result = {'success': False, 'error': 'No Security Group ID provided or saved.'}
+                elif not AWS_CREDENTIALS:
+                    result = {'success': False, 'error': 'AWS credentials not configured'}
+                else:
+                    result = fix_security_group(
+                        AWS_CREDENTIALS['access_key'],
+                        AWS_CREDENTIALS['secret_key'],
+                        AWS_CREDENTIALS['region'],
+                        sg_id
                     )
             
             else:
