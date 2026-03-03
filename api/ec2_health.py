@@ -52,12 +52,16 @@ class handler(BaseHTTPRequestHandler):
                 instance_age_min = None
                 if launch_time:
                     try:
-                        from datetime import datetime
-                        # Parse ISO format: 2024-03-03T12:34:56.000Z
-                        if 'T' in launch_time:
-                            lt = datetime.fromisoformat(launch_time.replace('Z', '+00:00'))
-                            age_seconds = (datetime.now(lt.tzinfo) - lt).total_seconds()
-                            instance_age_min = int(age_seconds / 60)
+                        from datetime import datetime, timezone
+                        # Handle both "2026-03-03T14:04:34+00:00" and "2026-03-03 14:04:34+00:00"
+                        lt_str = launch_time.replace('Z', '+00:00').replace(' ', 'T')
+                        lt = datetime.fromisoformat(lt_str)
+                        # Make sure both are timezone-aware
+                        if lt.tzinfo is None:
+                            lt = lt.replace(tzinfo=timezone.utc)
+                        now = datetime.now(timezone.utc)
+                        age_seconds = (now - lt).total_seconds()
+                        instance_age_min = max(0, int(age_seconds / 60))
                     except Exception:
                         pass
                 

@@ -796,13 +796,31 @@ async function checkEc2Health() {
                         `;
                     }
                 } else {
-                    const isUnreachable = instance.status === 'unreachable';
+                    const ageMin = instance.instance_age_minutes;
+                    const isNew = ageMin !== null && ageMin !== undefined && ageMin < 5;
+                    const isOld = ageMin !== null && ageMin !== undefined && ageMin >= 10;
+
+                    // Determine the right colour and icon for the help message
+                    let helpColor = '#ff6b6b';
+                    let helpContent = '';
+
+                    if (isNew) {
+                        helpColor = '#f59e0b';
+                        helpContent = `⏳ <strong>Instance is ${ageMin} min old — still setting up.</strong> Wait 2-3 more minutes then check health again. This is normal.`;
+                    } else if (isOld && instance.needs_restart) {
+                        helpContent = `❌ Instance is ${ageMin} min old but relay not responding.<br>
+                            👉 Click <strong>"🔧 Fix Relay"</strong> button on this instance to automatically reinstall the relay, OR<br>
+                            👉 Click <strong>"🔄 Restart Relay"</strong> if SSM is available.`;
+                    } else {
+                        helpContent = instance.help || instance.message || 'Cannot reach relay server on port 3000.';
+                    }
+
                     resultHtml += `
-                        <small style="color: #ff6b6b;">
-                            ${instance.message}<br>
-                            ${isUnreachable ? '💡 <strong>Fix:</strong> Click "🛡️ Repair Security Group" above to force-open Port 3000.' : ''}
-                            ${instance.help ? '💡 ' + instance.help : ''}
-                        </small>
+                        <div style="margin-top:6px; padding:8px; background:rgba(255,107,107,0.08); border-radius:4px; border-left:3px solid ${helpColor};">
+                            <small style="color:${helpColor}; display:block; line-height:1.5;">
+                                ${helpContent}
+                            </small>
+                        </div>
                     `;
                 }
 

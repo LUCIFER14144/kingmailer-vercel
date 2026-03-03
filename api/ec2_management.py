@@ -9,10 +9,90 @@ import json
 import boto3
 from botocore.exceptions import ClientError
 import time
+import base64 as _b64
 
 # In-memory storage for EC2 instances and credentials
 EC2_INSTANCES = []
 AWS_CREDENTIALS = None
+
+# ── Relay server script (base64-encoded at import time, injected into UserData) ──
+# Using string concatenation (no f-strings, no heredocs) avoids ALL escaping issues
+_RELAY_SCRIPT = (
+    '#!/usr/bin/env python3\n'
+    'import json,re,smtplib,logging,socket,base64,os\n'
+    'from http.server import HTTPServer,BaseHTTPRequestHandler\n'
+    'from email.mime.text import MIMEText\n'
+    'from email.mime.multipart import MIMEMultipart\n'
+    'from email.mime.base import MIMEBase\n'
+    'from email import encoders\n'
+    'from email.utils import formatdate,make_msgid\n'
+    'from datetime import datetime\n'
+    'logging.basicConfig(level=logging.INFO,format="%(asctime)s %(levelname)s %(message)s",'
+    'handlers=[logging.FileHandler("/var/log/email_relay.log"),logging.StreamHandler()])\n'
+    'class R(BaseHTTPRequestHandler):\n'
+    ' def log_message(self,f,*a):logging.info("%s %s"%(self.client_address[0],f%a))\n'
+    ' def do_GET(self):\n'
+    '  if self.path in("/","/health"):\n'
+    '   self.send_response(200);self.send_header("Content-type","application/json");self.end_headers()\n'
+    '   def c(p):\n'
+    '    try:\n'
+    '     s=socket.socket();s.settimeout(3);r=s.connect_ex(("smtp.gmail.com",p));s.close();return "open" if r==0 else "blocked"\n'
+    '    except:return "unknown"\n'
+    '   self.wfile.write(json.dumps({"status":"healthy","service":"KINGMAILER Relay v7.0","timestamp":datetime.now().isoformat(),"port_587_outbound":c(587),"port_465_outbound":c(465)}).encode())\n'
+    '  else:self.send_response(404);self.end_headers()\n'
+    ' def do_POST(self):\n'
+    '  if self.path=="/relay":\n'
+    '   try:\n'
+    '    d=json.loads(self.rfile.read(int(self.headers["Content-Length"])).decode())\n'
+    '    sm=d.get("smtp_config")\n'
+    '    if not sm:raise ValueError("SMTP config required")\n'
+    '    to=d.get("to","");subj=d.get("subject","");htm=d.get("html","");att=d.get("attachment")\n'
+    '    if not to:raise ValueError("Recipient required")\n'
+    '    pv=sm.get("provider","gmail");u=sm.get("user");p=sm.get("pass")\n'
+    '    if not u or not p:raise ValueError("SMTP credentials required")\n'
+    '    sn=sm.get("sender_name",d.get("from_name","KINGMAILER"))\n'
+    '    if pv=="gmail":srv,port="smtp.gmail.com",587\n'
+    '    elif pv in("outlook","hotmail"):srv,port="smtp-mail.outlook.com",587\n'
+    '    else:srv,port=sm.get("host","smtp.gmail.com"),int(sm.get("port",587))\n'
+    '    pl=re.sub(r"<br\\s*/?>","\\n",htm,flags=re.IGNORECASE)\n'
+    '    pl=re.sub(r"<p[^>]*>","\\n",pl,flags=re.IGNORECASE)\n'
+    '    pl=re.sub(r"<[^>]+>","",pl)\n'
+    '    pl=re.sub(r"[ \\t]+"," ",pl).strip()\n'
+    '    if att:\n'
+    '     msg=MIMEMultipart("mixed");alt=MIMEMultipart("alternative")\n'
+    '     alt.attach(MIMEText(pl,"plain","utf-8"));alt.attach(MIMEText(htm,"html","utf-8"))\n'
+    '     msg.attach(alt)\n'
+    '    else:\n'
+    '     msg=MIMEMultipart("alternative")\n'
+    '     msg.attach(MIMEText(pl,"plain","utf-8"));msg.attach(MIMEText(htm,"html","utf-8"))\n'
+    '    fh="%s <%s>"%(sn,u) if sn else u\n'
+    '    dm=u.split("@")[-1] if "@" in u else "relay.local"\n'
+    '    msg["From"]=fh;msg["To"]=to;msg["Subject"]=subj\n'
+    '    msg["Date"]=formatdate(localtime=True);msg["Message-ID"]=make_msgid(domain=dm)\n'
+    '    if att:\n'
+    '     try:\n'
+    '      ac=att["content"]+"="*(-len(att["content"])%4)\n'
+    '      fd=base64.b64decode(ac);nm=att.get("name","attachment");mt=att.get("type","application/octet-stream")\n'
+    '      mn,sb=mt.split("/",1) if "/" in mt else ("application","octet-stream")\n'
+    '      ap=MIMEBase(mn,sb,name=nm);ap.set_payload(fd);encoders.encode_base64(ap)\n'
+    '      ap.add_header("Content-Disposition","attachment",filename=nm);msg.attach(ap)\n'
+    '     except Exception as ae:logging.warning("Attach err: %s"%ae)\n'
+    '    with smtplib.SMTP(srv,port,timeout=30) as s:\n'
+    '     s.ehlo();s.starttls();s.ehlo();s.login(u,p);s.send_message(msg)\n'
+    '    logging.info("Sent to %s"%to)\n'
+    '    self.send_response(200);self.send_header("Content-type","application/json");self.end_headers()\n'
+    '    self.wfile.write(json.dumps({"success":True,"message":"Email sent via EC2 relay"}).encode())\n'
+    '   except Exception as e:\n'
+    '    logging.error(str(e));self.send_response(500)\n'
+    '    self.send_header("Content-type","application/json");self.end_headers()\n'
+    '    self.wfile.write(json.dumps({"success":False,"error":str(e)}).encode())\n'
+    '  else:self.send_response(404);self.end_headers()\n'
+    'if __name__=="__main__":\n'
+    ' srv=HTTPServer(("0.0.0.0",3000),R)\n'
+    ' logging.info("KINGMAILER Relay v7.0 started on port 3000")\n'
+    ' srv.serve_forever()\n'
+)
+_RELAY_B64 = _b64.b64encode(_RELAY_SCRIPT.encode('utf-8')).decode('ascii')
 
 
 def get_latest_amazon_linux_ami(ec2_client):
@@ -149,7 +229,15 @@ def repair_security_group(access_key, secret_key, region, security_group_id):
 
 
 def create_ec2_instance(access_key, secret_key, region, keypair_name, security_group=None):
-    """Create a new EC2 instance for email sending"""
+    """Create a new EC2 instance for email sending.
+    
+    ROOT-CAUSE FIXES (v7.0):
+    1. Always creates a FRESH dedicated security group (guaranteed ports open)
+    2. Relay script is base64-encoded in UserData (no heredoc escaping issues)
+    3. Simple bash without process substitution (works on all AMIs)
+    """
+    relay_b64 = _RELAY_B64  # use module-level pre-computed b64
+
     try:
         ec2_client = boto3.client(
             'ec2',
@@ -160,68 +248,56 @@ def create_ec2_instance(access_key, secret_key, region, keypair_name, security_g
         
         # Get the latest Amazon Linux 2 AMI for the region
         ami_id = get_latest_amazon_linux_ami(ec2_client)
-        
-        # Create default security group if not provided
-        if not security_group:
-            try:
-                sg_response = ec2_client.create_security_group(
-                    GroupName=f'kingmailer-sg-{int(time.time())}',
-                    Description='KINGMAILER Email Server Security Group'
-                )
-                security_group = sg_response['GroupId']
-                
-                # Add inbound rules
-                ec2_client.authorize_security_group_ingress(
-                    GroupId=security_group,
-                    IpPermissions=[
-                        {'IpProtocol': 'tcp', 'FromPort': 25, 'ToPort': 25, 'IpRanges': [{'CidrIp': '0.0.0.0/0'}]},
-                        {'IpProtocol': 'tcp', 'FromPort': 587, 'ToPort': 587, 'IpRanges': [{'CidrIp': '0.0.0.0/0'}]},
-                        {'IpProtocol': 'tcp', 'FromPort': 465, 'ToPort': 465, 'IpRanges': [{'CidrIp': '0.0.0.0/0'}]},
-                        {'IpProtocol': 'tcp', 'FromPort': 3000, 'ToPort': 3000, 'IpRanges': [{'CidrIp': '0.0.0.0/0'}]},
-                        {'IpProtocol': 'tcp', 'FromPort': 22, 'ToPort': 22, 'IpRanges': [{'CidrIp': '0.0.0.0/0'}]}
-                    ]
-                )
-            except ClientError as e:
-                if 'InvalidGroup.Duplicate' not in str(e):
-                    raise
-        else:
-            # Try to add required ports to the user-provided security group
-            try:
-                ec2_client.authorize_security_group_ingress(
-                    GroupId=security_group,
-                    IpPermissions=[
-                        {'IpProtocol': 'tcp', 'FromPort': 3000, 'ToPort': 3000, 'IpRanges': [{'CidrIp': '0.0.0.0/0'}]},
-                        {'IpProtocol': 'tcp', 'FromPort': 25, 'ToPort': 25, 'IpRanges': [{'CidrIp': '0.0.0.0/0'}]},
-                        {'IpProtocol': 'tcp', 'FromPort': 587, 'ToPort': 587, 'IpRanges': [{'CidrIp': '0.0.0.0/0'}]},
-                        {'IpProtocol': 'tcp', 'FromPort': 465, 'ToPort': 465, 'IpRanges': [{'CidrIp': '0.0.0.0/0'}]},
-                        {'IpProtocol': 'tcp', 'FromPort': 22, 'ToPort': 22, 'IpRanges': [{'CidrIp': '0.0.0.0/0'}]}
-                    ]
-                )
-            except ClientError as e:
-                # If it's a 'Duplicate' error, it's fine. Otherwise, we should know.
-                if 'InvalidPermission.Duplicate' not in str(e):
-                    print(f"DEBUG: SG Authorization failed: {e}")
 
-        # ------------------------------------------------------------------
-        # Resolve the subnet that belongs to the same VPC as the SG.
-        # Using NetworkInterfaces is the correct AWS pattern for launching
-        # into any VPC (default or custom) with a guaranteed public IP.
-        # This avoids the "security group does not exist in VPC" error that
-        # occurs when SecurityGroupIds and the implicit VPC don't match.
-        # ------------------------------------------------------------------
+        # ── Determine target VPC ───────────────────────────────────────────────
+        # If user supplied an SG, find its VPC so we create in the same VPC.
+        # If no SG supplied, we'll create in the default VPC.
+        target_vpc_id = None
+        if security_group:
+            try:
+                sg_info = ec2_client.describe_security_groups(GroupIds=[security_group])
+                target_vpc_id = sg_info['SecurityGroups'][0].get('VpcId')
+            except Exception:
+                pass  # Fall back to default VPC
+
+        # ── ALWAYS create a FRESH dedicated security group ─────────────────────
+        # This guarantees port 3000 is open. Never rely on the user's existing SG
+        # because it may have been created before our port rules were added.
+        new_sg_kwargs = dict(
+            GroupName=f'kingmailer-relay-{int(time.time())}',
+            Description='KINGMAILER Auto-Created Relay SG (port 3000 + SMTP)'
+        )
+        if target_vpc_id:
+            new_sg_kwargs['VpcId'] = target_vpc_id
+
+        fresh_sg = ec2_client.create_security_group(**new_sg_kwargs)
+        instance_sg_id = fresh_sg['GroupId']
+
+        ec2_client.authorize_security_group_ingress(
+            GroupId=instance_sg_id,
+            IpPermissions=[
+                {'IpProtocol': 'tcp', 'FromPort': 3000, 'ToPort': 3000, 'IpRanges': [{'CidrIp': '0.0.0.0/0', 'Description': 'KINGMAILER relay'}]},
+                {'IpProtocol': 'tcp', 'FromPort': 587,  'ToPort': 587,  'IpRanges': [{'CidrIp': '0.0.0.0/0', 'Description': 'SMTP TLS'}]},
+                {'IpProtocol': 'tcp', 'FromPort': 465,  'ToPort': 465,  'IpRanges': [{'CidrIp': '0.0.0.0/0', 'Description': 'SMTP SSL'}]},
+                {'IpProtocol': 'tcp', 'FromPort': 25,   'ToPort': 25,   'IpRanges': [{'CidrIp': '0.0.0.0/0', 'Description': 'SMTP'}]},
+                {'IpProtocol': 'tcp', 'FromPort': 22,   'ToPort': 22,   'IpRanges': [{'CidrIp': '0.0.0.0/0', 'Description': 'SSH'}]},
+            ]
+        )
+
+        # ── Resolve subnet in the correct VPC ─────────────────────────────────
         subnet_id = None
         try:
-            subnet_id = _get_subnet_for_sg(ec2_client, security_group)
+            subnet_id = _get_subnet_for_sg(ec2_client, instance_sg_id)
         except Exception:
-            pass  # Will fall back to simple launch below
+            pass
 
-        # Build NetworkInterfaces spec when we have a subnet (always preferred)
+        # ── Build launch params ────────────────────────────────────────────────
         if subnet_id:
             network_interfaces = [{
                 'DeviceIndex': 0,
                 'SubnetId': subnet_id,
-                'Groups': [security_group],
-                'AssociatePublicIpAddress': True   # always get a public IP
+                'Groups': [instance_sg_id],
+                'AssociatePublicIpAddress': True
             }]
             run_params = dict(
                 ImageId=ami_id,
@@ -230,152 +306,75 @@ def create_ec2_instance(access_key, secret_key, region, keypair_name, security_g
                 MinCount=1,
                 MaxCount=1,
                 NetworkInterfaces=network_interfaces,
-                # NOTE: Do NOT pass SecurityGroupIds/SubnetId at top level
-                # when using NetworkInterfaces — AWS rejects the combination
             )
         else:
-            # Fallback: simple launch (works for default-VPC SGs)
             run_params = dict(
                 ImageId=ami_id,
                 InstanceType='t2.micro',
                 KeyName=keypair_name,
                 MinCount=1,
                 MaxCount=1,
-                SecurityGroupIds=[security_group],
+                SecurityGroupIds=[instance_sg_id],
             )
 
-        # Launch instance (t2.micro for cost-effectiveness)
-        response = ec2_client.run_instances(
-            **run_params,
-            UserData="""#!/bin/bash
-exec > >(tee /var/log/user-data.log) 2>&1
-set -x
+        # ── UserData: write relay via base64 (NO heredoc quoting issues) ──────
+        # relay_b64 was computed above from RELAY_SCRIPT string constant.
+        # On the instance, we just: echo BASE64 | base64 -d > file
+        user_data = f"""#!/bin/bash
+exec >> /var/log/kingmailer-setup.log 2>&1
+echo "=== KINGMAILER v7.0 Setup $(date) ==="
 
-echo "=== KINGMAILER EC2 Relay Setup Started ==="
-date
+# 1. Ensure python3 is available
+which python3 >/dev/null 2>&1 || yum install -y python3 >/dev/null 2>&1 || dnf install -y python3 >/dev/null 2>&1 || true
+PYTHON=$(which python3 2>/dev/null || which python 2>/dev/null || echo /usr/bin/python3)
+echo "Python: $PYTHON ($($PYTHON --version 2>&1))"
 
-# ── 1. Disable SELinux + open port 3000 (CRITICAL for relay to be reachable) ────
+# 2. Disable OS-level firewall for port 3000 (AWS SG handles security)
 setenforce 0 2>/dev/null || true
-sed -i 's/^SELINUX=enforcing/SELINUX=permissive/' /etc/selinux/config 2>/dev/null || true
+sed -i 's/SELINUX=enforcing/SELINUX=permissive/' /etc/selinux/config 2>/dev/null || true
 iptables  -I INPUT -p tcp --dport 3000 -j ACCEPT 2>/dev/null || true
 ip6tables -I INPUT -p tcp --dport 3000 -j ACCEPT 2>/dev/null || true
+systemctl stop firewalld 2>/dev/null || true
+systemctl disable firewalld 2>/dev/null || true
 
-if command -v nft &>/dev/null; then
-    nft add rule inet filter input tcp dport 3000 accept 2>/dev/null || true
-fi
-
-if systemctl is-active --quiet firewalld 2>/dev/null; then
-    firewall-cmd --permanent --add-port=3000/tcp  2>/dev/null || true
-    firewall-cmd --permanent --add-port=587/tcp   2>/dev/null || true
-    firewall-cmd --permanent --add-port=25/tcp    2>/dev/null || true
-    firewall-cmd --reload 2>/dev/null || true
-fi
-
-# ── 2. Find python3 ─────────────────────────────────────────────────────────────
-PYTHON=$(command -v python3 || command -v python || echo "/usr/bin/python3")
-echo "Using Python: $PYTHON"
-$PYTHON --version
-
-if ! $PYTHON --version &>/dev/null; then
-    yum install -y python3 2>/dev/null || dnf install -y python3 2>/dev/null || true
-    PYTHON=$(command -v python3 || command -v python || echo "/usr/bin/python3")
-fi
-
-# ── 3. Write relay server ───────────────────────────────────────────────────────
+# 3. Decode and write relay server (base64-encoded - no quoting issues)
 mkdir -p /opt
-
-cat > /opt/email_relay_server.py << 'PYEOF'
-#!/usr/bin/env python3
-# KINGMAILER v6.1 EC2 Relay - Ultra-reliable startup
-import json,re,smtplib,logging,socket,base64,os
-from http.server import HTTPServer,BaseHTTPRequestHandler
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-from email.mime.base import MIMEBase
-from email import encoders
-from email.utils import formatdate,make_msgid
-from datetime import datetime
-logging.basicConfig(level=logging.INFO,format='%(asctime)s %(levelname)s %(message)s',handlers=[logging.FileHandler('/var/log/email_relay.log'),logging.StreamHandler()])
-class EmailRelayHandler(BaseHTTPRequestHandler):
- def log_message(self,fmt,*a):logging.info("%s - %s"%(self.client_address[0],fmt%a))
- def do_GET(self):
-  if self.path in('/','/health'):
-   self.send_response(200);self.send_header('Content-type','application/json');self.end_headers()
-   def chk(p):
-    try:s=socket.socket();s.settimeout(3);r=s.connect_ex(('smtp.gmail.com',p));s.close();return 'open' if r==0 else 'blocked'
-    except:return 'unknown'
-   self.wfile.write(json.dumps({'status':'healthy','service':'KINGMAILER Relay v6.1','timestamp':datetime.now().isoformat(),'port_587_outbound':chk(587),'port_465_outbound':chk(465)}).encode())
-  else:self.send_response(404);self.end_headers()
- def do_POST(self):
-  if self.path=='/relay':
-   try:
-    data=json.loads(self.rfile.read(int(self.headers['Content-Length'])).decode());sm=data.get('smtp_config')
-    if not sm:raise ValueError('SMTP config required')
-    to=data.get('to','');subj=data.get('subject','');htm=data.get('html','');att=data.get('attachment')
-    if not to:raise ValueError('Recipient required')
-    pv=sm.get('provider','gmail');u=sm.get('user');p=sm.get('pass')
-    if not u or not p:raise ValueError('SMTP credentials required')
-    sn=sm.get('sender_name',data.get('from_name','KINGMAILER'))
-    if pv=='gmail':srv,port='smtp.gmail.com',587
-    elif pv in('outlook','hotmail'):srv,port='smtp-mail.outlook.com',587
-    else:srv,port=sm.get('host','smtp.gmail.com'),int(sm.get('port',587))
-    pl=re.sub(r'<br\s*/?>', '\n',htm,flags=re.IGNORECASE);pl=re.sub(r'<p[^>]*>','\n',pl,flags=re.IGNORECASE);pl=re.sub(r'<[^>]+>','',pl);pl=re.sub(r'[ \t]+',' ',pl).strip()
-    if att:msg=MIMEMultipart('mixed');alt=MIMEMultipart('alternative');alt.attach(MIMEText(pl,'plain','utf-8'));alt.attach(MIMEText(htm,'html','utf-8'));msg.attach(alt)
-    else:msg=MIMEMultipart('alternative');msg.attach(MIMEText(pl,'plain','utf-8'));msg.attach(MIMEText(htm,'html','utf-8'))
-    fh="%s <%s>"%(sn,u)if sn else u;dm=u.split('@')[-1]if '@' in u else 'relay.local'
-    msg['From']=fh;msg['To']=to;msg['Subject']=subj;msg['Date']=formatdate(localtime=True);msg['Message-ID']=make_msgid(domain=dm)
-    if att:
-     try:
-      ac=att['content']+'='*(-len(att['content'])%4);fd=base64.b64decode(ac);nm=att.get('name','attachment');mt=att.get('type','application/octet-stream')
-      logging.info("[ATTACHMENT] %s (%d bytes, %s)"%(nm,len(fd),mt))
-      em={'.pdf':'application/pdf','.txt':'text/plain','.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.gif':'image/gif','.docx':'application/vnd.openxmlformats-officedocument.wordprocessingml.document','.doc':'application/msword','.xlsx':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','.xls':'application/vnd.ms-excel'}
-      ex=os.path.splitext(nm)[1].lower()
-      if mt in('application/octet-stream','')and ex in em:mt=em[ex]
-      mn,sb=mt.split('/',1)if'/'in mt else('application','octet-stream');ap=MIMEBase(mn,sb,name=nm);ap.set_payload(fd);encoders.encode_base64(ap)
-      try:nm.encode('ascii');ap.add_header('Content-Disposition','attachment',filename=nm)
-      except(UnicodeEncodeError,AttributeError):ap.add_header('Content-Disposition','attachment',filename=('utf-8','',nm))
-      msg.attach(ap)
-     except Exception as ae:logging.warning("Attach err: %s"%ae)
-    with smtplib.SMTP(srv,port,timeout=30)as s:s.ehlo();s.starttls();s.ehlo();s.login(u,p);s.send_message(msg)
-    st="with attachment"if att else"without attachment";logging.info("Sent to %s (%s)"%(to,st))
-    self.send_response(200);self.send_header('Content-type','application/json');self.end_headers();self.wfile.write(json.dumps({'success':True,'message':'Email sent via EC2 relay','status':st}).encode())
-   except Exception as e:logging.error(str(e));self.send_response(500);self.send_header('Content-type','application/json');self.end_headers();self.wfile.write(json.dumps({'success':False,'error':str(e)}).encode())
-  else:self.send_response(404);self.end_headers()
-if __name__=='__main__':srv=HTTPServer(('0.0.0.0',3000),EmailRelayHandler);logging.info('EC2 Relay v6.1 started on port 3000');srv.serve_forever()
-PYEOF
-
+echo '{relay_b64}' | base64 -d > /opt/email_relay_server.py
 chmod +x /opt/email_relay_server.py
+echo "Relay script written: $(wc -l /opt/email_relay_server.py) lines"
 
-# ── 4. START RELAY IMMEDIATELY (JetMailer pattern: don't wait for systemd) ──────
-echo "Starting relay server in background NOW..."
+# 4. Kill any old relay, start fresh immediately
 pkill -f email_relay_server.py 2>/dev/null || true
+sleep 1
 nohup $PYTHON /opt/email_relay_server.py >> /var/log/email_relay.log 2>&1 &
 RELAY_PID=$!
+disown $RELAY_PID 2>/dev/null || true
 echo "Relay started with PID: $RELAY_PID"
 
-# Wait 3 seconds and verify it's listening
+# 5. Verify after 3 seconds
 sleep 3
-if ss -tlnp 2>/dev/null | grep -q ':3000' || netstat -tlnp 2>/dev/null | grep -q ':3000'; then
-    echo "✅ Relay is LISTENING on port 3000"
-    curl -s http://localhost:3000/health | head -c 200 || true
+if ss -tlnp 2>/dev/null | grep -q ':3000' || netstat -tlnp 2>/dev/null | grep ':3000'; then
+    echo "SUCCESS: Relay listening on port 3000"
 else
-    echo "⚠️  Port 3000 not listening yet — relay may still be starting"
+    echo "WARNING: Port 3000 not detected yet - may still be starting"
 fi
+curl -s --max-time 3 http://127.0.0.1:3000/health || echo "Health check pending"
 
-# ── 5. ALSO setup systemd as backup (restarts if crashes) ──────────────────────
-cat > /etc/systemd/system/email-relay.service << SVCEOF
+# 6. Systemd service for auto-restart on reboot
+cat > /etc/systemd/system/email-relay.service << 'SVCEOF'
 [Unit]
-Description=KINGMAILER Email Relay
-After=network.target
+Description=KINGMAILER Email Relay v7.0
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
 User=root
-ExecStart=${PYTHON} /opt/email_relay_server.py
+ExecStartPre=/usr/sbin/iptables -I INPUT -p tcp --dport 3000 -j ACCEPT
+ExecStart=/usr/bin/env python3 /opt/email_relay_server.py
 Restart=always
 RestartSec=5
-StandardOutput=journal
-StandardError=journal
+KillMode=process
 
 [Install]
 WantedBy=multi-user.target
@@ -384,22 +383,22 @@ SVCEOF
 systemctl daemon-reload
 systemctl enable email-relay 2>/dev/null || true
 
-# ── 6. Watchdog cron: restart if relay stops ────────────────────────────────────
-cat > /etc/cron.d/email-relay-watchdog << 'CRONEOF'
-* * * * * root pgrep -f "email_relay_server.py" >/dev/null || nohup /usr/bin/python3 /opt/email_relay_server.py >> /var/log/email_relay.log 2>&1 &
-CRONEOF
-chmod 644 /etc/cron.d/email-relay-watchdog
+# 7. Cron watchdog - restart relay if it dies
+echo '* * * * * root pgrep -f email_relay_server.py >/dev/null 2>&1 || (iptables -I INPUT -p tcp --dport 3000 -j ACCEPT 2>/dev/null; nohup /usr/bin/env python3 /opt/email_relay_server.py >> /var/log/email_relay.log 2>&1 &)' > /etc/cron.d/kingmailer-watchdog
+chmod 644 /etc/cron.d/kingmailer-watchdog
 
-echo "=== Setup Complete ==="
-date
-ps aux | grep email_relay_server || true
-ss -tlnp | grep 3000 || netstat -tlnp 2>/dev/null | grep 3000 || true
-""",
+echo "=== Setup Complete $(date) ==="
+"""
+
+        response = ec2_client.run_instances(
+            **run_params,
+            UserData=user_data,
             TagSpecifications=[{
                 'ResourceType': 'instance',
                 'Tags': [
                     {'Key': 'Name', 'Value': 'KINGMAILER-Email-Server'},
-                    {'Key': 'Purpose', 'Value': 'Email Relay'}
+                    {'Key': 'Purpose', 'Value': 'Email Relay'},
+                    {'Key': 'SG', 'Value': instance_sg_id}
                 ]
             }]
         )
@@ -416,14 +415,13 @@ ss -tlnp | grep 3000 || netstat -tlnp 2>/dev/null | grep 3000 || true
             # Check both direct and NetworkInterface locations for public IP
             public_ip = instance.get('PublicIpAddress')
             if not public_ip and instance.get('NetworkInterfaces'):
-                # When using NetworkInterfaces spec, IP is nested differently
                 ni = instance['NetworkInterfaces'][0]
                 if ni.get('Association'):
                     public_ip = ni['Association'].get('PublicIp')
             
             if public_ip:
-                break  # Got the IP, exit loop
-        
+                break
+
         if not public_ip:
             public_ip = 'Pending...'
         
@@ -433,6 +431,7 @@ ss -tlnp | grep 3000 || netstat -tlnp 2>/dev/null | grep 3000 || true
             'public_ip': public_ip,
             'region': region,
             'state': instance['State']['Name'],
+            'security_group_id': instance_sg_id,
             'setup_eta': '⏳ Relay will be ready in 2-3 minutes. Click "Check Health" to verify.'
         }
     
@@ -448,6 +447,7 @@ ss -tlnp | grep 3000 || netstat -tlnp 2>/dev/null | grep 3000 || true
         }
 
 
+
 def restart_relay_via_ssm(access_key, secret_key, region, instance_id):
     """Use AWS SSM Run Command to reinstall and restart the relay server — no SSH needed."""
     try:
@@ -458,108 +458,48 @@ def restart_relay_via_ssm(access_key, secret_key, region, instance_id):
             aws_secret_access_key=secret_key
         )
 
-        # Full relay reinstall + start script sent via SSM
-        setup_script = """#!/bin/bash
-echo "=== KINGMAILER Relay v6.1 Restart via SSM ==="
+        # Build the SSM script using base64 (same approach as UserData - no heredoc issues)
+        relay_b64 = _RELAY_B64
+        setup_script = f"""#!/bin/bash
+exec >> /var/log/kingmailer-ssm-restart.log 2>&1
+echo "=== KINGMAILER v7.0 Relay Restart via SSM $(date) ==="
+
+# 1. Open OS firewall for port 3000
 setenforce 0 2>/dev/null || true
 iptables -I INPUT -p tcp --dport 3000 -j ACCEPT 2>/dev/null || true
-PYTHON=$(command -v python3 || command -v python || echo "/usr/bin/python3")
+systemctl stop firewalld 2>/dev/null || true
+
+# 2. Find python3
+PYTHON=$(which python3 2>/dev/null || which python 2>/dev/null || echo /usr/bin/python3)
+echo "Python: $PYTHON"
+
+# 3. Write relay using base64 decode (no heredoc = no quoting issues)
 mkdir -p /opt
-
-cat > /opt/email_relay_server.py << 'PYEOF'
-#!/usr/bin/env python3
-# KINGMAILER v6.1 EC2 Relay
-import json,re,smtplib,logging,socket,base64,os
-from http.server import HTTPServer,BaseHTTPRequestHandler
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-from email.mime.base import MIMEBase
-from email import encoders
-from email.utils import formatdate,make_msgid
-from datetime import datetime
-logging.basicConfig(level=logging.INFO,format='%(asctime)s %(levelname)s %(message)s',handlers=[logging.FileHandler('/var/log/email_relay.log'),logging.StreamHandler()])
-class EmailRelayHandler(BaseHTTPRequestHandler):
- def log_message(self,fmt,*a):logging.info("%s - %s"%(self.client_address[0],fmt%a))
- def do_GET(self):
-  if self.path in('/','/health'):
-   self.send_response(200);self.send_header('Content-type','application/json');self.end_headers()
-   def chk(p):
-    try:s=socket.socket();s.settimeout(3);r=s.connect_ex(('smtp.gmail.com',p));s.close();return 'open' if r==0 else 'blocked'
-    except:return 'unknown'
-   self.wfile.write(json.dumps({'status':'healthy','service':'KINGMAILER Relay v6.1','timestamp':datetime.now().isoformat(),'port_587_outbound':chk(587),'port_465_outbound':chk(465)}).encode())
-  else:self.send_response(404);self.end_headers()
- def do_POST(self):
-  if self.path=='/relay':
-   try:
-    data=json.loads(self.rfile.read(int(self.headers['Content-Length'])).decode());sm=data.get('smtp_config')
-    if not sm:raise ValueError('SMTP config required')
-    to=data.get('to','');subj=data.get('subject','');htm=data.get('html','');att=data.get('attachment')
-    if not to:raise ValueError('Recipient required')
-    pv=sm.get('provider','gmail');u=sm.get('user');p=sm.get('pass')
-    if not u or not p:raise ValueError('SMTP credentials required')
-    sn=sm.get('sender_name',data.get('from_name','KINGMAILER'))
-    if pv=='gmail':srv,port='smtp.gmail.com',587
-    elif pv in('outlook','hotmail'):srv,port='smtp-mail.outlook.com',587
-    else:srv,port=sm.get('host','smtp.gmail.com'),int(sm.get('port',587))
-    pl=re.sub(r'<br\\s*/?>', '\\n',htm,flags=re.IGNORECASE);pl=re.sub(r'<p[^>]*>','\\n',pl,flags=re.IGNORECASE);pl=re.sub(r'<[^>]+>','',pl);pl=re.sub(r'[ \\t]+',' ',pl).strip()
-    if att:msg=MIMEMultipart('mixed');alt=MIMEMultipart('alternative');alt.attach(MIMEText(pl,'plain','utf-8'));alt.attach(MIMEText(htm,'html','utf-8'));msg.attach(alt)
-    else:msg=MIMEMultipart('alternative');msg.attach(MIMEText(pl,'plain','utf-8'));msg.attach(MIMEText(htm,'html','utf-8'))
-    fh="%s <%s>"%(sn,u)if sn else u;dm=u.split('@')[-1]if '@' in u else 'relay.local'
-    msg['From']=fh;msg['To']=to;msg['Subject']=subj;msg['Date']=formatdate(localtime=True);msg['Message-ID']=make_msgid(domain=dm)
-    if att:
-     try:
-      ac=att['content']+'='*(-len(att['content'])%4);fd=base64.b64decode(ac);nm=att.get('name','attachment');mt=att.get('type','application/octet-stream')
-      logging.info("[ATTACHMENT] %s (%d bytes, %s)"%(nm,len(fd),mt))
-      em={'.pdf':'application/pdf','.txt':'text/plain','.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.gif':'image/gif','.docx':'application/vnd.openxmlformats-officedocument.wordprocessingml.document','.doc':'application/msword','.xlsx':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','.xls':'application/vnd.ms-excel'}
-      ex=os.path.splitext(nm)[1].lower()
-      if mt in('application/octet-stream','')and ex in em:mt=em[ex]
-      mn,sb=mt.split('/',1)if'/'in mt else('application','octet-stream');ap=MIMEBase(mn,sb,name=nm);ap.set_payload(fd);encoders.encode_base64(ap)
-      try:nm.encode('ascii');ap.add_header('Content-Disposition','attachment',filename=nm)
-      except(UnicodeEncodeError,AttributeError):ap.add_header('Content-Disposition','attachment',filename=('utf-8','',nm))
-      msg.attach(ap)
-     except Exception as ae:logging.warning("Attach err: %s"%ae)
-    with smtplib.SMTP(srv,port,timeout=30)as s:s.ehlo();s.starttls();s.ehlo();s.login(u,p);s.send_message(msg)
-    st="with attachment"if att else"without attachment";logging.info("Sent to %s (%s)"%(to,st))
-    self.send_response(200);self.send_header('Content-type','application/json');self.end_headers();self.wfile.write(json.dumps({'success':True,'message':'Email sent via EC2 relay','status':st}).encode())
-   except Exception as e:logging.error(str(e));self.send_response(500);self.send_header('Content-type','application/json');self.end_headers();self.wfile.write(json.dumps({'success':False,'error':str(e)}).encode())
-  else:self.send_response(404);self.end_headers()
-if __name__=='__main__':srv=HTTPServer(('0.0.0.0',3000),EmailRelayHandler);logging.info('EC2 Relay v6.1 started on port 3000');srv.serve_forever()
-PYEOF
-
+echo '{relay_b64}' | base64 -d > /opt/email_relay_server.py
 chmod +x /opt/email_relay_server.py
+echo "Relay script: $(wc -c /opt/email_relay_server.py) bytes"
 
-# Kill old relay and start immediately
+# 4. Kill old relay, start fresh
 pkill -f email_relay_server.py 2>/dev/null || true
+sleep 1
 nohup $PYTHON /opt/email_relay_server.py >> /var/log/email_relay.log 2>&1 &
+disown $! 2>/dev/null || true
 sleep 3
 
-# Also setup systemd
-cat > /etc/systemd/system/email-relay.service << SVCEOF
-[Unit]
-Description=KINGMAILER Email Relay
-After=network.target
-[Service]
-Type=simple
-User=root
-ExecStart=${PYTHON} /opt/email_relay_server.py
-Restart=always
-RestartSec=5
-[Install]
-WantedBy=multi-user.target
-SVCEOF
-
-systemctl daemon-reload
-systemctl enable email-relay 2>/dev/null || true
-
-ss -tlnp | grep -q ':3000' && echo 'RELAY_OK' || echo 'RELAY_STARTING'
-curl -s http://localhost:3000/health | head -c 200 || true
-"""
+# 5. Check if relay is listening
+if ss -tlnp 2>/dev/null | grep -q ':3000' || netstat -tlnp 2>/dev/null | grep ':3000'; then
+    echo 'RELAY_OK'
+else
+    echo 'RELAY_STARTING'
+fi
+curl -s --max-time 3 http://127.0.0.1:3000/health || echo 'Health check pending'
+echo "=== Restart Complete $(date) ===" """
 
         response = ssm_client.send_command(
             InstanceIds=[instance_id],
             DocumentName='AWS-RunShellScript',
             Parameters={'commands': [setup_script]},
-            Comment='KINGMAILER relay restart'
+            Comment='KINGMAILER v7.0 relay restart'
         )
         command_id = response['Command']['CommandId']
 
@@ -574,9 +514,9 @@ curl -s http://localhost:3000/health | head -c 200 || true
                     stdout = out.get('StandardOutputContent', '')
                     stderr = out.get('StandardErrorContent', '')
                     if 'RELAY_OK' in stdout:
-                        return {'success': True, 'message': '✅ Relay server restarted successfully!', 'output': stdout[-500:]}
+                        return {'success': True, 'message': '✅ Relay server restarted successfully! Check health in 5 seconds.', 'output': stdout[-500:]}
                     elif status == 'Success':
-                        return {'success': True, 'message': 'SSM command completed — check health in 15 seconds', 'output': stdout[-500:]}
+                        return {'success': True, 'message': '✅ SSM command completed — check health in 15 seconds', 'output': stdout[-500:]}
                     else:
                         return {'success': False, 'error': f'Command {status}: {stderr[-300:] or stdout[-300:]}'}
             except Exception:
@@ -589,7 +529,6 @@ curl -s http://localhost:3000/health | head -c 200 || true
         is_ssm_unregistered = ('InvalidInstanceId' in err or 'not registered' in err.lower()
                                or 'ManagedInstance' in err or 'isManagedInstance' in err)
         if is_ssm_unregistered:
-            # Auto-attach SSM IAM role so next click works
             attach = _attach_ssm_role(access_key, secret_key, region, instance_id)
             if attach.get('attached'):
                 return {
@@ -601,13 +540,13 @@ curl -s http://localhost:3000/health | head -c 200 || true
                 return {
                     'success': False,
                     'ssm_not_available': True,
-                    'message': '⚠️ SSM agent not responding (instance has IAM role but SSM agent may not be installed). Terminate this instance and create a new one — the new setup is hardened and will work.'
+                    'message': '⚠️ SSM agent not responding. Click "🔧 Fix Relay" button instead — it will stop/update/restart the instance with the new v7.0 relay.'
                 }
             else:
                 return {
                     'success': False,
                     'ssm_not_available': True,
-                    'message': f'⚠️ Could not attach SSM role: {attach.get("error")}. Terminate this instance and create a new one.'
+                    'message': f'⚠️ Could not attach SSM role: {attach.get("error")}. Click "🔧 Fix Relay" button instead.'
                 }
         return {'success': False, 'error': f'SSM error: {err}'}
 
@@ -672,7 +611,7 @@ def _attach_ssm_role(access_key, secret_key, region, instance_id):
 
 
 def fix_relay_instance(access_key, secret_key, region, instance_id):
-    """Stop instance, replace UserData with a #cloud-boothook relay script, start it.
+    """Stop instance, replace UserData with the v7.0 base64-encoded relay script, start it.
     This repairs broken instances where the original UserData never ran properly."""
     import base64 as _b64
     try:
@@ -696,90 +635,39 @@ def fix_relay_instance(access_key, secret_key, region, instance_id):
             waiter = ec2.get_waiter('instance_stopped')
             waiter.wait(InstanceIds=[instance_id], WaiterConfig={'Delay': 15, 'MaxAttempts': 24})
 
-        # New UserData: #cloud-boothook runs on EVERY boot, bypasses cloud-init "already ran" cache
-        new_userdata = r"""#cloud-boothook
-#!/bin/bash
-exec > /var/log/boothook.log 2>&1
-echo "=== KINGMAILER Relay v6.0 BootHook $(date) ==="
-which python3 || yum install -y python3 2>/dev/null || dnf install -y python3 2>/dev/null || true
+        # New UserData: base64-encoded relay script — no heredoc quoting issues
+        relay_b64 = _RELAY_B64
+        new_userdata = f"""#!/bin/bash
+exec >> /var/log/kingmailer-setup.log 2>&1
+echo "=== KINGMAILER v7.0 Fix-Relay $(date) ==="
+
+which python3 >/dev/null 2>&1 || yum install -y python3 >/dev/null 2>&1 || dnf install -y python3 >/dev/null 2>&1 || true
+PYTHON=$(which python3 2>/dev/null || which python 2>/dev/null || echo /usr/bin/python3)
+
+setenforce 0 2>/dev/null || true
+iptables  -I INPUT -p tcp --dport 3000 -j ACCEPT 2>/dev/null || true
+systemctl stop  firewalld 2>/dev/null || true
+systemctl disable firewalld 2>/dev/null || true
+
 mkdir -p /opt
-
-cat > /opt/email_relay_server.py << 'PYEOF'
-#!/usr/bin/env python3
-# KINGMAILER v6.0 EC2 Relay - Unified Email Pattern
-import json,re,smtplib,logging,socket,base64,os
-from http.server import HTTPServer,BaseHTTPRequestHandler
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-from email.mime.base import MIMEBase
-from email import encoders
-from email.utils import formatdate,make_msgid
-from datetime import datetime
-logging.basicConfig(level=logging.INFO,format='%(asctime)s %(levelname)s %(message)s',handlers=[logging.FileHandler('/var/log/email_relay.log'),logging.StreamHandler()])
-class EmailRelayHandler(BaseHTTPRequestHandler):
- def log_message(self,fmt,*a):logging.info("%s - %s"%(self.client_address[0],fmt%a))
- def do_GET(self):
-  if self.path in('/','/health'):
-   self.send_response(200);self.send_header('Content-type','application/json');self.end_headers()
-   def chk(p):
-    try:s=socket.socket();s.settimeout(3);r=s.connect_ex(('smtp.gmail.com',p));s.close();return 'open' if r==0 else 'blocked'
-    except:return 'unknown'
-   self.wfile.write(json.dumps({'status':'healthy','service':'KINGMAILER Relay v6.0','timestamp':datetime.now().isoformat(),'port_587_outbound':chk(587),'port_465_outbound':chk(465)}).encode())
-  else:self.send_response(404);self.end_headers()
- def do_POST(self):
-  if self.path=='/relay':
-   try:
-    data=json.loads(self.rfile.read(int(self.headers['Content-Length'])).decode());sm=data.get('smtp_config')
-    if not sm:raise ValueError('SMTP config required')
-    to=data.get('to','');subj=data.get('subject','');htm=data.get('html','');att=data.get('attachment')
-    if not to:raise ValueError('Recipient required')
-    pv=sm.get('provider','gmail');u=sm.get('user');p=sm.get('pass')
-    if not u or not p:raise ValueError('SMTP credentials required')
-    sn=sm.get('sender_name',data.get('from_name','KINGMAILER'))
-    if pv=='gmail':srv,port='smtp.gmail.com',587
-    elif pv in('outlook','hotmail'):srv,port='smtp-mail.outlook.com',587
-    else:srv,port=sm.get('host','smtp.gmail.com'),int(sm.get('port',587))
-    pl=re.sub(r'<br\s*/?>', '\n',htm,flags=re.IGNORECASE);pl=re.sub(r'<p[^>]*>','\n',pl,flags=re.IGNORECASE);pl=re.sub(r'<[^>]+>','',pl);pl=re.sub(r'[ \t]+',' ',pl).strip()
-    if att:msg=MIMEMultipart('mixed');alt=MIMEMultipart('alternative');alt.attach(MIMEText(pl,'plain','utf-8'));alt.attach(MIMEText(htm,'html','utf-8'));msg.attach(alt)
-    else:msg=MIMEMultipart('alternative');msg.attach(MIMEText(pl,'plain','utf-8'));msg.attach(MIMEText(htm,'html','utf-8'))
-    fh="%s <%s>"%(sn,u)if sn else u;dm=u.split('@')[-1]if '@' in u else 'relay.local'
-    msg['From']=fh;msg['To']=to;msg['Subject']=subj;msg['Date']=formatdate(localtime=True);msg['Message-ID']=make_msgid(domain=dm)
-    if att:
-     try:
-      ac=att['content']+'='*(-len(att['content'])%4);fd=base64.b64decode(ac);nm=att.get('name','attachment');mt=att.get('type','application/octet-stream')
-      logging.info("[ATTACHMENT] %s (%d bytes, %s)"%(nm,len(fd),mt))
-      em={'.pdf':'application/pdf','.txt':'text/plain','.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.gif':'image/gif','.docx':'application/vnd.openxmlformats-officedocument.wordprocessingml.document','.doc':'application/msword','.xlsx':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','.xls':'application/vnd.ms-excel'}
-      ex=os.path.splitext(nm)[1].lower()
-      if mt in('application/octet-stream','')and ex in em:mt=em[ex]
-      mn,sb=mt.split('/',1)if'/'in mt else('application','octet-stream');ap=MIMEBase(mn,sb,name=nm);ap.set_payload(fd);encoders.encode_base64(ap)
-      try:nm.encode('ascii');ap.add_header('Content-Disposition','attachment',filename=nm)
-      except(UnicodeEncodeError,AttributeError):ap.add_header('Content-Disposition','attachment',filename=('utf-8','',nm))
-      msg.attach(ap)
-     except Exception as ae:logging.warning("Attach err: %s"%ae)
-    with smtplib.SMTP(srv,port,timeout=30)as s:s.ehlo();s.starttls();s.ehlo();s.login(u,p);s.send_message(msg)
-    st="with attachment"if att else"without attachment";logging.info("Sent to %s (%s)"%(to,st))
-    self.send_response(200);self.send_header('Content-type','application/json');self.end_headers();self.wfile.write(json.dumps({'success':True,'message':'Email sent via EC2 relay','status':st}).encode())
-   except Exception as e:logging.error(str(e));self.send_response(500);self.send_header('Content-type','application/json');self.end_headers();self.wfile.write(json.dumps({'success':False,'error':str(e)}).encode())
-  else:self.send_response(404);self.end_headers()
-if __name__=='__main__':srv=HTTPServer(('0.0.0.0',3000),EmailRelayHandler);logging.info('EC2 Relay v6.0 started on port 3000');srv.serve_forever()
-PYEOF
-
+echo '{relay_b64}' | base64 -d > /opt/email_relay_server.py
 chmod +x /opt/email_relay_server.py
 
-PYTHON=$(command -v python3 || command -v python || echo "/usr/bin/python3")
-setenforce 0 2>/dev/null || true
-iptables -I INPUT -p tcp --dport 3000 -j ACCEPT 2>/dev/null || true
+pkill -f email_relay_server.py 2>/dev/null || true
+sleep 1
 
-cat > /etc/systemd/system/email-relay.service << SVCEOF
+cat > /etc/systemd/system/email-relay.service << 'SVCEOF'
 [Unit]
 Description=KINGMAILER Email Relay
 After=network.target
 [Service]
 Type=simple
 User=root
-ExecStart=${PYTHON} /opt/email_relay_server.py
+ExecStart=/usr/bin/env python3 /opt/email_relay_server.py
 Restart=always
 RestartSec=5
+StandardOutput=append:/var/log/email_relay.log
+StandardError=append:/var/log/email_relay.log
 [Install]
 WantedBy=multi-user.target
 SVCEOF
@@ -788,11 +676,10 @@ systemctl daemon-reload
 systemctl enable email-relay
 systemctl restart email-relay
 sleep 3
-if ! systemctl is-active --quiet email-relay; then
-    nohup $PYTHON /opt/email_relay_server.py >> /var/log/email_relay.log 2>&1 &
-fi
-echo '* * * * * root systemctl is-active email-relay || systemctl restart email-relay' > /etc/cron.d/email-relay-watchdog
-echo "=== Relay BootHook Done $(date) ==="
+systemctl is-active email-relay || nohup $PYTHON /opt/email_relay_server.py >> /var/log/email_relay.log 2>&1 &
+
+echo '* * * * * root systemctl is-active --quiet email-relay || systemctl restart email-relay' > /etc/cron.d/email-relay-watchdog
+echo "=== Fix-Relay Done $(date) ==="
 """
 
         encoded = _b64.b64encode(new_userdata.encode('utf-8')).decode('utf-8')
@@ -806,8 +693,8 @@ echo "=== Relay BootHook Done $(date) ==="
 
         return {
             'success': True,
-            'message': '✅ Instance is restarting with a fresh relay setup (#cloud-boothook). '
-                       'The relay will auto-install on every boot. Check health in 3-5 minutes.'
+            'message': '✅ Instance is restarting with v7.0 relay setup (base64 encoded, no heredoc). '
+                       'The relay starts automatically on boot. Check health in 3-5 minutes.'
         }
 
     except Exception as e:
