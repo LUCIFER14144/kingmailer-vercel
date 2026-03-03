@@ -350,6 +350,52 @@
                 </div>
             </div>
 
+            <!-- Sender Name Override (single send) -->
+            <div
+                style="margin-bottom:12px; padding:12px; background:#1e1e2e; border-radius:8px; border:1px solid #3a3a5a;">
+                <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                    <strong style="color:#00ff9d; font-size:13px;">👤 Sender Name</strong>
+                    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+                        <input type="checkbox" id="singleRandomSenderName" onchange="toggleRandomSenderName('single')"
+                            style="width:16px;height:16px;">
+                        <span style="color:#f59e0b;font-size:13px;">🎲 Random Name per email</span>
+                    </label>
+                    <span style="color:#888;font-size:11px;">(overrides SMTP sender name)</span>
+                </div>
+                <div id="singleSenderNameRow" style="margin-top:8px;display:flex;gap:8px;align-items:center;">
+                    <input type="text" id="singleSenderName"
+                        placeholder="e.g. John Doe  (leave blank to use SMTP account name)" style="flex:1;">
+                </div>
+                <div id="singleRandomNamePreview" style="display:none;margin-top:8px;">
+                    <div style="font-size:11px;color:var(--text-dim);margin-bottom:5px;">Examples: <span
+                            id="singleRandomNameExamples" style="color:var(--warning);"></span></div>
+                    <div class="country-selector" id="singleCountrySelector">
+                        <label>Name Country:</label>
+                        <select id="singleNameCountry" onchange="updateRandomNameExamples('single')"
+                            style="padding:5px 10px;border-radius:6px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);color:var(--text);font-size:.78rem;">
+                            <option value="us">🇺🇸 United States</option>
+                            <option value="uk">🇬🇧 United Kingdom</option>
+                            <option value="ca">🇨🇦 Canada</option>
+                            <option value="au">🇦🇺 Australia</option>
+                            <option value="nz">🇳🇿 New Zealand</option>
+                            <option value="de">🇩🇪 Germany</option>
+                            <option value="fr">🇫🇷 France</option>
+                            <option value="it">🇮🇹 Italy</option>
+                            <option value="es">🇪🇸 Spain</option>
+                            <option value="nl">🇳🇱 Netherlands</option>
+                            <option value="se">🇸🇪 Sweden</option>
+                            <option value="pl">🇵🇱 Poland</option>
+                            <option value="br">🇧🇷 Brazil</option>
+                            <option value="mx">🇲🇽 Mexico</option>
+                            <option value="in">🇮🇳 India</option>
+                            <option value="jp">🇯🇵 Japan</option>
+                            <option value="sg">🇸🇬 Singapore</option>
+                            <option value="ae">🇦🇪 UAE</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
             <div class="form-group">
                 <label>Send Method:</label>
                 <select id="singleMethod">
@@ -698,9 +744,52 @@
                         <option value="none">Original filename</option>
                     </select>
                     <span id="bulkAttachName" style="color:#00ff9d; font-size:12px;"></span>
-                    <button id="bulkClearAttach" onclick="clearAttachment('bulk')"
-                        style="display:none; background:#f87171; color:#fff; border:none; border-radius:4px; padding:4px 8px; cursor:pointer; font-size:12px;">✕
-                        Remove</button>
+                </div>
+            </div>
+
+            <!-- Sender Name Override (Bulk) -->
+            <div
+                style="margin-bottom:12px; padding:12px; background:#1e1e2e; border-radius:8px; border:1px solid #3a3a5a;">
+                <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                    <strong style="color:#00ff9d; font-size:13px;">👤 Sender Name</strong>
+                    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+                        <input type="checkbox" id="bulkRandomSenderName" onchange="toggleRandomSenderName('bulk')"
+                            style="width:16px;height:16px;">
+                        <span style="color:#f59e0b;font-size:13px;">🎲 Random Name per email</span>
+                    </label>
+                    <span style="color:#888;font-size:11px;">(overrides SMTP sender name)</span>
+                </div>
+                <div id="bulkSenderNameRow" style="margin-top:8px;display:flex;gap:8px;align-items:center;">
+                    <input type="text" id="bulkSenderName"
+                        placeholder="e.g. John Doe  (leave blank to use SMTP account name)" style="flex:1;">
+                </div>
+                <div id="bulkRandomNamePreview" style="display:none;margin-top:8px;">
+                    <div style="font-size:11px;color:var(--text-dim);margin-bottom:5px;">Examples: <span
+                            id="randomNameExamples" style="color:var(--warning);"></span></div>
+                    <div class="country-selector" id="bulkCountrySelector">
+                        <label>Name Country:</label>
+                        <select id="bulkNameCountry" onchange="updateRandomNameExamples('bulk')"
+                            style="padding:5px 10px;border-radius:6px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);color:var(--text);font-size:.78rem;">
+                            <option value="us">🇺🇸 United States</option>
+                            <option value="uk">🇬🇧 United Kingdom</option>
+                            <option value="ca">🇨🇦 Canada</option>
+                            <option value="au">🇦🇺 Australia</option>
+                            <option value="nz">🇳🇿 New Zealand</option>
+                            <option value="de">🇩🇪 Germany</option>
+                            <option value="fr">🇫🇷 France</option>
+                            <option value="it">🇮🇹 Italy</option>
+                            <option value="es">🇪🇸 Spain</option>
+                            <option value="nl">🇳🇱 Netherlands</option>
+                            <option value="se">🇸🇪 Sweden</option>
+                            <option value="pl">🇵🇱 Poland</option>
+                            <option value="br">🇧🇷 Brazil</option>
+                            <option value="mx">🇲🇽 Mexico</option>
+                            <option value="in">🇮🇳 India</option>
+                            <option value="jp">🇯🇵 Japan</option>
+                            <option value="sg">🇸🇬 Singapore</option>
+                            <option value="ae">🇦🇪 UAE</option>
+                        </select>
+                    </div>
                 </div>
             </div>
 
@@ -730,7 +819,7 @@
                     <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
                         <input type="checkbox" id="bulkRandomSenderName" onchange="toggleRandomSenderName('bulk')"
                             style="width:16px;height:16px;">
-                        <span style="color:#f59e0b;font-size:13px;">🎲 Random US Name per email</span>
+                        <span style="color:#f59e0b;font-size:13px;">🎲 Random Name per email</span>
                     </label>
                     <span style="color:#888;font-size:11px;">(overrides SMTP sender name)</span>
                 </div>
@@ -750,8 +839,20 @@
                             <option value="uk">🇬🇧 United Kingdom</option>
                             <option value="ca">🇨🇦 Canada</option>
                             <option value="au">🇦🇺 Australia</option>
+                            <option value="nz">🇳🇿 New Zealand</option>
                             <option value="de">🇩🇪 Germany</option>
                             <option value="fr">🇫🇷 France</option>
+                            <option value="it">🇮🇹 Italy</option>
+                            <option value="es">🇪🇸 Spain</option>
+                            <option value="nl">🇳🇱 Netherlands</option>
+                            <option value="se">🇸🇪 Sweden</option>
+                            <option value="pl">🇵🇱 Poland</option>
+                            <option value="br">🇧🇷 Brazil</option>
+                            <option value="mx">🇲🇽 Mexico</option>
+                            <option value="in">🇮🇳 India</option>
+                            <option value="jp">🇯🇵 Japan</option>
+                            <option value="sg">🇸🇬 Singapore</option>
+                            <option value="ae">🇦🇪 UAE / Arabic</option>
                             <option value="random">🌍 Random Country</option>
                         </select>
                     </div>
@@ -932,6 +1033,16 @@
                 <small style="color: #00ff9d;">✅ No AWS port 25 request needed - works immediately!</small>
             </div>
 
+            <div
+                style="background:rgba(0,255,157,0.08);border:1px solid #00ff9d;border-radius:8px;padding:12px 16px;margin-bottom:16px;">
+                <strong style="color:#00ff9d;">⬆️ Relay v8.0 Required for Random Names + Inbox Attachments</strong><br>
+                <span style="font-size:13px;color:#ccc;">If you have existing EC2 instances, click <strong
+                        style="color:#00ff9d;">⬆️ Update Relay v8.0</strong> on each instance below.<br>
+                    This pushes the new relay that supports random sender names and inbox-safe attachments.<br>
+                    <strong>You do NOT need to recreate instances</strong> — just click ⬆️ Update Relay v8.0 once per
+                    instance.</span>
+            </div>
+
             <h3>AWS Credentials</h3>
 
             <div class="form-row">
@@ -949,11 +1060,24 @@
                 <div class="form-group">
                     <label>AWS Region:</label>
                     <select id="ec2Region">
-                        <option value="us-east-1">US East (N. Virginia)</option>
-                        <option value="us-west-2">US West (Oregon)</option>
-                        <option value="eu-west-1">EU (Ireland)</option>
-                        <option value="ap-southeast-1">Asia Pacific (Singapore)</option>
-                        <option value="ap-south-1">Asia Pacific (Mumbai)</option>
+                        <option value="us-east-1">🇺🇸 US East (N. Virginia)</option>
+                        <option value="us-east-2">🇺🇸 US East (Ohio)</option>
+                        <option value="us-west-1">🇺🇸 US West (N. California)</option>
+                        <option value="us-west-2">🇺🇸 US West (Oregon)</option>
+                        <option value="ca-central-1">🇨🇦 Canada (Central)</option>
+                        <option value="eu-west-1">🇮🇪 EU (Ireland)</option>
+                        <option value="eu-west-2">🇬🇧 EU (London)</option>
+                        <option value="eu-west-3">🇫🇷 EU (Paris)</option>
+                        <option value="eu-central-1">🇩🇪 EU (Frankfurt)</option>
+                        <option value="eu-north-1">🇸🇪 EU (Stockholm)</option>
+                        <option value="ap-southeast-1">🇸🇬 Asia Pacific (Singapore)</option>
+                        <option value="ap-southeast-2">🇦🇺 Asia Pacific (Sydney)</option>
+                        <option value="ap-northeast-1">🇯🇵 Asia Pacific (Tokyo)</option>
+                        <option value="ap-northeast-2">🇰🇷 Asia Pacific (Seoul)</option>
+                        <option value="ap-south-1">🇮🇳 Asia Pacific (Mumbai)</option>
+                        <option value="ap-east-1">🇭🇰 Asia Pacific (Hong Kong)</option>
+                        <option value="sa-east-1">🇧🇷 South America (São Paulo)</option>
+                        <option value="me-south-1">🇧🇭 Middle East (Bahrain)</option>
                     </select>
                 </div>
                 <div class="form-group">

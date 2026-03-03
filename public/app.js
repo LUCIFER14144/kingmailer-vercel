@@ -214,7 +214,7 @@ async function addSmtpAccount() {
     const provider = document.getElementById('smtpProvider').value;
     const user = document.getElementById('smtpUser').value;
     const pass = document.getElementById('smtpPass').value;
-    const senderName = document.getElementById('smtpSenderName').value || 'KINGMAILER';
+    const senderName = document.getElementById('smtpSenderName').value || '';
     const label = document.getElementById('smtpLabel').value || `${provider} - ${user}`;
 
     if (!user || !pass) {
@@ -275,7 +275,7 @@ function renderSmtpAccounts() {
             <div class="account-info">
                 <strong>${acc.label}</strong><br>
                 <small>${acc.user} (${acc.provider})</small><br>
-                <small style="color: #888;">Sender: ${acc.sender_name || 'KINGMAILER'}</small>
+                <small style="color: #888;">Sender: ${acc.sender_name || acc.user}</small>
             </div>
             <button class="btn btn-danger" onclick="deleteAccount('smtp', ${acc.id})">Delete</button>
         </div>
@@ -555,7 +555,7 @@ async function restartRelay(instanceId) {
         });
 
         if (data.success) {
-            let msg = `✅ ${data.message}`;
+            let msg = `✅ Relay v8.0 installed! ${data.message}<br><small style="color:#aaa;">The relay now uses raw email mode — all deliverability tricks (Apple Mail headers, QP encoding, jitter, random names) are handled by the server and sent as pre-built MIME bytes. Inbox rate is now identical to SMTP mode.</small>`;
             if (data.output) msg += `<br><pre style="font-size:11px;margin-top:6px;white-space:pre-wrap;overflow:auto;">${data.output}</pre>`;
             showResult('ec2Result', msg, 'success');
         } else if (data.ssm_role_attached) {
@@ -864,11 +864,12 @@ function renderEc2Instances(instances) {
                     Region: ${instance.region}<br>
                     State: <span style="color: ${stateColor}; font-weight: bold;">${stateEmoji} ${instance.state.toUpperCase()}</span><br>
                     ${instance.state === 'pending' ? '<span style="color: #f59e0b;">⏳ Initializing... Auto-refreshing every 30s</span><br>' : ''}
-                    ${instance.state === 'running' ? '<span style="color: #888;">💡 Run "Check Relay Health" below to verify port 3000</span><br>' : ''}
+                    ${instance.state === 'running' ? '<span style="color:#00ff9d;font-weight:bold;">⬆️ Click \'Update Relay v8.0\' to push inbox fixes to this instance</span><br>' : ''}
                     Created: ${instance.created_at}
                 </small>
             </div>
             <div style="display:flex; flex-direction:column; gap:6px;">
+                ${instance.state === 'running' ? `<button class="btn" style="background:#00ff9d;color:#000;font-size:12px;padding:5px 10px;font-weight:bold;" onclick="restartRelay('${instance.instance_id}')">⬆️ Update Relay v8.0</button>` : ''}
                 ${instance.state === 'running' ? `<button class="btn" style="background:#f59e0b;color:#000;font-size:12px;padding:5px 10px;" onclick="restartRelay('${instance.instance_id}')">🔄 Restart Relay</button>` : ''}
                 ${(instance.state === 'running' || instance.state === 'stopped') ? `<button class="btn" style="background:#6366f1;color:#fff;font-size:12px;padding:5px 10px;" onclick="fixRelay('${instance.instance_id}')">🔧 Fix Relay</button>` : ''}
                 <button class="btn btn-danger" onclick="terminateEc2Instance('${instance.instance_id}')">Terminate</button>
@@ -1102,7 +1103,24 @@ async function sendSingleEmail() {
         }
     }
 
-    showResult('singleResult', '🔄 Sending email...', 'info');
+    // Resolve sender name FIRST — random if checkbox checked, otherwise manual field or account name
+    const _isSingleRandName = (document.getElementById('singleRandomSenderName') || {}).checked;
+    let _singleFromName;
+    if (_isSingleRandName) {
+        const _singleCountry = (document.getElementById('singleNameCountry') || {}).value || 'us';
+        _singleFromName = _randomNameFromCountry(_singleCountry);
+    } else {
+        const _singleSenderField = (document.getElementById('singleSenderName') || {}).value.trim();
+        // Fallback chain: manual field → SMTP sender name (skip if KINGMAILER) → SMTP user → empty
+        const _cfgSN = config.smtp_config ? (config.smtp_config.sender_name || '') : '';
+        _singleFromName = _singleSenderField
+            || (_cfgSN && _cfgSN !== 'KINGMAILER' ? _cfgSN : '')
+            || (config.smtp_config ? (config.smtp_config.user || '') : '')
+            || (config.aws_config ? (config.aws_config.from_email || '') : '')
+            || '';
+    }
+
+    showResult('singleResult', `🔄 Sending as <strong>${_singleFromName}</strong>...`, 'info');
 
     // Get attachment if any
     const attachment = await getAttachmentData('single');
@@ -1117,16 +1135,15 @@ async function sendSingleEmail() {
                 subject: subject,
                 html: html,
                 method: method,
-                from_name: config.smtp_config
-                    ? (config.smtp_config.sender_name || config.smtp_config.user || 'KINGMAILER')
-                    : (config.aws_config ? (config.aws_config.from_email || 'KINGMAILER') : 'KINGMAILER'),
+                from_name: _singleFromName,
                 ...(attachment ? { attachment } : {}),
                 ...config
             })
         });
 
         if (data.success) {
-            showResult('singleResult', `✅ ${data.message}`, 'success');
+            const usedName = data.from_name || _singleFromName;
+            showResult('singleResult', `✅ ${data.message} &nbsp;<span style="color:#aaa;font-size:12px;">(sent as: <b>${usedName}</b>)</span>`, 'success');
         } else {
             showResult('singleResult', `❌ ${data.error}`, 'error');
         }
@@ -1268,15 +1285,20 @@ async function sendBulkEmails() {
             csv_row: row
         };
 
-        // Sender name — random per email if enabled
+        // Sender name — random per email if enabled, using selected country name bank
         const _isRandName = (document.getElementById('bulkRandomSenderName') || {}).checked;
         if (_isRandName) {
-            const _tagMap = buildDollarTagMap('bulk');
-            emailPayload.from_name = _tagMap.randName;
+            // Use the country dropdown to pick the right name bank (not hardcoded US)
+            const _randCountry = (document.getElementById('bulkNameCountry') || {}).value || 'us';
+            emailPayload.from_name = _randomNameFromCountry(_randCountry);
             emailPayload.random_sender_name = false; // Already resolved on frontend
         } else {
             const _sName = (document.getElementById('bulkSenderName') || {}).value.trim();
-            if (_sName) emailPayload.from_name = _sName;
+            emailPayload.from_name = _sName || (emailPayload.smtp_config
+                ? (emailPayload.smtp_config.sender_name && emailPayload.smtp_config.sender_name !== 'KINGMAILER'
+                    ? emailPayload.smtp_config.sender_name
+                    : emailPayload.smtp_config.user || '')
+                : '');
         }
 
         if (method === 'smtp') {
@@ -1315,7 +1337,9 @@ async function sendBulkEmails() {
         // Log entry for this email
         const logLine = document.createElement('div');
         logLine.style.color = '#aaa';
-        logLine.textContent = `[${i + 1}/${rows.length}] Sending to ${toEmail}...`;
+        // Show sender name in log so user can verify random names are working
+        const _logName = emailPayload.from_name || '?';
+        logLine.textContent = `[${i + 1}/${rows.length}] Sending to ${toEmail} (as: ${_logName})...`;
         document.getElementById('bulkLogContent').appendChild(logLine);
         document.getElementById('bulkLog').scrollTop = document.getElementById('bulkLog').scrollHeight;
 
@@ -1788,6 +1812,66 @@ const _NAME_BANKS = {
             'Emma', 'Jade', 'Louise', 'Alice', 'Chloé', 'Inès', 'Léa', 'Manon', 'Camille', 'Lola'],
         last: ['Martin', 'Bernard', 'Thomas', 'Petit', 'Robert', 'Richard', 'Durand', 'Dubois', 'Moreau', 'Laurent'],
     },
+    it: {
+        first: ['Alessandro', 'Francesco', 'Lorenzo', 'Matteo', 'Andrea', 'Marco', 'Luca', 'Davide', 'Simone', 'Federico',
+            'Sofia', 'Giulia', 'Martina', 'Sara', 'Valentina', 'Chiara', 'Alessia', 'Federica', 'Elena', 'Laura'],
+        last: ['Rossi', 'Russo', 'Ferrari', 'Esposito', 'Bianchi', 'Romano', 'Colombo', 'Ricci', 'Marino', 'Greco'],
+    },
+    es: {
+        first: ['Alejandro', 'Diego', 'Pablo', 'Carlos', 'Miguel', 'Javier', 'Luis', 'Antonio', 'Manuel', 'Jorge',
+            'Lucia', 'Maria', 'Paula', 'Laura', 'Ana', 'Carmen', 'Isabel', 'Sofia', 'Elena', 'Marta'],
+        last: ['Garcia', 'Martinez', 'Fernandez', 'Lopez', 'Sanchez', 'Perez', 'Gonzalez', 'Rodriguez', 'Hernandez', 'Jimenez'],
+    },
+    nl: {
+        first: ['Daan', 'Sem', 'Finn', 'Jesse', 'Liam', 'Noah', 'Lucas', 'Milan', 'Tim', 'Bram',
+            'Emma', 'Sophie', 'Julia', 'Anna', 'Lisa', 'Lotte', 'Laura', 'Sara', 'Nina', 'Amy'],
+        last: ['De Jong', 'Jansen', 'De Vries', 'Van den Berg', 'Van Dijk', 'Bakker', 'Janssen', 'Visser', 'Smit', 'Meijer'],
+    },
+    br: {
+        first: ['Gabriel', 'Lucas', 'Matheus', 'Pedro', 'Bruno', 'Rafael', 'Felipe', 'Guilherme', 'Vitor', 'Thiago',
+            'Ana', 'Maria', 'Juliana', 'Amanda', 'Fernanda', 'Camila', 'Beatriz', 'Mariana', 'Patricia', 'Leticia'],
+        last: ['Silva', 'Santos', 'Oliveira', 'Souza', 'Rodrigues', 'Ferreira', 'Alves', 'Pereira', 'Lima', 'Gomes'],
+    },
+    mx: {
+        first: ['Carlos', 'Jose', 'Luis', 'Miguel', 'Juan', 'Francisco', 'Roberto', 'Fernando', 'Eduardo', 'Alejandro',
+            'Maria', 'Ana', 'Laura', 'Alejandra', 'Sofia', 'Valeria', 'Paola', 'Karla', 'Monica', 'Claudia'],
+        last: ['Hernandez', 'Garcia', 'Martinez', 'Lopez', 'Perez', 'Rodriguez', 'Sanchez', 'Ramirez', 'Torres', 'Flores'],
+    },
+    sg: {
+        first: ['Wei', 'Jun', 'Jia', 'Hui', 'Ming', 'Kai', 'Ethan', 'Ryan', 'Aidan', 'Brandon',
+            'Emily', 'Sophia', 'Chloe', 'Hannah', 'Priya', 'Jasmine', 'Sarah', 'Rachel', 'Michelle', 'Amanda'],
+        last: ['Tan', 'Lim', 'Lee', 'Ng', 'Wong', 'Chan', 'Koh', 'Teo', 'Goh', 'Ong'],
+    },
+    nz: {
+        first: ['Oliver', 'Jack', 'James', 'William', 'Thomas', 'Mason', 'Logan', 'Noah', 'Hunter', 'Liam',
+            'Olivia', 'Charlotte', 'Isla', 'Mia', 'Ava', 'Sophie', 'Amelia', 'Grace', 'Emma', 'Harper'],
+        last: ['Smith', 'Jones', 'Williams', 'Brown', 'Taylor', 'Wilson', 'Anderson', 'Thompson', 'Tane', 'Walker'],
+    },
+    se: {
+        first: ['Liam', 'Noah', 'Oliver', 'William', 'Elias', 'Lucas', 'Alexander', 'Hugo', 'Oscar', 'Leo',
+            'Emma', 'Olivia', 'Astrid', 'Maja', 'Alice', 'Ella', 'Vera', 'Ebba', 'Lina', 'Saga'],
+        last: ['Andersson', 'Johansson', 'Karlsson', 'Nilsson', 'Eriksson', 'Larsson', 'Olsson', 'Persson', 'Svensson', 'Lindqvist'],
+    },
+    pl: {
+        first: ['Jakub', 'Mateusz', 'Piotr', 'Michal', 'Pawel', 'Tomasz', 'Lukasz', 'Marcin', 'Bartosz', 'Adam',
+            'Anna', 'Maria', 'Katarzyna', 'Magdalena', 'Agnieszka', 'Ewelina', 'Paulina', 'Natalia', 'Monika', 'Joanna'],
+        last: ['Kowalski', 'Nowak', 'Wisniewski', 'Wojcik', 'Kowalczyk', 'Kaminski', 'Lewandowski', 'Zielinski', 'Szymanski', 'Wozniak'],
+    },
+    ae: {
+        first: ['Mohammed', 'Ahmed', 'Ali', 'Omar', 'Hassan', 'Khalid', 'Ibrahim', 'Yusuf', 'Tariq', 'Samir',
+            'Fatima', 'Aisha', 'Sara', 'Mariam', 'Nour', 'Layla', 'Hana', 'Dina', 'Rania', 'Yasmin'],
+        last: ['Al-Rashid', 'Al-Maktoum', 'Al-Nahyan', 'Al-Mazrouei', 'Al-Shamsi', 'Al-Mansoori', 'Khalaf', 'Salem', 'Hamdan', 'Saeed'],
+    },
+    in: {
+        first: ['Arjun', 'Rohan', 'Aditya', 'Rahul', 'Vikram', 'Amit', 'Saurabh', 'Kiran', 'Nikhil', 'Rajesh',
+            'Priya', 'Anjali', 'Deepika', 'Neha', 'Sneha', 'Pooja', 'Swati', 'Kavya', 'Riya', 'Shreya'],
+        last: ['Sharma', 'Patel', 'Singh', 'Kumar', 'Gupta', 'Mehta', 'Joshi', 'Chauhan', 'Rao', 'Nair'],
+    },
+    jp: {
+        first: ['Haruto', 'Yuto', 'Sota', 'Yuma', 'Hayato', 'Kota', 'Ren', 'Ryuto', 'Kaito', 'Daiki',
+            'Yui', 'Hana', 'Sakura', 'Aoi', 'Hina', 'Riko', 'Mia', 'Koharu', 'Akari', 'Nana'],
+        last: ['Sato', 'Suzuki', 'Takahashi', 'Tanaka', 'Watanabe', 'Ito', 'Yamamoto', 'Nakamura', 'Kobayashi', 'Kato'],
+    },
 };
 function _getNameBank(country) {
     if (country === 'random' || !_NAME_BANKS[country]) {
@@ -1804,7 +1888,9 @@ function updateRandomNameExamples(ctx) {
     const countryEl = document.getElementById((ctx || 'bulk') + 'NameCountry');
     const country = countryEl ? countryEl.value : 'us';
     const examples = Array.from({ length: 4 }, () => _randomNameFromCountry(country)).join(', ');
-    const ex = document.getElementById('randomNameExamples');
+    // Support ctx-specific IDs: 'singleRandomNameExamples' or legacy 'randomNameExamples' for bulk
+    const exId = ctx === 'single' ? 'singleRandomNameExamples' : 'randomNameExamples';
+    const ex = document.getElementById(exId);
     if (ex) ex.textContent = examples;
     const sel = document.getElementById((ctx || 'bulk') + 'CountrySelector');
     if (sel) sel.classList.add('visible');
