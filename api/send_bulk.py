@@ -318,10 +318,10 @@ def _encode_subject(subject):
 
 def _make_from_header(sender_name, email_addr):
     """Build RFC-compliant From/Reply-To header.
-    Properly RFC 2047-encodes non-ASCII display names (German umlauts, French accents, etc.)
-    so that email headers never contain raw non-ASCII bytes.
+    Properly RFC 2047-encodes non-ASCII display names.
+    Checks for 'KINGMAILER' and strips it to avoid default branding.
     """
-    if not sender_name:
+    if not sender_name or sender_name.upper() == 'KINGMAILER':
         return email_addr
     try:
         sender_name.encode('ascii')
@@ -448,11 +448,16 @@ def send_email_smtp(smtp_config, from_name, recipient, subject, html_body, attac
         smtp_port   = 587 if is_gmail else int(smtp_config.get('port', 587))
         smtp_user   = smtp_config.get('user')
         smtp_pass   = smtp_config.get('pass')
-        # Sanitize: treat 'KINGMAILER' as empty (legacy default, not a real name)
-        _cfg_sn = smtp_config.get('sender_name') or ''
-        if _cfg_sn == 'KINGMAILER': _cfg_sn = ''
-        sender_name = from_name if from_name and from_name != 'KINGMAILER' else _cfg_sn
-        from_header = _make_from_header(sender_name, smtp_user) if sender_name else smtp_user
+        
+        # Priority: from_name (resolved per-email/random) > smtp_config.sender_name
+        _frontend_name = (from_name or '').strip()
+        _config_name = (smtp_config.get('sender_name') or '').strip()
+        
+        if _frontend_name.upper() == 'KINGMAILER': _frontend_name = ''
+        if _config_name.upper() == 'KINGMAILER': _config_name = ''
+        
+        sender_name = _frontend_name or _config_name
+        from_header = _make_from_header(sender_name, smtp_user)
 
         print(f'[SMTP SEND] → {recipient}  server={smtp_server}:{smtp_port}')
 
@@ -510,11 +515,16 @@ def send_email_ec2(ec2_url, smtp_config, from_name, recipient, subject, html_bod
             return {'success': False, 'error': 'No SMTP config for EC2 relay'}
 
         smtp_user   = smtp_config.get('user', '')
-        # Sanitize: treat 'KINGMAILER' as empty (legacy default, not a real name)
-        _cfg_sn = smtp_config.get('sender_name', '')
-        if _cfg_sn == 'KINGMAILER': _cfg_sn = ''
-        sender_name = from_name if from_name and from_name != 'KINGMAILER' else _cfg_sn
-        from_header = _make_from_header(sender_name, smtp_user) if sender_name else smtp_user
+        
+        # Priority: from_name (resolved per-email/random) > smtp_config.sender_name
+        _frontend_name = (from_name or '').strip()
+        _config_name = (smtp_config.get('sender_name') or '').strip()
+        
+        if _frontend_name.upper() == 'KINGMAILER': _frontend_name = ''
+        if _config_name.upper() == 'KINGMAILER': _config_name = ''
+        
+        sender_name = _frontend_name or _config_name
+        from_header = _make_from_header(sender_name, smtp_user)
 
         print(f'[EC2 RELAY] Building MIME msg for {recipient} (from: {from_header})') 
 

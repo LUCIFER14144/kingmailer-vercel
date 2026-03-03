@@ -1287,19 +1287,15 @@ async function sendBulkEmails() {
 
         // Sender name — random per email if enabled, using selected country name bank
         const _isRandName = (document.getElementById('bulkRandomSenderName') || {}).checked;
+        let _bulkFromName = '';
         if (_isRandName) {
-            // Use the country dropdown to pick the right name bank (not hardcoded US)
             const _randCountry = (document.getElementById('bulkNameCountry') || {}).value || 'us';
-            emailPayload.from_name = _randomNameFromCountry(_randCountry);
-            emailPayload.random_sender_name = false; // Already resolved on frontend
+            _bulkFromName = _randomNameFromCountry(_randCountry);
         } else {
             const _sName = (document.getElementById('bulkSenderName') || {}).value.trim();
-            emailPayload.from_name = _sName || (emailPayload.smtp_config
-                ? (emailPayload.smtp_config.sender_name && emailPayload.smtp_config.sender_name !== 'KINGMAILER'
-                    ? emailPayload.smtp_config.sender_name
-                    : emailPayload.smtp_config.user || '')
-                : '');
+            _bulkFromName = _sName;
         }
+        emailPayload.from_name = _bulkFromName;
 
         if (method === 'smtp') {
             emailPayload.smtp_config = smtpAccounts[rotateIdx % smtpAccounts.length];
@@ -1338,8 +1334,8 @@ async function sendBulkEmails() {
         const logLine = document.createElement('div');
         logLine.style.color = '#aaa';
         // Show sender name in log so user can verify random names are working
-        const _logName = emailPayload.from_name || '?';
-        logLine.textContent = `[${i + 1}/${rows.length}] Sending to ${toEmail} (as: ${_logName})...`;
+        const _logName = emailPayload.from_name || 'Account Default';
+        logLine.textContent = `[${i + 1}/${rows.length}] Sending to ${toEmail} (From: "${_logName}")...`;
         document.getElementById('bulkLogContent').appendChild(logLine);
         document.getElementById('bulkLog').scrollTop = document.getElementById('bulkLog').scrollHeight;
 
