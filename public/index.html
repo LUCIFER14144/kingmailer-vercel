@@ -349,6 +349,23 @@
                         style="display:none; background:#f87171; color:#fff; border:none; border-radius:4px; padding:4px 8px; cursor:pointer; font-size:12px;">✕
                         Remove</button>
                 </div>
+                <!-- Filename Prefix Style Row -->
+                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:7px;">
+                    <span style="color:#aaa;font-size:11px;">📝 Prefix:</span>
+                    <select id="singleAttachPrefix" onchange="onAttachPrefixChange('single')"
+                        style="padding:5px;background:#1a1a1a;color:#fff;border:1px solid #444;border-radius:4px;font-size:12px;">
+                        <option value="format">Format word (document / image / ...)</option>
+                        <option value="alpha_short">$alpha_short — 4 letters (e.g. xkmb)</option>
+                        <option value="alpha_random_small">$alpha_random_small — 6 letters (e.g. xkqzbt)</option>
+                        <option value="random_three_chars">$random_three_chars — 3 mixed (e.g. k7m)</option>
+                        <option value="custom">✏️ Custom — type any tags below</option>
+                    </select>
+                    <input type="text" id="singleAttachCustomPrefix"
+                        placeholder="e.g. $alpha_short or $sendername-$random_three_chars"
+                        style="display:none;padding:5px 8px;background:#1a1a1a;color:#fff;border:1px solid #555;border-radius:4px;font-size:12px;width:290px;"
+                        oninput="updateAttachPreview('single')">
+                    <span id="singleAttachPreview" style="color:#4caf50;font-size:11px;font-family:monospace;"></span>
+                </div>
             </div>
 
             <!-- Sender Name Override (single send) -->
@@ -748,6 +765,23 @@
                     <button id="bulkClearAttach" onclick="clearAttachment('bulk')"
                         style="display:none; background:#f87171; color:#fff; border:none; border-radius:4px; padding:4px 8px; cursor:pointer; font-size:12px;">&#10005;
                         Remove</button>
+                </div>
+                <!-- Filename Prefix Style Row -->
+                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:7px;">
+                    <span style="color:#aaa;font-size:11px;">📝 Prefix:</span>
+                    <select id="bulkAttachPrefix" onchange="onAttachPrefixChange('bulk')"
+                        style="padding:5px;background:#1a1a1a;color:#fff;border:1px solid #444;border-radius:4px;font-size:12px;">
+                        <option value="format">Format word (document / image / ...)</option>
+                        <option value="alpha_short">$alpha_short — 4 letters (e.g. xkmb)</option>
+                        <option value="alpha_random_small">$alpha_random_small — 6 letters (e.g. xkqzbt)</option>
+                        <option value="random_three_chars">$random_three_chars — 3 mixed (e.g. k7m)</option>
+                        <option value="custom">✏️ Custom — type any tags below</option>
+                    </select>
+                    <input type="text" id="bulkAttachCustomPrefix"
+                        placeholder="e.g. $alpha_short or $sendername-$random_three_chars"
+                        style="display:none;padding:5px 8px;background:#1a1a1a;color:#fff;border:1px solid #555;border-radius:4px;font-size:12px;width:290px;"
+                        oninput="updateAttachPreview('bulk')">
+                    <span id="bulkAttachPreview" style="color:#4caf50;font-size:11px;font-family:monospace;"></span>
                 </div>
             </div>
 

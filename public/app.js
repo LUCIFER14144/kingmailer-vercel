@@ -1499,7 +1499,59 @@ function generateAttachName(format) {
     }).join('-');
 }
 
-// US data for $tag generators
+// Show/hide custom prefix text input when user picks "Custom" from prefix dropdown
+function onAttachPrefixChange(context) {
+    const pfxEl    = document.getElementById(context + 'AttachPrefix');
+    const customEl = document.getElementById(context + 'AttachCustomPrefix');
+    if (pfxEl && customEl)
+        customEl.style.display = pfxEl.value === 'custom' ? 'inline-block' : 'none';
+    updateAttachPreview(context);
+}
+
+// Live preview of generated filename shown next to the prefix selector
+function updateAttachPreview(context) {
+    const pfxEl     = document.getElementById(context + 'AttachPrefix');
+    const customEl  = document.getElementById(context + 'AttachCustomPrefix');
+    const fmtEl     = document.getElementById(context + 'AttachFormat');
+    const nameFmtEl = document.getElementById(context + 'AttachNameFormat');
+    const prevEl    = document.getElementById(context + 'AttachPreview');
+    if (!prevEl) return;
+
+    const fmt       = fmtEl?.value   || 'html';
+    const pfxMode   = pfxEl?.value   || 'format';
+    const customRaw = customEl?.value?.trim() || '';
+    const nameFmt   = nameFmtEl?.value || 'random';
+
+    // Sample number code for preview
+    const sampleCode = (nameFmt === 'none') ? '' : generateAttachName(nameFmt === 'random' ? '5-6-5' : nameFmt);
+
+    // Static sample tag values (so preview doesn't flicker on every keystroke)
+    const sampleTags = {
+        alpha_short: 'xkmb', alpha_random_small: 'xkqzbt', random_three_chars: 'k7m',
+        sendername: 'johndoe', sender_name: 'johndoe', email: 'user@mail', name: 'username',
+        fname: 'john', lname: 'doe', randName: 'janesmith', random_name: 'janesmith',
+        company: 'apexsolutions', company_name: 'apexsolutions', date: '2026-03-04',
+        random_6: 'ab3xy9', random_8: 'ab3xy9qr', unique13digit: '1234567890123',
+    };
+
+    let prefix;
+    if (pfxMode === 'custom' && customRaw) {
+        prefix = applyDollarTags(customRaw, sampleTags)
+            .replace(/[^a-zA-Z0-9_\-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') || 'prefix';
+    } else if (pfxMode === 'alpha_short') {
+        prefix = sampleTags.alpha_short;
+    } else if (pfxMode === 'alpha_random_small') {
+        prefix = sampleTags.alpha_random_small;
+    } else if (pfxMode === 'random_three_chars') {
+        prefix = sampleTags.random_three_chars;
+    } else {
+        const FN = { pdf: 'document', png: 'image', jpeg: 'photo', jpg: 'photo', gif: 'image',
+            webp: 'image', tiff: 'image', docx: 'report', rtf: 'document', pptx: 'presentation',
+            xlsx: 'spreadsheet', txt: 'details', md: 'info', html: 'page' };
+        prefix = FN[fmt] || 'document';
+    }
+    prevEl.textContent = '→ ' + (sampleCode ? `${prefix}-${sampleCode}.${fmt}` : `${prefix}.${fmt}`);
+}
 const _US_FIRST = ['James', 'John', 'Robert', 'Michael', 'William', 'David', 'Richard', 'Joseph', 'Thomas', 'Charles', 'Mary', 'Patricia', 'Jennifer', 'Linda', 'Barbara', 'Elizabeth', 'Susan', 'Jessica', 'Sarah', 'Karen', 'Emily', 'Amanda', 'Stephanie', 'Rebecca', 'Laura'];
 const _US_LAST = ['Smith', 'Johnson', 'Williams', 'Brown', 'Jones', 'Garcia', 'Miller', 'Davis', 'Rodriguez', 'Martinez', 'Wilson', 'Anderson', 'Taylor', 'Thomas', 'Moore', 'Jackson', 'Thompson', 'White'];
 const _US_CITIES = [
@@ -1603,9 +1655,33 @@ async function getAttachmentData(context, recipientEmail, rowData, fromName) {
     };
     const fmtKey = format.toLowerCase().replace('.', '');
     const baseName = FORMAT_NAMES[fmtKey] || 'document';
+
+    // ── Determine attachment filename prefix ─────────────────────────────────
+    // Priority: custom tag input > prefix dropdown > format-based word
+    const pfxEl       = document.getElementById(context + 'AttachPrefix');
+    const customPfxEl = document.getElementById(context + 'AttachCustomPrefix');
+    const pfxMode     = pfxEl?.value || 'format';
+    const customPfxRaw= customPfxEl?.value?.trim() || '';
+    let attachPrefix;
+    if (pfxMode === 'custom' && customPfxRaw) {
+        // Build tag map for filename (fresh per email so tags like $alpha_short rotate)
+        const pfxTagMap = buildDollarTagMap(context, fromName);
+        if (recipientEmail) { pfxTagMap.email = recipientEmail; pfxTagMap.name = recipientEmail.split('@')[0]; }
+        if (rowData) Object.keys(rowData).forEach(k => { if (k) pfxTagMap[k] = String(rowData[k]); });
+        attachPrefix = applyDollarTags(customPfxRaw, pfxTagMap)
+            .replace(/[^a-zA-Z0-9_\-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') || baseName;
+    } else if (pfxMode === 'alpha_short') {
+        attachPrefix = _rndAlpha(4);
+    } else if (pfxMode === 'alpha_random_small') {
+        attachPrefix = _rndAlpha(6);
+    } else if (pfxMode === 'random_three_chars') {
+        attachPrefix = _rndAlphaNum(3);
+    } else {
+        attachPrefix = baseName;  // default: format-based word (document, image, etc.)
+    }
     // ALWAYS use the descriptive format-based name (never the HTML filename like 'invc')
     // This avoids spam filters recognizing recurring filenames
-    const buildName = (ext) => uniqueCode ? (baseName + '-' + uniqueCode + ext) : (baseName + ext);
+    const buildName = (ext) => uniqueCode ? (attachPrefix + '-' + uniqueCode + ext) : (attachPrefix + ext);
 
     // Apply $tag placeholders BEFORE rendering so they appear in the attachment
     const tagMap = buildDollarTagMap(context, fromName);
