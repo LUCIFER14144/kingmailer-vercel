@@ -474,22 +474,25 @@ def send_email_ses(aws_config, from_name, recipient, subject, html_body, attachm
         return {'success': False, 'error': str(e)}
 
 
-def send_email_ec2(ec2_url, smtp_config, from_name, recipient, subject, html_body, attachment=None):
+def send_email_ec2(ec2_url, smtp_config, from_name, recipient, subject, html_body, attachment=None, from_email=''):
     """Send email via EC2 relay — Vercel builds the full MIME message (all deliverability
-    tricks applied), then sends raw bytes to relay which just does sendmail() via EC2 IP.
-    This is the correct architecture: relay = dumb SMTP proxy, not an email builder."""
+    tricks applied), then sends raw bytes to relay which delivers via Postfix direct MX.
+    smtp_config is optional: when omitted the relay uses Postfix without Gmail credentials."""
     try:
-        if not smtp_config:
-            return {'success': False, 'error': 'No SMTP config for EC2 relay'}
-
-        smtp_user   = smtp_config.get('user', '')
+        # smtp_config is optional in Postfix/direct-MX mode — no SMTP creds needed
+        smtp_user = smtp_config.get('user', '') if smtp_config else (from_email or '')
         # Sanitize: treat 'KINGMAILER' as empty (legacy default, not a real name)
-        _cfg_sn = smtp_config.get('sender_name', '')
+        _cfg_sn = smtp_config.get('sender_name', '') if smtp_config else ''
         if _cfg_sn == 'KINGMAILER': _cfg_sn = ''
         sender_name = from_name if from_name and from_name != 'KINGMAILER' else _cfg_sn
-        from_header = _make_from_header(sender_name, smtp_user) if sender_name else smtp_user
+        if sender_name and smtp_user:
+            from_header = _make_from_header(sender_name, smtp_user)
+        elif smtp_user:
+            from_header = smtp_user
+        else:
+            from_header = sender_name or 'KINGMAILER Relay'
 
-        print(f'[EC2 RELAY] Building MIME msg for {recipient} (from: {from_header})') 
+        print(f'[EC2 RELAY] Building MIME msg for {recipient} (from: {from_header})')
 
         # ── Build the full deliverability-optimized MIME message on Vercel ──
         # _build_message now handles ALL attachment types internally
@@ -497,12 +500,15 @@ def send_email_ec2(ec2_url, smtp_config, from_name, recipient, subject, html_bod
 
         raw_b64 = base64.b64encode(msg.as_bytes()).decode('ascii')
 
-        # ── Send raw MIME bytes + SMTP creds to relay ────────────────────────
+        # Determine envelope from: use smtp_user if available, else extract from From header
+        _match = re.search(r'<([^>]+)>', from_header)
+        envelope_from = smtp_user or (_match.group(1) if _match else from_header) or 'noreply@postfix.relay'
+
+        # ── Send raw MIME bytes to relay (relay delivers via Postfix) ────────────
         payload = {
-            # New relay v8.0: detects type=raw and calls sendmail() with raw bytes
             'type':        'raw',
             'raw_email':   raw_b64,
-            'from_addr':   smtp_user,
+            'from_addr':   envelope_from,       # envelope From for Postfix -f flag
             'to_addr':     recipient,
             # Legacy relay fallback: old relay ignores type/raw_email and
             # reads these fields — prevents missing attachment on old relay instances
@@ -511,7 +517,7 @@ def send_email_ec2(ec2_url, smtp_config, from_name, recipient, subject, html_bod
             'subject':     subject,
             'html':        html_body,
             'attachment':  attachment,   # ← OLD relay needs this for attachments
-            'smtp_config': smtp_config,
+            'smtp_config': smtp_config,  # May be None; new relay ignores it
         }
         data = json.dumps(payload).encode('utf-8')
         req  = urllib.request.Request(ec2_url, data=data, method='POST')
@@ -677,7 +683,7 @@ class handler(BaseHTTPRequestHandler):
                         if ec2_ip and ec2_ip != 'N/A' and ec2_ip != 'Pending...':
                             relay_url = f'http://{ec2_ip}:3000/relay'
                             print(f'[EC2 RELAY] Connecting to {relay_url}')
-                            result = send_email_ec2(relay_url, smtp_config, _eff_name, recipient, subject, html_body, attachment)
+                            result = send_email_ec2(relay_url, smtp_config, _eff_name, recipient, subject, html_body, attachment, from_email=_cur_s_email)
                             if result['success']:
                                 result['via_ec2_ip'] = ec2_ip
                             else:

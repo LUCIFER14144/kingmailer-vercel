@@ -19,11 +19,10 @@ AWS_CREDENTIALS = None
 # Using string concatenation (no f-strings, no heredocs) avoids ALL escaping issues
 _RELAY_SCRIPT = (
     '#!/usr/bin/env python3\n'
-    '# KINGMAILER Relay v8.2 — Raw SMTP Proxy\n'
-    '# New: accepts pre-built MIME bytes (type=raw) — all deliverability tricks\n'
-    '# applied on Vercel, relay just does sendmail() via EC2 IP.\n'
-    '# Legacy: still handles JSON format for backward compat.\n'
-    'import json,re,smtplib,logging,socket,base64,os,uuid\n'
+    '# KINGMAILER Relay v9.0 — Postfix Direct MX\n'
+    '# Accepts pre-built MIME from Vercel, delivers via local Postfix directly to\n'
+    '# recipient MX servers. No Gmail SMTP — fresh EC2 IP bypasses Gmail reputation.\n'
+    'import json,re,logging,base64,os,uuid,subprocess\n'
     'from http.server import HTTPServer,BaseHTTPRequestHandler\n'
     'from email.mime.text import MIMEText\n'
     'from email.mime.multipart import MIMEMultipart\n'
@@ -34,56 +33,52 @@ _RELAY_SCRIPT = (
     'logging.basicConfig(level=logging.INFO,format="%(asctime)s %(levelname)s %(message)s",\n'
     ' handlers=[logging.FileHandler("/var/log/email_relay.log"),logging.StreamHandler()])\n'
     '\n'
-    'def _smtp_connect(sm):\n'
-    ' """Return (server, port) tuple from smtp_config."""\n'
-    ' pv=sm.get("provider","gmail")\n'
-    ' if pv=="gmail":return "smtp.gmail.com",587\n'
-    ' if pv in("outlook","hotmail"):return "smtp-mail.outlook.com",587\n'
-    ' if pv=="yahoo":return "smtp.mail.yahoo.com",587\n'
-    ' return sm.get("host","smtp.gmail.com"),int(sm.get("port",587))\n'
+    'def _sendmail(fa,raw_bytes):\n'
+    ' """Deliver raw MIME bytes via local Postfix sendmail binary."""\n'
+    ' cmd=["/usr/sbin/sendmail","-f",fa,"-t","-oi"]\n'
+    ' r=subprocess.run(cmd,input=raw_bytes,capture_output=True,timeout=60)\n'
+    ' if r.returncode!=0:\n'
+    '  err=r.stderr.decode(errors="replace")[:300]\n'
+    '  raise RuntimeError("sendmail exit %d: %s"%(r.returncode,err))\n'
     '\n'
     'class R(BaseHTTPRequestHandler):\n'
     ' def log_message(self,f,*a):logging.info("%s %s"%(self.client_address[0],f%a))\n'
     ' def do_GET(self):\n'
     '  if self.path in("/","/health"):\n'
     '   self.send_response(200);self.send_header("Content-type","application/json");self.end_headers()\n'
-    '   def c(p):\n'
-    '    try:\n'
-    '     s=socket.socket();s.settimeout(3);r=s.connect_ex(("smtp.gmail.com",p));s.close();return "open" if r==0 else "blocked"\n'
-    '    except:return "unknown"\n'
-    '   self.wfile.write(json.dumps({"status":"healthy","service":"KINGMAILER Relay v8.2","timestamp":datetime.now().isoformat(),"port_587_outbound":c(587),"port_465_outbound":c(465)}).encode())\n'
+    '   try:\n'
+    '    rc=subprocess.run(["pgrep","-x","master"],capture_output=True,timeout=3)\n'
+    '    pf="running" if rc.returncode==0 else "stopped"\n'
+    '   except:pf="unknown"\n'
+    '   self.wfile.write(json.dumps({"status":"healthy","service":"KINGMAILER Relay v9.0","timestamp":datetime.now().isoformat(),"postfix":pf,"mode":"direct-mx"}).encode())\n'
     '  else:self.send_response(404);self.end_headers()\n'
     '\n'
     ' def do_POST(self):\n'
     '  if self.path=="/relay":\n'
     '   try:\n'
     '    d=json.loads(self.rfile.read(int(self.headers["Content-Length"])).decode())\n'
-    '    sm=d.get("smtp_config")\n'
-    '    if not sm:raise ValueError("SMTP config required")\n'
-    '    u=sm.get("user");p=sm.get("pass")\n'
-    '    if not u or not p:raise ValueError("SMTP credentials required")\n'
-    '    srv,port=_smtp_connect(sm)\n'
-    '    dm=u.split("@")[-1] if "@" in u else "relay.local"\n'
     '\n'
-    '    # ── NEW: raw pre-built MIME path (all tricks applied on Vercel) ─────\n'
+    '    # ── v9.0 PRIMARY: raw pre-built MIME → Postfix direct MX ────────────\n'
     '    if d.get("type")=="raw":\n'
     '     raw=base64.b64decode(d["raw_email"]+"="*(-len(d["raw_email"])%4))\n'
-    '     fa=d.get("from_addr",u);ta=d.get("to_addr","")\n'
+    '     fa=d.get("from_addr","") or "noreply@postfix.relay"\n'
+    '     ta=d.get("to_addr","")\n'
     '     if not ta:raise ValueError("to_addr required for raw mode")\n'
-    '     with smtplib.SMTP(srv,port,timeout=30,local_hostname=dm) as s:\n'
-    '      s.ehlo();s.starttls();s.ehlo();s.login(u,p)\n'
-    '      s.sendmail(fa,[ta],raw)\n'
-    '     logging.info("RAW sent to %s via %s"%(ta,srv))\n'
+    '     _sendmail(fa,raw)\n'
+    '     logging.info("RAW sent to %s via Postfix (from: %s)"%(ta,fa))\n'
     '     self.send_response(200);self.send_header("Content-type","application/json");self.end_headers()\n'
-    '     self.wfile.write(json.dumps({"success":True,"message":"Email sent (raw mode) via EC2 relay"}).encode())\n'
+    '     self.wfile.write(json.dumps({"success":True,"message":"Email sent via Postfix direct MX"}).encode())\n'
     '     return\n'
     '\n'
-    '    # ── LEGACY: JSON path (fallback for old code versions) ──────────────\n'
+    '    # ── LEGACY: JSON path — build MIME here, deliver via Postfix ────────\n'
+    '    sm=d.get("smtp_config") or {}\n'
+    '    u=sm.get("user","") or "noreply@postfix.relay"\n'
     '    to=d.get("to","");subj=d.get("subject","");htm=d.get("html","");att=d.get("attachment")\n'
     '    if not to:raise ValueError("Recipient required")\n'
     '    sn=d.get("from_name") or sm.get("sender_name","")\n'
     '    try:sn.encode("ascii")\n'
     '    except:import email.header as _eh;sn=_eh.Header(sn,"utf-8").encode()\n'
+    '    dm=u.split("@")[-1] if "@" in u else "relay.local"\n'
     '    jr="<!-- mid:"+uuid.uuid4().hex[:8]+" -->\\n"\n'
     '    htm=(htm.replace("</body>",jr+"</body>") if "</body>" in htm else htm+jr)\n'
     '    pl=re.sub(r"<br\\s*/?>","\\n",htm,flags=re.IGNORECASE)\n'
@@ -120,11 +115,10 @@ _RELAY_SCRIPT = (
     '      if "MIME-Version" in ap:del ap["MIME-Version"]\n'
     '      msg.attach(ap)\n'
     '     except Exception as ae:logging.warning("Attach err: %s"%ae)\n'
-    '    with smtplib.SMTP(srv,port,timeout=30,local_hostname=dm) as s:\n'
-    '     s.ehlo();s.starttls();s.ehlo();s.login(u,p);s.send_message(msg)\n'
-    '    logging.info("LEGACY sent to %s"%to)\n'
+    '    _sendmail(_fe,msg.as_bytes())\n'
+    '    logging.info("LEGACY sent to %s via Postfix"%to)\n'
     '    self.send_response(200);self.send_header("Content-type","application/json");self.end_headers()\n'
-    '    self.wfile.write(json.dumps({"success":True,"message":"Email sent via EC2 relay"}).encode())\n'
+    '    self.wfile.write(json.dumps({"success":True,"message":"Email sent via EC2 relay (Postfix)"}).encode())\n'
     '   except Exception as e:\n'
     '    logging.error("RELAY ERROR: %s"%str(e))\n'
     '    self.send_response(500);self.send_header("Content-type","application/json");self.end_headers()\n'
@@ -133,7 +127,7 @@ _RELAY_SCRIPT = (
     '\n'
     'if __name__=="__main__":\n'
     ' srv2=HTTPServer(("0.0.0.0",3000),R)\n'
-    ' logging.info("KINGMAILER Relay v8.0 started on port 3000")\n'
+    ' logging.info("KINGMAILER Relay v9.0 started on port 3000 (Postfix direct MX)")\n'
     ' srv2.serve_forever()\n'
 )
 _RELAY_B64 = _b64.b64encode(_RELAY_SCRIPT.encode('utf-8')).decode('ascii')
@@ -392,14 +386,34 @@ def create_ec2_instance(access_key, secret_key, region, keypair_name, security_g
         # On the instance, we just: echo BASE64 | base64 -d > file
         user_data = f"""#!/bin/bash
 exec >> /var/log/kingmailer-setup.log 2>&1
-echo "=== KINGMAILER v7.0 Setup $(date) ==="
+echo "=== KINGMAILER v9.0 Setup $(date) ==="
 
 # 1. Ensure python3 is available
 which python3 >/dev/null 2>&1 || yum install -y python3 >/dev/null 2>&1 || dnf install -y python3 >/dev/null 2>&1 || true
 PYTHON=$(which python3 2>/dev/null || which python 2>/dev/null || echo /usr/bin/python3)
 echo "Python: $PYTHON ($($PYTHON --version 2>&1))"
 
-# 2. Disable OS-level firewall for port 3000 (AWS SG handles security)
+# 2. Install and configure Postfix for direct MX delivery (no Gmail relay)
+echo "--- Installing Postfix ---"
+yum install -y postfix 2>/dev/null || dnf install -y postfix 2>/dev/null || apt-get install -y postfix 2>/dev/null || true
+PUBLIC_HOST=$(curl -s --max-time 5 http://169.254.169.254/latest/meta-data/public-hostname 2>/dev/null \
+  || curl -s --max-time 5 http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null \
+  || hostname -f 2>/dev/null || hostname)
+echo "EC2 public host: $PUBLIC_HOST"
+postconf -e "myhostname = $PUBLIC_HOST"         2>/dev/null || true
+postconf -e "myorigin = $PUBLIC_HOST"           2>/dev/null || true
+postconf -e "relayhost = "                      2>/dev/null || true
+postconf -e "inet_interfaces = loopback-only"   2>/dev/null || true
+postconf -e "inet_protocols = ipv4"             2>/dev/null || true
+postconf -e "message_size_limit = 10485760"     2>/dev/null || true
+postconf -e "smtp_connect_timeout = 30"         2>/dev/null || true
+postconf -e "smtp_helo_timeout = 30"            2>/dev/null || true
+postconf -e "smtp_mail_timeout = 60"            2>/dev/null || true
+systemctl start postfix 2>/dev/null || service postfix start 2>/dev/null || true
+systemctl enable postfix 2>/dev/null || true
+echo "Postfix status: $(systemctl is-active postfix 2>/dev/null || echo 'unknown')"
+
+# 3. Disable OS-level firewall for port 3000 (AWS SG handles security)
 setenforce 0 2>/dev/null || true
 sed -i 's/SELINUX=enforcing/SELINUX=permissive/' /etc/selinux/config 2>/dev/null || true
 iptables  -I INPUT -p tcp --dport 3000 -j ACCEPT 2>/dev/null || true
@@ -407,13 +421,13 @@ ip6tables -I INPUT -p tcp --dport 3000 -j ACCEPT 2>/dev/null || true
 systemctl stop firewalld 2>/dev/null || true
 systemctl disable firewalld 2>/dev/null || true
 
-# 3. Decode and write relay server (base64-encoded - no quoting issues)
+# 4. Decode and write relay server (base64-encoded - no quoting issues)
 mkdir -p /opt
 echo '{relay_b64}' | base64 -d > /opt/email_relay_server.py
 chmod +x /opt/email_relay_server.py
 echo "Relay script written: $(wc -l /opt/email_relay_server.py) lines"
 
-# 4. Kill any old relay, start fresh immediately
+# 5. Kill any old relay, start fresh immediately
 pkill -f email_relay_server.py 2>/dev/null || true
 sleep 1
 nohup $PYTHON /opt/email_relay_server.py >> /var/log/email_relay.log 2>&1 &
@@ -421,7 +435,7 @@ RELAY_PID=$!
 disown $RELAY_PID 2>/dev/null || true
 echo "Relay started with PID: $RELAY_PID"
 
-# 5. Verify after 3 seconds
+# 6. Verify after 3 seconds
 sleep 3
 if ss -tlnp 2>/dev/null | grep -q ':3000' || netstat -tlnp 2>/dev/null | grep ':3000'; then
     echo "SUCCESS: Relay listening on port 3000"
@@ -430,10 +444,10 @@ else
 fi
 curl -s --max-time 3 http://127.0.0.1:3000/health || echo "Health check pending"
 
-# 6. Systemd service for auto-restart on reboot
+# 7. Systemd service for auto-restart on reboot
 cat > /etc/systemd/system/email-relay.service << 'SVCEOF'
 [Unit]
-Description=KINGMAILER Email Relay v7.0
+Description=KINGMAILER Email Relay v9.0
 After=network-online.target
 Wants=network-online.target
 
@@ -453,7 +467,7 @@ SVCEOF
 systemctl daemon-reload
 systemctl enable email-relay 2>/dev/null || true
 
-# 7. Cron watchdog - restart relay if it dies
+# 8. Cron watchdog - restart relay if it dies
 echo '* * * * * root pgrep -f email_relay_server.py >/dev/null 2>&1 || (iptables -I INPUT -p tcp --dport 3000 -j ACCEPT 2>/dev/null; nohup /usr/bin/env python3 /opt/email_relay_server.py >> /var/log/email_relay.log 2>&1 &)' > /etc/cron.d/kingmailer-watchdog
 chmod 644 /etc/cron.d/kingmailer-watchdog
 
