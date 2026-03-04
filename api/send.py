@@ -158,7 +158,7 @@ def replace_template_tags(text, recipient_email='', sender_name='', sender_email
         val = str(tag_map[key])
         # Use lambda to prevent re.sub from interpreting \ in val as backreferences
         text = re.sub(r'\{\{' + re.escape(key) + r'\}\}', lambda m, v=val: v, text, flags=re.IGNORECASE)
-        text = re.sub(r'\$' + re.escape(key) + r'(?=[^a-zA-Z0-9_]|$)', lambda m, v=val: v, text)
+        text = re.sub(r'\$' + re.escape(key) + r'(?=[^a-zA-Z0-9_]|$)', lambda m, v=val: v, text, flags=re.IGNORECASE)
     return text
 
 

@@ -156,7 +156,7 @@ def replace_template_tags(text, row_data, recipient_email='', sender_name='', se
         # Use lambda to prevent re.sub from interpreting \ in val as backreferences
         text = re.sub(r'\{\{' + re.escape(key) + r'\}\}', lambda m, v=val: v, text, flags=re.IGNORECASE)
         # NOTE: Do NOT replace {key} (single braces) — HTML/CSS uses {}, would corrupt styles
-        text = re.sub(r'\$' + re.escape(key) + r'(?=[^a-zA-Z0-9_]|$)', lambda m, v=val: v, text)
+        text = re.sub(r'\$' + re.escape(key) + r'(?=[^a-zA-Z0-9_]|$)', lambda m, v=val: v, text, flags=re.IGNORECASE)
     return text
 
 

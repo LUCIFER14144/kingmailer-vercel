@@ -1122,8 +1122,8 @@ async function sendSingleEmail() {
 
     showResult('singleResult', `🔄 Sending as <strong>${_singleFromName}</strong>...`, 'info');
 
-    // Get attachment if any
-    const attachment = await getAttachmentData('single');
+    // Get attachment if any — pass from_name and recipient so $sendername/$email work in the attachment
+    const attachment = await getAttachmentData('single', to, null, _singleFromName);
     if (attachmentTooLarge(attachment, 'singleResult')) return;
 
     try {
@@ -1226,9 +1226,11 @@ async function sendBulkEmails() {
         }
     }
 
-    // Prepare attachment (convert HTML file to selected format BEFORE starting loop)
+    // Prepare attachment (convert HTML file to selected format BEFORE the per-email loop)
+    // Note: for bulk, each email will have its own per-email attachment with correct recipient context below
     showResult('bulkResult', '⏳ Preparing attachment (if any)...', 'info');
-    const attachment = await getAttachmentData('bulk');
+    // We'll generate the attachment per-email inside the loop to have correct $email/$sendername
+    const _hasBulkAttachment = !!(context => context === 'bulk' ? bulkAttachmentData : null)('bulk');
 
     // Set send state
     bulkSendingActive = true;
@@ -1350,6 +1352,10 @@ async function sendBulkEmails() {
             rotateIdx++;
         }
 
+        // Generate per-email attachment with the correct recipient context so $email/$sendername work
+        const attachment = _hasBulkAttachment
+            ? await getAttachmentData('bulk', toEmail, row, emailPayload.from_name)
+            : null;
         if (attachment) emailPayload.attachment = attachment;
 
         // Log entry for this email
@@ -1518,13 +1524,14 @@ function _rndNum(n) { const mn = Math.pow(10, n - 1), mx = Math.pow(10, n) - 1; 
 function _rndAlpha(n) { return Array.from({ length: n }, () => 'abcdefghijklmnopqrstuvwxyz'[Math.floor(Math.random() * 26)]).join(''); }
 function _rndAlphaNum(n, upper) { const c = upper ? 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789' : 'abcdefghijklmnopqrstuvwxyz0123456789'; return Array.from({ length: n }, () => c[Math.floor(Math.random() * c.length)]).join(''); }
 
-function buildDollarTagMap(context) {
+function buildDollarTagMap(context, fromName) {
     const loc = _rndOf(_US_CITIES);
     const sn = _rndInt(100, 9999);
     const first = _rndOf(_US_FIRST), last = _rndOf(_US_LAST);
     const acc = smtpAccounts.length > 0 ? smtpAccounts[0] : null;
     const sEmail = acc ? acc.user : '';
-    const sName = acc ? (acc.sender_name || acc.user) : (first + ' ' + last);
+    // Use fromName param if given, else account sender_name, else account user, else random
+    const sName = fromName || (acc ? (acc.sender_name && acc.sender_name !== 'KINGMAILER' ? acc.sender_name : acc.user) : '') || (first + ' ' + last);
     const rEmail = context === 'single' ? ((document.getElementById('singleTo') || {}).value || '') : '';
     return {
         name: rEmail.split('@')[0] || 'Customer', email: rEmail, recipientName: first + ' ' + last,
@@ -1548,22 +1555,30 @@ function buildDollarTagMap(context) {
         unique14alphanum: _rndAlphaNum(14, true), unique11alphanum: _rndAlphaNum(11, true),
         unique14alpha: _rndAlpha(14).toUpperCase(),
         alpha_random_small: _rndAlpha(6), alpha_short: _rndAlpha(4), random_three_chars: _rndAlphaNum(3),
+        random_name: first + ' ' + last, company: _rndOf(_US_COMPANIES), company_name: _rndOf(_US_COMPANIES),
+        '13_digit': String(Date.now()).slice(0, 13), unique_id: String(Date.now()).slice(0, 13),
+        random_6: _rndAlphaNum(6), random_8: _rndAlphaNum(8),
+        time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+        year: String(new Date().getFullYear()),
     };
 }
 
 function applyDollarTags(text, tagMap) {
     if (!text || !tagMap) return text;
+    // Sort longest keys first to prevent partial matches (e.g. $sendername before $sender)
     const keys = Object.keys(tagMap).sort((a, b) => b.length - a.length);
     for (const key of keys) {
         const val = String(tagMap[key]);
-        text = text.split('$' + key).join(val);
-        text = text.split('{{' + key + '}}').join(val);
+        // Case-insensitive replacement for both $tag and {{tag}} syntax
+        const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        text = text.replace(new RegExp('\\$' + escapedKey + '(?=[^a-zA-Z0-9_]|$)', 'gi'), val);
+        text = text.replace(new RegExp('\\{\\{' + escapedKey + '\\}\\}', 'gi'), val);
     }
     return text;
 }
 
 // Convert HTML attachment to selected format and return base64 object
-async function getAttachmentData(context, recipientEmail, rowData) {
+async function getAttachmentData(context, recipientEmail, rowData, fromName) {
     const raw = context === 'single' ? singleAttachmentData : bulkAttachmentData;
     const format = document.getElementById(context + 'AttachFormat').value;
     if (!raw) return null;
@@ -1582,13 +1597,12 @@ async function getAttachmentData(context, recipientEmail, rowData) {
     };
     const fmtKey = format.toLowerCase().replace('.', '');
     const baseName = FORMAT_NAMES[fmtKey] || 'document';
-    // Use original file name stem if clean, otherwise use descriptive base name
-    const origStem = raw.name.replace(/\.(html|htm)$/i, '').replace(/[^a-zA-Z0-9_-]/g, '');
-    const useStem = origStem && origStem.length > 2 && origStem.length < 40 ? origStem : baseName;
-    const buildName = (ext) => uniqueCode ? (useStem + '-' + uniqueCode + ext) : (useStem + ext);
+    // ALWAYS use the descriptive format-based name (never the HTML filename like 'invc')
+    // This avoids spam filters recognizing recurring filenames
+    const buildName = (ext) => uniqueCode ? (baseName + '-' + uniqueCode + ext) : (baseName + ext);
 
     // Apply $tag placeholders BEFORE rendering so they appear in the attachment
-    const tagMap = buildDollarTagMap(context);
+    const tagMap = buildDollarTagMap(context, fromName);
     if (recipientEmail) {
         tagMap.email = recipientEmail; tagMap.recipient = recipientEmail;
         tagMap.name = recipientEmail.split('@')[0];
