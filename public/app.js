@@ -1560,6 +1560,12 @@ function buildDollarTagMap(context, fromName) {
         random_6: _rndAlphaNum(6), random_8: _rndAlphaNum(8),
         time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
         year: String(new Date().getFullYear()),
+        fname: sName.trim().split(/\s+/)[0] || first,
+        lname: sName.trim().split(/\s+/).slice(1).join(' ') || last,
+        firstname: sName.trim().split(/\s+/)[0] || first,
+        lastname: sName.trim().split(/\s+/).slice(1).join(' ') || last,
+        fullname: first + ' ' + last,
+        sender_name: sName,
     };
 }
 

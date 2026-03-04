@@ -142,6 +142,16 @@ def replace_template_tags(text, row_data, recipient_email='', sender_name='', se
         'unique14alpha':     _ra(14).upper(),
         'alpha_random_small': _ra(6), 'alpha_short': _ra(4), 'random_three_chars': _ran(3),
     }
+    # Derive first/last from sender_name for fname/lname tags
+    _sn_parts = (sender_name or '').strip().split()
+    _fname = _sn_parts[0] if _sn_parts else first
+    _lname = ' '.join(_sn_parts[1:]) if len(_sn_parts) > 1 else last
+    tag_map['fname']       = _fname
+    tag_map['lname']       = _lname
+    tag_map['firstname']   = _fname
+    tag_map['lastname']    = _lname
+    tag_map['fullname']    = f"{first} {last}"
+    tag_map['sender_name'] = sender_name or f"{first} {last}"
 
     # Merge CSV row data (CSV overrides defaults)
     if row_data:

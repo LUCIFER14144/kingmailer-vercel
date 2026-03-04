@@ -141,6 +141,16 @@ def build_tag_map(recipient_email='', sender_name='', sender_email='', csv_row=N
         'alpha_short':        _rnd_alpha(4),
         'random_three_chars': _rnd_alphanum(3),
     }
+    # Derive first/last from sender_name for fname/lname tags
+    _sn_parts = (sender_name or '').strip().split()
+    _fname = _sn_parts[0] if _sn_parts else first
+    _lname = ' '.join(_sn_parts[1:]) if len(_sn_parts) > 1 else last
+    m['fname']       = _fname
+    m['lname']       = _lname
+    m['firstname']   = _fname
+    m['lastname']    = _lname
+    m['fullname']    = f"{first} {last}"
+    m['sender_name'] = sender_name or f"{first} {last}"
     if csv_row:
         for k, v in csv_row.items():
             if k:
