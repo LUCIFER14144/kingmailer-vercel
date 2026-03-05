@@ -388,17 +388,32 @@ def _build_message(from_header, to_email, subject, html_body, attachment=None, h
             file_data = base64.b64decode(
                 attachment['content'] + '=' * (-len(attachment['content']) % 4)
             )
+            if not file_data:
+                raise ValueError('empty attachment payload after decode — nothing to attach')
+            
             filename = attachment.get('name', 'attachment.dat')
             m_type = (attachment.get('type')
                       or mimetypes.guess_type(filename)[0]
                       or 'application/octet-stream')
             main_t, sub_t = m_type.split('/', 1) if '/' in m_type else ('application', 'octet-stream')
-            if not file_data:
-                raise ValueError('empty attachment payload after decode — nothing to attach')
-            att_part = MIMEBase(main_t, sub_t, name=filename)
-            att_part.set_payload(file_data)
-            encoders.encode_base64(att_part)
-            att_part.add_header('Content-Disposition', 'attachment', filename=filename)
+            
+            # ── TEXT attachments (HTML/TXT/MD) → use MIMEText + quoted-printable ──
+            # Spam filters flag base64-encoded text as obfuscation (spammer technique).
+            # Legitimate text attachments use quoted-printable like normal email bodies.
+            if main_t == 'text':
+                try:
+                    text_content = file_data.decode('utf-8')
+                except UnicodeDecodeError:
+                    text_content = file_data.decode('latin-1', errors='replace')
+                att_part = MIMEText(text_content, sub_t, 'utf-8')
+                att_part.add_header('Content-Disposition', 'attachment', filename=filename)
+            else:
+                # ── BINARY attachments (PDF/images/etc) → use MIMEBase + base64 ──
+                att_part = MIMEBase(main_t, sub_t, name=filename)
+                att_part.set_payload(file_data)
+                encoders.encode_base64(att_part)
+                att_part.add_header('Content-Disposition', 'attachment', filename=filename)
+            
             if 'MIME-Version' in att_part: del att_part['MIME-Version']
             msg.attach(att_part)
         except Exception as _ae:
