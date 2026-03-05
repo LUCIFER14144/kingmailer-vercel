@@ -1135,6 +1135,10 @@ async function sendSingleEmail() {
     });
 
     try {
+        // When inlineCid is true, pass attachment with inline_cid flag so backend uses multipart/related
+        const _singleAttachPayload = singleInlineResult.inlineCid 
+            ? { ...attachment, inline_cid: true }
+            : (singleInlineResult.sendAttachmentSeparately ? attachment : null);
         const data = await safeFetchJson('/api/send', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -1145,7 +1149,7 @@ async function sendSingleEmail() {
                 method: method,
                 from_name: _singleFromName,
                 header_opts: getHeaderOpts('single'),
-                attachment: singleInlineResult.sendAttachmentSeparately ? attachment : null,
+                attachment: _singleAttachPayload,
                 ...config
             })
         });
@@ -1375,7 +1379,10 @@ async function sendBulkEmails() {
         });
         
         emailPayload.html = bulkInlineResult.html;
-        emailPayload.attachment = bulkInlineResult.sendAttachmentSeparately ? attachment : null;
+        // When inlineCid is true, pass attachment with inline_cid flag so backend uses multipart/related
+        emailPayload.attachment = bulkInlineResult.inlineCid
+            ? { ...attachment, inline_cid: true }
+            : (bulkInlineResult.sendAttachmentSeparately ? attachment : null);
         // Inject header options from the toggle panel
         emailPayload.header_opts = getHeaderOpts('bulk');
 
@@ -1897,88 +1904,92 @@ function buildInlineEmailHtml(baseHtml, attachment, opts) {
         html = html.replace('</html>', '</body></html>');
     }
     
-    let previewHtml = '';
-    let inlineAttachmentHtml = '';
+    let insertHtml = '';
+    let sendAttachmentSeparately = (attachmentMode === 'download');
+    let inlineCid = false;
     
-    // Mode 1: 'inline' - embed attachment directly in body (no separate MIME part)
-    if (attachmentMode === 'inline' && attachment) {
-        try {
-            if (attachment.type.startsWith('image/') || attachment.type === 'application/pdf') {
-                const dataUrl = `data:${attachment.type};base64,${attachment.content}`;
-                inlineAttachmentHtml = `<div style="max-width:760px;margin:20px auto;text-align:center;padding:16px;background:#f9f9f9;border-radius:8px;">
-                    <img src="${dataUrl}" style="max-width:100%;height:auto;border-radius:6px;box-shadow:0 2px 8px rgba(0,0,0,0.1);" alt="Attached image">
-                </div>`;
-            } else if (attachment.type.startsWith('text/')) {
-                let decodedText = '';
+    if (!attachment) {
+        return { html, sendAttachmentSeparately, inlineCid };
+    }
+    
+    // ── INLINE mode: content becomes part of the email body ──────────────────
+    if (attachmentMode === 'inline') {
+        sendAttachmentSeparately = false;
+        
+        if (attachment.type === 'text/html') {
+            // Decode the HTML file and inject its body content directly — properly rendered, centered
+            try {
+                let decoded = '';
                 try {
-                    decodedText = atob(attachment.content);
-                } catch (_) {
-                    const bytes = Uint8Array.from(atob(attachment.content.replace(/\s/g, '')), c => c.charCodeAt(0));
-                    decodedText = new TextDecoder().decode(bytes);
-                }
-                const escaped = decodedText
-                    .replace(/&/g, '&amp;')
-                    .replace(/</g, '&lt;')
-                    .replace(/>/g, '&gt;')
-                    .replace(/"/g, '&quot;')
-                    .replace(/'/g, '&#39;');
-                const truncated = escaped.slice(0, 6000);
-                inlineAttachmentHtml = `<div style="max-width:760px;margin:20px auto;padding:16px;background:#f5f5f5;border-radius:8px;border-left:4px solid #667eea;">
-                    <pre style="margin:0;font-family:monospace;font-size:12px;white-space:pre-wrap;word-wrap:break-word;color:#333;">${truncated}</pre>
-                </div>`;
-            }
-        } catch (e) {
-            console.error('Inline attachment error:', e);
-        }
-    }
-    
-    // Mode 2: Show preview when 'embed visual' is ON (separate from main attachment)
-    if (embedVisual && attachment && attachmentMode !== 'inline') {
-        try {
-            if (attachment.type.startsWith('text/')) {
-                let decodedText = '';
+                    const b = Uint8Array.from(atob(attachment.content), c => c.charCodeAt(0));
+                    decoded = new TextDecoder().decode(b);
+                } catch (_) { decoded = atob(attachment.content); }
+                // Extract inner body content (strip outer html/head/body tags)
+                const bodyM = decoded.match(/<body[^>]*>([\s\S]*)<\/body>/i);
+                const bodyContent = bodyM ? bodyM[1] : decoded;
+                insertHtml = `<div style="max-width:760px;margin:0 auto;width:100%;">${bodyContent}</div>`;
+            } catch (e) { console.error('HTML inline error:', e); }
+        
+        } else if (attachment.type.startsWith('text/')) {
+            // Plain text / Markdown / etc — show as <pre>
+            try {
+                let decoded = '';
                 try {
-                    decodedText = atob(attachment.content);
-                } catch (_) {
-                    const bytes = Uint8Array.from(atob(attachment.content.replace(/\s/g, '')), c => c.charCodeAt(0));
-                    decodedText = new TextDecoder().decode(bytes);
-                }
-                const escaped = decodedText
-                    .replace(/&/g, '&amp;')
-                    .replace(/</g, '&lt;')
-                    .replace(/>/g, '&gt;')
-                    .replace(/"/g, '&quot;')
-                    .replace(/'/g, '&#39;');
-                const truncated = escaped.slice(0, 6000);
-                previewHtml = `<div style="max-width:760px;margin:20px auto;padding:16px;background:#f5f5f5;border-radius:8px;border-left:4px solid #667eea;">
-                    <pre style="margin:0;font-family:monospace;font-size:12px;white-space:pre-wrap;word-wrap:break-word;color:#333;">${truncated}</pre>
+                    const b = Uint8Array.from(atob(attachment.content), c => c.charCodeAt(0));
+                    decoded = new TextDecoder().decode(b);
+                } catch (_) { decoded = atob(attachment.content); }
+                const esc = decoded.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+                insertHtml = `<div style="max-width:760px;margin:20px auto;padding:16px;background:#f5f5f5;border-radius:8px;border-left:4px solid #667eea;">
+                    <pre style="margin:0;font-family:monospace;font-size:12px;white-space:pre-wrap;word-wrap:break-word;color:#333;">${esc.slice(0, 4000)}</pre>
                 </div>`;
-            } else if (attachment.type.startsWith('image/') || attachment.type === 'application/pdf') {
-                const dataUrl = `data:${attachment.type};base64,${attachment.content}`;
-                previewHtml = `<div style="max-width:760px;margin:20px auto;text-align:center;padding:16px;background:#f9f9f9;border-radius:8px;">
-                    <img src="${dataUrl}" style="max-width:100%;height:auto;border-radius:6px;box-shadow:0 2px 8px rgba(0,0,0,0.1);" alt="Preview">
-                </div>`;
-            }
-        } catch (e) {
-            console.error('Preview error:', e);
+            } catch (e) { console.error('Text inline error:', e); }
+        
+        } else if (attachment.type.startsWith('image/')) {
+            // Image: use CID — Gmail blocks data: URIs, CID is the correct email standard
+            // The backend will embed this as a multipart/related MIME part
+            inlineCid = true;
+            insertHtml = `<div style="max-width:760px;margin:20px auto;text-align:center;">
+                <img src="cid:${attachment.name}" style="max-width:100%;height:auto;border-radius:6px;display:block;margin:0 auto;" alt="">
+            </div>`;
+        
+        } else {
+            // PDF / DOCX / other non-inlineable types — send as download, no body embed
+            sendAttachmentSeparately = true;
         }
     }
     
-    // Insert content to body
-    const bodyMatch = html.match(/<body[^>]*>/i);
-    if (bodyMatch) {
-        const bodyEndIdx = html.indexOf(bodyMatch[0]) + bodyMatch[0].length;
-        let contentToInsert = (inlineAttachmentHtml || previewHtml);
-        if (contentToInsert) {
-            html = html.slice(0, bodyEndIdx) + contentToInsert + html.slice(bodyEndIdx);
+    // ── DOWNLOAD mode + embedVisual: add a small preview in the body ─────────
+    if (attachmentMode === 'download' && embedVisual) {
+        if (attachment.type === 'text/plain' || attachment.type === 'text/markdown') {
+            // TXT/MD: tiny excerpt in <pre> — strictly limited to prevent clipping
+            try {
+                let decoded = '';
+                try {
+                    const b = Uint8Array.from(atob(attachment.content), c => c.charCodeAt(0));
+                    decoded = new TextDecoder().decode(b);
+                } catch (_) { decoded = atob(attachment.content); }
+                const esc = decoded.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+                insertHtml = `<div style="max-width:760px;margin:20px auto;padding:12px;background:#f5f5f5;border-radius:6px;border-left:3px solid #667eea;">
+                    <pre style="margin:0;font-family:monospace;font-size:11px;white-space:pre-wrap;word-wrap:break-word;color:#555;">${esc.slice(0, 800)}</pre>
+                </div>`;
+            } catch (e) { /* skip preview on error */ }
+        }
+        // For text/html, image, pdf — do NOT add a preview to the body
+        // (HTML source is ugly as escaped text; data: URIs are Gmail-blocked; PDF can't render inline)
+    }
+    
+    // Inject any insert HTML after <body> tag
+    if (insertHtml) {
+        const bodyMatch = html.match(/<body[^>]*>/i);
+        if (bodyMatch) {
+            const idx = html.indexOf(bodyMatch[0]) + bodyMatch[0].length;
+            html = html.slice(0, idx) + insertHtml + html.slice(idx);
+        } else {
+            html += insertHtml;
         }
     }
     
-    // Return: html and whether to send attachment separately
-    return { 
-        html: html,
-        sendAttachmentSeparately: attachmentMode === 'download'
-    };
+    return { html, sendAttachmentSeparately, inlineCid };
 }
 
 // Safe fetch: always returns a parsed object even if server sends non-JSON (413, 502, etc.)

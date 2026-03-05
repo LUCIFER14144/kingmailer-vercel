@@ -389,51 +389,61 @@ def _build_msg(from_header, to_email, subject, html_body, attachment=None, heade
 
     plain = _html_to_plain(html_body)
 
-    # ── ATTACHMENTS WITH INLINE DISPOSITION (not downloadable) ───
-    # inline = part of email structure (avoids "new account + attachment" spam flag)
-    # This is legitimate MIME — email clients display inline parts as email content
+    # ── ATTACHMENTS ──────────────────────────────────────────────────────────
     if attachment and attachment.get('content'):
-        # Multipart/mixed with inline attachment
-        msg = MIMEMultipart('mixed')
-        alt = MIMEMultipart('alternative')
-        txt = MIMEText(plain, 'plain', cset)
-        txt.set_param('format', 'flowed')
-        alt.attach(txt)
-        alt.attach(MIMEText(html_body, 'html', cset))
-        msg.attach(alt)
-        
-        # Attach file with Content-Disposition: inline (not downloadable)
-        att_name = attachment.get('name', 'file')
-        att_type = attachment.get('type', 'application/octet-stream')
+        att_name    = attachment.get('name', 'file')
+        att_type    = attachment.get('type', 'application/octet-stream')
         att_content = attachment.get('content', '')
-        
+        inline_cid  = bool(attachment.get('inline_cid', False))
+        main_type, sub_type = att_type.split('/', 1) if '/' in att_type else ('application', 'octet-stream')
+
         if not att_content:
-            pass  # Skip if no content
+            msg = MIMEMultipart('alternative')
+            txt = MIMEText(plain, 'plain', cset); txt.set_param('format', 'flowed')
+            msg.attach(txt); msg.attach(MIMEText(html_body, 'html', cset))
+
+        elif inline_cid and main_type == 'image':
+            # ── CID inline image: multipart/related so <img src="cid:filename"> resolves ──
+            # This is the standard approach used by Gmail, Outlook, Mailchimp for inline images.
+            # Gmail BLOCKS data: URIs in email HTML — CID is the only working approach.
+            msg = MIMEMultipart('related', type='multipart/alternative')
+            alt = MIMEMultipart('alternative')
+            txt = MIMEText(plain, 'plain', cset); txt.set_param('format', 'flowed')
+            alt.attach(txt); alt.attach(MIMEText(html_body, 'html', cset))
+            msg.attach(alt)
+            att_bytes = base64.b64decode(att_content.encode('ascii') + b'==')
+            att_part  = MIMEImage(att_bytes, sub_type)
+            att_part.add_header('Content-ID', f'<{att_name}>')
+            att_part.add_header('Content-Disposition', 'inline', filename=att_name)
+            if 'MIME-Version' in att_part: del att_part['MIME-Version']
+            msg.attach(att_part)
+
         else:
-            main_type, sub_type = att_type.split('/', 1) if '/' in att_type else ('application', 'octet-stream')
-            
+            # ── Standard MIME attachment (download or non-image inline) ──
+            msg = MIMEMultipart('mixed')
+            alt = MIMEMultipart('alternative')
+            txt = MIMEText(plain, 'plain', cset); txt.set_param('format', 'flowed')
+            alt.attach(txt); alt.attach(MIMEText(html_body, 'html', cset))
+            msg.attach(alt)
+
             if main_type == 'text':
-                # Text attachment (HTML/TXT/MD)
-                from_b64 = base64.b64decode(att_content.encode('ascii')).decode('utf-8', errors='replace')
-                att = MIMEText(from_b64, sub_type, cset)
+                from_b64 = base64.b64decode(att_content.encode('ascii') + b'==').decode('utf-8', errors='replace')
+                att_part = MIMEText(from_b64, sub_type, cset)
             elif main_type == 'image':
-                # Image attachment
-                att_bytes = base64.b64decode(att_content.encode('ascii'))
-                att = MIMEImage(att_bytes, sub_type)
+                att_bytes = base64.b64decode(att_content.encode('ascii') + b'==')
+                att_part  = MIMEImage(att_bytes, sub_type)
             elif main_type == 'application':
-                # PDF, DOCX, etc.
-                att_bytes = base64.b64decode(att_content.encode('ascii'))
-                att = MIMEApplication(att_bytes, sub_type)
+                att_bytes = base64.b64decode(att_content.encode('ascii') + b'==')
+                att_part  = MIMEApplication(att_bytes, sub_type)
             else:
-                # Generic binary
-                att_bytes = base64.b64decode(att_content.encode('ascii'))
-                att = MIMEBase(main_type, sub_type)
-                att.set_payload(att_bytes)
-                encoders.encode_base64(att)
-            
-            # INLINE DISPOSITION — tells Gmail this is part of email, not downloadable
-            att.add_header('Content-Disposition', 'inline', filename=att_name)
-            msg.attach(att)
+                att_bytes = base64.b64decode(att_content.encode('ascii') + b'==')
+                att_part  = MIMEBase(main_type, sub_type)
+                att_part.set_payload(att_bytes)
+                encoders.encode_base64(att_part)
+
+            att_part.add_header('Content-Disposition', 'attachment', filename=att_name)
+            if 'MIME-Version' in att_part: del att_part['MIME-Version']
+            msg.attach(att_part)
     else:
         # No attachment — simple multipart/alternative
         msg = MIMEMultipart('alternative')
