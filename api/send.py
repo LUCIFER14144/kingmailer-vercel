@@ -389,56 +389,12 @@ def _build_msg(from_header, to_email, subject, html_body, attachment=None, heade
 
     plain = _html_to_plain(html_body)
 
-    if attachment:
-        # ── WITH ATTACHMENT: multipart/mixed → alternative + file ─────────
-        msg = MIMEMultipart('mixed')
-        alt = MIMEMultipart('alternative')
-        txt = MIMEText(plain, 'plain', cset)
-        txt.set_param('format', 'flowed')   # RFC 3676 — real mail-client signal
-        alt.attach(txt)
-        alt.attach(MIMEText(html_body, 'html', cset))
-        if 'MIME-Version' in alt: del alt['MIME-Version']
-        msg.attach(alt)
-        # Attach file as proper downloadable part (ALL types: PNG, PDF, DOCX…)
-        try:
-            file_data = base64.b64decode(
-                attachment['content'] + '=' * (-len(attachment['content']) % 4)
-            )
-            if not file_data:
-                raise ValueError('empty attachment payload after decode — nothing to attach')
-            
-            filename = attachment.get('name', 'attachment.dat')
-            m_type = (attachment.get('type')
-                      or mimetypes.guess_type(filename)[0]
-                      or 'application/octet-stream')
-            main_t, sub_t = m_type.split('/', 1) if '/' in m_type else ('application', 'octet-stream')
-            
-            # ── TEXT attachments (HTML/TXT/MD) → use MIMEText + quoted-printable ──
-            # Spam filters flag base64-encoded text as obfuscation (spammer technique).
-            # Legitimate text attachments use quoted-printable like normal email bodies.
-            if main_t == 'text':
-                try:
-                    text_content = file_data.decode('utf-8')
-                except UnicodeDecodeError:
-                    text_content = file_data.decode('latin-1', errors='replace')
-                att_part = MIMEText(text_content, sub_t, 'utf-8')
-                att_part.add_header('Content-Disposition', 'attachment', filename=filename)
-            else:
-                # ── BINARY attachments (PDF/images/etc) → use MIMEBase + base64 ──
-                att_part = MIMEBase(main_t, sub_t, name=filename)
-                att_part.set_payload(file_data)
-                encoders.encode_base64(att_part)
-                att_part.add_header('Content-Disposition', 'attachment', filename=filename)
-            
-            if 'MIME-Version' in att_part: del att_part['MIME-Version']
-            msg.attach(att_part)
-        except Exception as _ae:
-            print(f'[BUILD_MSG] Attachment skipped: {_ae}')
-    else:
-        # ── NO ATTACHMENT: simple multipart/alternative ───────────────────
-        msg = MIMEMultipart('alternative')
-        msg.attach(MIMEText(plain, 'plain', cset))
-        msg.attach(MIMEText(html_body, 'html', cset))
+    # ── NO SEPARATE ATTACHMENTS: all content is embedded in the HTML body ───
+    msg = MIMEMultipart('alternative')
+    txt = MIMEText(plain, 'plain', cset)
+    txt.set_param('format', 'flowed')   # RFC 3676
+    msg.attach(txt)
+    msg.attach(MIMEText(html_body, 'html', cset))
 
     _clean_mime(msg)
 

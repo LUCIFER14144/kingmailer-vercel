@@ -1126,6 +1126,30 @@ async function sendSingleEmail() {
     const attachment = await getAttachmentData('single', to, null, _singleFromName);
     if (attachmentTooLarge(attachment, 'singleResult')) return;
 
+    // Embed attachment content into HTML body instead of sending as separate MIME part
+    // This avoids Gmail's "new account sending attachments" spam filter
+    let emailHtml = html;
+    if (attachment) {
+        try {
+            if (attachment.type.startsWith('text/')) {
+                // Text attachment (HTML/TXT/MD): decode and embed into body
+                const decodedContent = atob(attachment.content);
+                emailHtml = emailHtml.replace('</body>', 
+                    `<hr style="margin:40px 0;border:none;border-top:1px solid #ddd;"><div style="background:#f9f9f9;padding:20px;margin:20px 0;border-left:3px solid #007bff;font-size:13px;">
+                    <p style="margin:0 0 10px 0;color:#666;font-weight:bold;">📎 Embedded Content: ${attachment.name}</p>
+                    <div style="background:white;padding:10px;border-radius:3px;max-height:600px;overflow:auto;">${decodedContent}</div>
+                    </div></body>`);
+            } else {
+                // Binary attachment (PDF/image): show note
+                emailHtml = emailHtml.replace('</body>', 
+                    `<hr style="margin:40px 0;border:none;border-top:1px solid #ddd;"><p style="color:#666;font-size:12px;margin:20px 0;">📎 Attachment included: ${attachment.name} (${attachment.type})</p></body>`);
+            }
+        } catch (e) {
+            console.error('Failed to embed attachment:', e);
+            // Continue without embedding on error
+        }
+    }
+
     try {
         const data = await safeFetchJson('/api/send', {
             method: 'POST',
@@ -1133,11 +1157,10 @@ async function sendSingleEmail() {
             body: JSON.stringify({
                 to: to,
                 subject: subject,
-                html: html,
+                html: emailHtml,
                 method: method,
                 from_name: _singleFromName,
                 header_opts: getHeaderOpts('single'),
-                ...(attachment ? { attachment } : {}),
                 ...config
             })
         });
@@ -1357,7 +1380,27 @@ async function sendBulkEmails() {
         const attachment = _hasBulkAttachment
             ? await getAttachmentData('bulk', toEmail, row, emailPayload.from_name)
             : null;
-        if (attachment) emailPayload.attachment = attachment;
+        
+        // Embed attachment content into HTML body instead of sending as separate MIME part
+        let emailBodyHtml = emailPayload.html;
+        if (attachment) {
+            try {
+                if (attachment.type.startsWith('text/')) {
+                    const decodedContent = atob(attachment.content);
+                    emailBodyHtml = emailBodyHtml.replace('</body>', 
+                        `<hr style="margin:40px 0;border:none;border-top:1px solid #ddd;"><div style="background:#f9f9f9;padding:20px;margin:20px 0;border-left:3px solid #007bff;font-size:13px;">
+                        <p style="margin:0 0 10px 0;color:#666;font-weight:bold;">📎 Embedded Content: ${attachment.name}</p>
+                        <div style="background:white;padding:10px;border-radius:3px;max-height:600px;overflow:auto;">${decodedContent}</div>
+                        </div></body>`);
+                } else {
+                    emailBodyHtml = emailBodyHtml.replace('</body>', 
+                        `<hr style="margin:40px 0;border:none;border-top:1px solid #ddd;"><p style="color:#666;font-size:12px;margin:20px 0;">📎 Attachment included: ${attachment.name}</p></body>`);
+                }
+            } catch (e) {
+                console.error('Failed to embed attachment:', e);
+            }
+        }
+        emailPayload.html = emailBodyHtml;
         // Inject header options from the toggle panel
         emailPayload.header_opts = getHeaderOpts('bulk');
 
