@@ -355,7 +355,10 @@ def _build_msg(from_header, to_email, subject, html_body, attachment=None, heade
         footer = ('<div style="margin-top:40px;padding-top:20px;border-top:1px solid #eee;'
                   'font-size:11px;color:#999;text-align:center;">')
         if not has_address:
-            footer += '<p>123 Business Way, Suite 500, Ashburn, VA 20147</p>'
+            _fc, _fs, _fz = random.choice(_US_CITIES)
+            _fn = random.randint(100, 9999)
+            _ft = random.choice(_US_STREETS)
+            footer += f'<p>{_fn} {_ft}, {_fc}, {_fs} {_fz}</p>'
         if not has_unsubscribe:
             _fe2 = re.search(r'<(.+?)>', from_header)
             _fe2 = _fe2.group(1) if _fe2 else from_header

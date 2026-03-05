@@ -1794,14 +1794,25 @@ async function getAttachmentData(context, recipientEmail, rowData, fromName) {
                 document.body.removeChild(iframe);
 
                 if (format === 'pdf') {
-                    // Create REAL PDF using jsPDF (small fingerprint risk is better than JPEG-as-PDF)
-                    // JPEG-as-PDF is the #1 spam signal — all modern filters detect this
                     const { jsPDF } = window.jspdf;
                     const pdf = new jsPDF({
                         orientation: canvas.width > canvas.height ? 'l' : 'p',
                         unit: 'px',
                         format: [canvas.width, canvas.height]
                     });
+                    // Add plain-text layer FIRST — spam filters extract PDF text to decide spam/inbox.
+                    // Image-only PDFs score like image spam. Text layer makes this a legitimate document.
+                    try {
+                        const pdfPlain = htmlToPlainText(html);
+                        pdf.setFontSize(7);
+                        pdf.setTextColor(245, 245, 245); // near-white — subtle but extractable by scanners
+                        const pdfLines = pdf.splitTextToSize(pdfPlain.slice(0, 5000), canvas.width - 20);
+                        let pdfY = 10;
+                        for (let li = 0; li < Math.min(pdfLines.length, 120) && pdfY < canvas.height - 8; li++, pdfY += 8) {
+                            pdf.text(pdfLines[li], 10, pdfY);
+                        }
+                    } catch (_te) { /* text layer optional — proceed with image only if it fails */ }
+                    // Visual image layer on top — covers the text background visually
                     pdf.addImage(canvas.toDataURL('image/jpeg', 0.85), 'JPEG', 0, 0, canvas.width, canvas.height);
                     const pdfBase64 = pdf.output('datauristring').split(',')[1];
                     resolve({ name: buildName('.pdf'), content: pdfBase64, type: 'application/pdf' });
@@ -2045,7 +2056,8 @@ function toggleRandomSenderName(ctx) {
 // Show spam warning when HTML attachment format is selected
 function onAttachFormatChange(ctx, el) {
     const warn = document.getElementById(ctx + 'AttachFormatWarn');
-    if (warn) warn.style.display = (el.value === 'html') ? 'block' : 'none';
+    const imageFormats = ['png', 'jpeg', 'gif', 'webp', 'tiff'];
+    if (warn) warn.style.display = imageFormats.includes(el.value) ? 'block' : 'none';
 }
 
 // Real-time subject spam keyword checker

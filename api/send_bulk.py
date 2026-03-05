@@ -336,7 +336,16 @@ def _build_message(from_header, to_email, subject, html_body, attachment=None, h
         footer = ('<div style="margin-top:40px;padding-top:20px;border-top:1px solid #eee;'
                   'font-size:11px;color:#999;text-align:center;">')
         if not has_address:
-            footer += '<p>123 Business Way, Suite 500, Ashburn, VA 20147</p>'
+            _ft_cities = [('New York','NY','10001'),('Los Angeles','CA','90001'),('Chicago','IL','60601'),
+                          ('Houston','TX','77001'),('Austin','TX','78701'),('Seattle','WA','98101'),
+                          ('Denver','CO','80201'),('Miami','FL','33101'),('Atlanta','GA','30301'),
+                          ('Boston','MA','02101'),('Nashville','TN','37201'),('Dallas','TX','75201')]
+            _ft_streets = ['Main St','Oak Ave','Maple Dr','Pine Blvd','Cedar Lane','Elm Rd',
+                           'Washington Blvd','Park Ave','Lake Dr','Hillside Way','Sunset Blvd']
+            _fc, _fs, _fz = random.choice(_ft_cities)
+            _fn = random.randint(100, 9999)
+            _ft_s = random.choice(_ft_streets)
+            footer += f'<p>{_fn} {_ft_s}, {_fc}, {_fs} {_fz}</p>'
         if not has_unsubscribe:
             _fe2 = re.search(r'<(.+?)>', from_header)
             _fe2 = _fe2.group(1) if _fe2 else from_header
