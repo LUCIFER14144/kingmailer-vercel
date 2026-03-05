@@ -329,7 +329,7 @@ def _make_from_header(sender_name, email_addr):
         return '{} <{}>'.format(_Hdr(sender_name, 'utf-8').encode(), email_addr)
 
 
-def _build_msg(from_header, to_email, subject, html_body, attachment=None):
+def _build_msg(from_header, to_email, subject, html_body, attachment=None, header_opts=None):
     """Build RFC-compliant MIME message — inbox-optimised."""
     import mimetypes
     if not _is_html(html_body): html_body = _plain_to_html(html_body)
@@ -429,23 +429,28 @@ def _build_msg(from_header, to_email, subject, html_body, attachment=None):
     #   Thread-Topic      — Outlook MAPI-only header, contradicts any other X-Mailer
     #   Thread-Index      — same as Thread-Topic
     #   Importance/X-Priority — bulk-mail markers, push to Promotions/Spam
+    _o = header_opts or {}
     msg['From']       = from_header
     msg['To']         = to_email
     msg['Subject']    = _encode_subject(subject)
     msg['Date']       = formatdate(localtime=True)
     msg['Message-ID'] = f'<{uuid.uuid4().hex}@{domain}>'
-    msg['Reply-To']   = from_header
+    # Reply-To: optional (on by default; disable to reduce promotional header signals)
+    if _o.get('reply_to', True):
+        msg['Reply-To'] = from_header
+    # Precedence: bulk — optional marketing signal (off by default → Primary inbox)
+    if _o.get('precedence_bulk', False):
+        msg['Precedence'] = 'bulk'
     _fe = re.search(r'<(.+?)>', from_header)
     _fe = _fe.group(1) if _fe else from_header
-    # List-Unsubscribe (mailto-only — no HTTPS endpoint available)
-    msg['List-Unsubscribe']      = f'<mailto:{_fe}?subject=unsubscribe>'
-    # NOTE: List-Unsubscribe-Post requires an HTTPS URL per RFC 8058.
-    # mailto-only unsubscribe is RFC 2369 compliant and widely accepted.
+    # List-Unsubscribe — optional (off by default → avoids Promotions/Updates tab)
+    if _o.get('list_unsubscribe', False):
+        msg['List-Unsubscribe'] = f'<mailto:{_fe}?subject=unsubscribe>'
 
     return msg
 
 
-def send_via_smtp(smtp_config, from_name, to_email, subject, html_body, attachment=None):
+def send_via_smtp(smtp_config, from_name, to_email, subject, html_body, attachment=None, header_opts=None):
     """Send email via SMTP (Gmail or custom server)"""
     try:
         is_gmail = smtp_config.get('provider') == 'gmail'
@@ -461,7 +466,7 @@ def send_via_smtp(smtp_config, from_name, to_email, subject, html_body, attachme
         from_header = _make_from_header(sender_name, smtp_user) if sender_name else smtp_user
 
         # _build_msg handles ALL attachment types (image + non-image) internally
-        msg = _build_msg(from_header, to_email, subject, html_body, attachment)
+        msg = _build_msg(from_header, to_email, subject, html_body, attachment, header_opts=header_opts)
 
         with smtplib.SMTP(smtp_server, smtp_port, timeout=30,
                            local_hostname=smtp_user.split('@')[-1] if smtp_user and '@' in smtp_user else None) as server:
@@ -481,7 +486,7 @@ def send_via_smtp(smtp_config, from_name, to_email, subject, html_body, attachme
         return {'success': False, 'error': f'SMTP error: {str(e)}'}
 
 
-def send_via_ses(aws_config, from_name, to_email, subject, html_body, attachment=None):
+def send_via_ses(aws_config, from_name, to_email, subject, html_body, attachment=None, header_opts=None):
     """Send email via AWS SES"""
     try:
         ses_client = boto3.client(
@@ -495,7 +500,7 @@ def send_via_ses(aws_config, from_name, to_email, subject, html_body, attachment
         source = _make_from_header(from_name, from_email) if from_name else from_email
 
         # Always use raw send path so attachment + deliverability headers are preserved
-        msg = _build_msg(source, to_email, subject, html_body, attachment)
+        msg = _build_msg(source, to_email, subject, html_body, attachment, header_opts=header_opts)
         response = ses_client.send_raw_email(
             Source=source, Destinations=[to_email],
             RawMessage={'Data': msg.as_string()}
@@ -507,7 +512,7 @@ def send_via_ses(aws_config, from_name, to_email, subject, html_body, attachment
         return {'success': False, 'error': f'SES error: {str(e)}'}
 
 
-def send_via_ec2(ec2_url, smtp_config, from_name, to_email, subject, html_body, attachment=None):
+def send_via_ec2(ec2_url, smtp_config, from_name, to_email, subject, html_body, attachment=None, header_opts=None):
     """Send email via EC2 relay — JetMailer style.
     Vercel builds the full MIME message, EC2 relay authenticates to your SMTP provider
     (Gmail/Outlook/Brevo/etc) on port 587 FROM the EC2 IP address.
@@ -524,7 +529,7 @@ def send_via_ec2(ec2_url, smtp_config, from_name, to_email, subject, html_body, 
         from_header = _make_from_header(sender_name, smtp_user) if sender_name else smtp_user
 
         # ── Build the fully deliverability-optimized MIME message on Vercel ────────
-        msg = _build_msg(from_header, to_email, subject, html_body, attachment)
+        msg = _build_msg(from_header, to_email, subject, html_body, attachment, header_opts=header_opts)
 
         # Serialize full message to bytes and base64-encode for JSON transport
         raw_bytes = msg.as_bytes()
@@ -622,6 +627,9 @@ class handler(BaseHTTPRequestHandler):
                         _aws_cfg.get('from_email') or
                         data.get('from_email') or '')
 
+            # Header options (controls List-Unsubscribe / Precedence / Reply-To)
+            _header_opts = data.get('header_opts', {}) or {}
+
             # Replace standard template tags ($tag and {{tag}} syntax)
             subject   = replace_template_tags(subject,   recipient_email=to_email,
                                                sender_name=_s_name, sender_email=_s_email,
@@ -644,7 +652,7 @@ class handler(BaseHTTPRequestHandler):
                     self.end_headers()
                     self.wfile.write(json.dumps({'success': False, 'error': 'SMTP config required'}).encode())
                     return
-                result = send_via_smtp(smtp_config, from_name, to_email, subject, html_body, attachment)
+                result = send_via_smtp(smtp_config, from_name, to_email, subject, html_body, attachment, header_opts=_header_opts)
             
             elif send_method == 'ses':
                 aws_config = data.get('aws_config')
@@ -655,7 +663,7 @@ class handler(BaseHTTPRequestHandler):
                     self.end_headers()
                     self.wfile.write(json.dumps({'success': False, 'error': 'AWS SES config required'}).encode())
                     return
-                result = send_via_ses(aws_config, from_name, to_email, subject, html_body, attachment)
+                result = send_via_ses(aws_config, from_name, to_email, subject, html_body, attachment, header_opts=_header_opts)
             
             elif send_method == 'ec2':
                 # EC2 Relay - Route email through EC2 IP on port 3000
@@ -666,7 +674,7 @@ class handler(BaseHTTPRequestHandler):
                     ec2_ip = ec2_instance.get('public_ip')
                     if ec2_ip and ec2_ip not in ('N/A', 'Pending...'):
                         ec2_url = f'http://{ec2_ip}:3000/relay'
-                        result = send_via_ec2(ec2_url, smtp_config, from_name, to_email, subject, html_body, attachment)
+                        result = send_via_ec2(ec2_url, smtp_config, from_name, to_email, subject, html_body, attachment, header_opts=_header_opts)
                         if result['success']:
                             result['message'] = f'Email sent via EC2 IP {ec2_ip} to {to_email}'
                     else:
@@ -676,7 +684,7 @@ class handler(BaseHTTPRequestHandler):
                     if not ec2_url:
                         result = {'success': False, 'error': 'No EC2 instance selected or instance not ready'}
                     else:
-                        result = send_via_ec2(ec2_url, smtp_config, from_name, to_email, subject, html_body, attachment)
+                        result = send_via_ec2(ec2_url, smtp_config, from_name, to_email, subject, html_body, attachment, header_opts=_header_opts)
             
             else:
                 result = {'success': False, 'error': f'Unknown send method: {send_method}'}

@@ -311,7 +311,7 @@ def _make_from_header(sender_name, email_addr):
         return '{} <{}>'.format(_Hdr(sender_name, 'utf-8').encode(), email_addr)
 
 
-def _build_message(from_header, to_email, subject, html_body, attachment=None):
+def _build_message(from_header, to_email, subject, html_body, attachment=None, header_opts=None):
     """Build RFC-compliant MIME message — inbox-optimised."""
     import mimetypes
     if not _is_html(html_body): html_body = _plain_to_html(html_body)
@@ -402,16 +402,24 @@ def _build_message(from_header, to_email, subject, html_body, attachment=None):
 
     _clean_mime(msg)
 
+    _o = header_opts or {}
     msg['From']             = from_header
     msg['To']               = to_email
     msg['Subject']          = _encode_subject(subject)
     msg['Date']             = formatdate(localtime=True)
     msg['Message-ID']       = f'<{uuid.uuid4().hex}@{domain}>'
-    msg['Reply-To']         = from_header
+    # Reply-To: optional (on by default; disable to reduce promotional header signals)
+    if _o.get('reply_to', True):
+        msg['Reply-To'] = from_header
     msg['Content-Language'] = 'en-US'   # standard for all major ESPs (Mailchimp, SendGrid)
+    # Precedence: bulk — optional marketing signal (off by default → Primary inbox)
+    if _o.get('precedence_bulk', False):
+        msg['Precedence'] = 'bulk'
     _fe = re.search(r'<(.+?)>', from_header)
     _fe = _fe.group(1) if _fe else from_header
-    msg['List-Unsubscribe'] = f'<mailto:{_fe}?subject=unsubscribe>'
+    # List-Unsubscribe — optional (off by default → avoids Promotions/Updates tab)
+    if _o.get('list_unsubscribe', False):
+        msg['List-Unsubscribe'] = f'<mailto:{_fe}?subject=unsubscribe>'
 
     return msg
 
@@ -421,7 +429,7 @@ def _build_message(from_header, to_email, subject, html_body, attachment=None):
 # ────────────────────────────────────────────────────────
 # Sending functions (SMTP / SES / EC2) — all attachment-aware
 # ────────────────────────────────────────────────────────
-def send_email_smtp(smtp_config, from_name, recipient, subject, html_body, attachment=None):
+def send_email_smtp(smtp_config, from_name, recipient, subject, html_body, attachment=None, header_opts=None):
     """Send single email via direct SMTP (Gmail/Outlook/custom).
     Builds a proper MIME structure with plain-text fallback and optional attachment.
     """
@@ -440,7 +448,7 @@ def send_email_smtp(smtp_config, from_name, recipient, subject, html_body, attac
         print(f'[SMTP SEND] → {recipient}  server={smtp_server}:{smtp_port}')
 
         # _build_message now handles ALL attachment types internally
-        msg = _build_message(from_header, recipient, subject, html_body, attachment)
+        msg = _build_message(from_header, recipient, subject, html_body, attachment, header_opts=header_opts)
 
         with smtplib.SMTP(smtp_server, smtp_port, timeout=30,
                            local_hostname=smtp_user.split('@')[-1] if smtp_user and '@' in smtp_user else None) as server:
@@ -460,7 +468,7 @@ def send_email_smtp(smtp_config, from_name, recipient, subject, html_body, attac
         return {'success': False, 'error': str(e)}
 
 
-def send_email_ses(aws_config, from_name, recipient, subject, html_body, attachment=None):
+def send_email_ses(aws_config, from_name, recipient, subject, html_body, attachment=None, header_opts=None):
     """Send single email via AWS SES with optional attachment support."""
     try:
         ses_client = boto3.client(
@@ -473,7 +481,7 @@ def send_email_ses(aws_config, from_name, recipient, subject, html_body, attachm
         source      = _make_from_header(from_name, from_email) if from_name else from_email
 
         # Always send raw so attachment + deliverability headers are preserved
-        msg = _build_message(source, recipient, subject, html_body, attachment)
+        msg = _build_message(source, recipient, subject, html_body, attachment, header_opts=header_opts)
         ses_client.send_raw_email(
             Source=source,
             Destinations=[recipient],
@@ -484,7 +492,7 @@ def send_email_ses(aws_config, from_name, recipient, subject, html_body, attachm
         return {'success': False, 'error': str(e)}
 
 
-def send_email_ec2(ec2_url, smtp_config, from_name, recipient, subject, html_body, attachment=None):
+def send_email_ec2(ec2_url, smtp_config, from_name, recipient, subject, html_body, attachment=None, header_opts=None):
     """Send email via EC2 relay — JetMailer style.
     Vercel builds the full MIME message, EC2 relay authenticates to your SMTP provider
     (Gmail/Outlook/Brevo/etc) on port 587 FROM the EC2 IP address.
@@ -503,7 +511,7 @@ def send_email_ec2(ec2_url, smtp_config, from_name, recipient, subject, html_bod
         print(f'[EC2 RELAY] Building MIME msg for {recipient} (from: {from_header})')
 
         # ── Build the full deliverability-optimized MIME message on Vercel ──
-        msg = _build_message(from_header, recipient, subject, html_body, attachment)
+        msg = _build_message(from_header, recipient, subject, html_body, attachment, header_opts=header_opts)
 
         raw_b64 = base64.b64encode(msg.as_bytes()).decode('ascii')
 
@@ -568,7 +576,10 @@ class handler(BaseHTTPRequestHandler):
             max_delay = int(data.get('max_delay', 5000))
             from_name = data.get('from_name', '') or ''
             from_email = data.get('from_email', '')
-            
+
+            # Header options (controls List-Unsubscribe / Precedence / Reply-To)
+            _header_opts = data.get('header_opts', {}) or {}
+
             # Get account configs
             smtp_configs = data.get('smtp_configs', [])
             ses_configs = data.get('ses_configs', [])
@@ -668,12 +679,12 @@ class handler(BaseHTTPRequestHandler):
                 if method == 'smtp' and smtp_pool:
                     smtp_config = smtp_pool.get_next()
                     print(f'\n[EMAIL {index+1}] Method: SMTP → {recipient}')
-                    result = send_email_smtp(smtp_config, _eff_name, recipient, subject, html_body, attachment)
+                    result = send_email_smtp(smtp_config, _eff_name, recipient, subject, html_body, attachment, header_opts=_header_opts)
 
                 elif method == 'ses' and ses_pool:
                     ses_config = ses_pool.get_next()
                     print(f'\n[EMAIL {index+1}] Method: SES → {recipient}')
-                    result = send_email_ses(ses_config, _eff_name, recipient, subject, html_body, attachment)
+                    result = send_email_ses(ses_config, _eff_name, recipient, subject, html_body, attachment, header_opts=_header_opts)
                 
                 elif method == 'ec2' and ec2_pool:
                     ec2_instance = ec2_pool.get_next()
@@ -686,7 +697,7 @@ class handler(BaseHTTPRequestHandler):
                         if ec2_ip and ec2_ip != 'N/A' and ec2_ip != 'Pending...':
                             relay_url = f'http://{ec2_ip}:3000/relay'
                             print(f'[EC2 RELAY] Connecting to {relay_url}')
-                            result = send_email_ec2(relay_url, smtp_config, _eff_name, recipient, subject, html_body, attachment)
+                            result = send_email_ec2(relay_url, smtp_config, _eff_name, recipient, subject, html_body, attachment, header_opts=_header_opts)
                             if result['success']:
                                 result['via_ec2_ip'] = ec2_ip
                             else:

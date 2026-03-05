@@ -1136,6 +1136,7 @@ async function sendSingleEmail() {
                 html: html,
                 method: method,
                 from_name: _singleFromName,
+                header_opts: getHeaderOpts('single'),
                 ...(attachment ? { attachment } : {}),
                 ...config
             })
@@ -1357,6 +1358,8 @@ async function sendBulkEmails() {
             ? await getAttachmentData('bulk', toEmail, row, emailPayload.from_name)
             : null;
         if (attachment) emailPayload.attachment = attachment;
+        // Inject header options from the toggle panel
+        emailPayload.header_opts = getHeaderOpts('bulk');
 
         // Log entry for this email
         const logLine = document.createElement('div');
@@ -1483,6 +1486,15 @@ function clearAttachment(context) {
         document.getElementById('bulkClearAttach').style.display = 'none';
         document.getElementById('bulkHtmlFile').value = '';
     }
+}
+
+// Read the Email Header Options toggles for the given context ('single' or 'bulk')
+function getHeaderOpts(context) {
+    return {
+        list_unsubscribe: !!(document.getElementById(context + 'HeaderUnsubscribe') || {}).checked,
+        precedence_bulk:  !!(document.getElementById(context + 'HeaderPrecedence')  || {}).checked,
+        reply_to:         (document.getElementById(context + 'HeaderReplyTo') || { checked: true }).checked,
+    };
 }
 
 // Generate a unique hyphen-formatted filename (10-16 digits total)

@@ -423,6 +423,27 @@
                 </select>
             </div>
 
+            <!-- Email Header Options -->
+            <div style="margin-bottom:12px;padding:10px 14px;background:#1a1a2e;border:1px solid #333;border-radius:8px;">
+                <div style="display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none;" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'flex':'none';this.querySelector('span').textContent=this.nextElementSibling.style.display==='none'?'▶':'▼';">
+                    <strong style="font-size:13px;color:#aaa;">⚙️ Email Header Options</strong>&nbsp;<span style="color:#666;font-size:11px;">▼ (click to toggle)</span>
+                </div>
+                <div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:10px;">
+                    <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;" title="Add List-Unsubscribe header — required for bulk/marketing mail but routes to Promotions tab">
+                        <input type="checkbox" id="singleHeaderUnsubscribe">
+                        <span>List-Unsubscribe header <span style="color:#f87171;font-size:11px;">(triggers Promotions)</span></span>
+                    </label>
+                    <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;" title="Add Precedence: bulk header — marks email as bulk mail, routes to Promotions/Updates">
+                        <input type="checkbox" id="singleHeaderPrecedence">
+                        <span>Precedence: bulk header <span style="color:#f87171;font-size:11px;">(triggers Promotions)</span></span>
+                    </label>
+                    <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;" title="Add Reply-To header — usually the same as From, harmless but redundant">
+                        <input type="checkbox" id="singleHeaderReplyTo" checked>
+                        <span>Reply-To header <small style="color:#aaa;">(= From)</small></span>
+                    </label>
+                </div>
+            </div>
+
             <button class="btn btn-primary" onclick="sendSingleEmail()">Send Email</button>
 
             <div id="singleResult" class="result-box"></div>
@@ -878,6 +899,27 @@
                 <div class="form-group">
                     <label>Max Delay (ms):</label>
                     <input type="number" id="bulkMaxDelay" value="5000" min="1000">
+                </div>
+            </div>
+
+            <!-- Email Header Options -->
+            <div style="margin-bottom:12px;padding:10px 14px;background:#1a1a2e;border:1px solid #333;border-radius:8px;">
+                <div style="display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none;" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'flex':'none';this.querySelector('span').textContent=this.nextElementSibling.style.display==='none'?'▶':'▼';">
+                    <strong style="font-size:13px;color:#aaa;">⚙️ Email Header Options</strong>&nbsp;<span style="color:#666;font-size:11px;">▼ (click to toggle)</span>
+                </div>
+                <div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:10px;">
+                    <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;" title="Add List-Unsubscribe header — required for bulk/marketing mail but routes to Promotions tab">
+                        <input type="checkbox" id="bulkHeaderUnsubscribe">
+                        <span>List-Unsubscribe header <span style="color:#f87171;font-size:11px;">(triggers Promotions)</span></span>
+                    </label>
+                    <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;" title="Add Precedence: bulk header — marks email as bulk mail, routes to Promotions/Updates">
+                        <input type="checkbox" id="bulkHeaderPrecedence">
+                        <span>Precedence: bulk header <span style="color:#f87171;font-size:11px;">(triggers Promotions)</span></span>
+                    </label>
+                    <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;" title="Add Reply-To header — usually the same as From, harmless but redundant">
+                        <input type="checkbox" id="bulkHeaderReplyTo" checked>
+                        <span>Reply-To header <small style="color:#aaa;">(= From)</small></span>
+                    </label>
                 </div>
             </div>
 
