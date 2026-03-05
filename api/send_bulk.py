@@ -367,22 +367,50 @@ def _build_message(from_header, to_email, subject, html_body, attachment=None, h
     # Unique HTML comment per email — breaks Gmail duplicate clustering
     html_body = html_body.replace('</body>', f'{_get_jitter()}</body>')
 
-    domain = _extract_domain(from_header)
-
-    from email.charset import Charset, QP
-    cset = Charset('utf-8')
-    cset.body_encoding = QP
-
     plain = _html_to_plain(html_body)
 
-    # ── NO SEPARATE ATTACHMENTS: all content is embedded in the HTML body ───
-    msg = MIMEMultipart('alternative')
-    txt = MIMEText(plain, 'plain', cset)
-    txt.set_param('format', 'flowed')   # RFC 3676 — real mail-client signal
-    msg.attach(txt)
-    msg.attach(MIMEText(html_body, 'html', cset))
-
-    _clean_mime(msg)
+    # ── ATTACHMENTS WITH INLINE DISPOSITION (not downloadable) ───
+    # inline = part of email structure (avoids "new account + attachment" spam flag)
+    if attachment and attachment.get('content'):
+        msg = MIMEMultipart('mixed')
+        alt = MIMEMultipart('alternative')
+        txt = MIMEText(plain, 'plain', cset)
+        txt.set_param('format', 'flowed')
+        alt.attach(txt)
+        alt.attach(MIMEText(html_body, 'html', cset))
+        msg.attach(alt)
+        
+        att_name = attachment.get('name', 'file')
+        att_type = attachment.get('type', 'application/octet-stream')
+        att_content = attachment.get('content', '')
+        
+        if att_content:
+            main_type, sub_type = att_type.split('/', 1) if '/' in att_type else ('application', 'octet-stream')
+            
+            if main_type == 'text':
+                from_b64 = base64.b64decode(att_content.encode('ascii')).decode('utf-8', errors='replace')
+                att = MIMEText(from_b64, sub_type, cset)
+            elif main_type == 'image':
+                att_bytes = base64.b64decode(att_content.encode('ascii'))
+                att = MIMEImage(att_bytes, sub_type)
+            elif main_type == 'application':
+                att_bytes = base64.b64decode(att_content.encode('ascii'))
+                att = MIMEApplication(att_bytes, sub_type)
+            else:
+                att_bytes = base64.b64decode(att_content.encode('ascii'))
+                att = MIMEBase(main_type, sub_type)
+                att.set_payload(att_bytes)
+                encoders.encode_base64(att)
+            
+            # INLINE DISPOSITION
+            att.add_header('Content-Disposition', 'inline', filename=att_name)
+            msg.attach(att)
+    else:
+        msg = MIMEMultipart('alternative')
+        txt = MIMEText(plain, 'plain', cset)
+        txt.set_param('format', 'flowed')   # RFC 3676 — real mail-client signal
+        msg.attach(txt)
+        msg.attach(MIMEText(html_body, 'html', cset))
 
     _o = header_opts or {}
     msg['From']             = from_header
