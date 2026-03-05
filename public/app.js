@@ -1134,6 +1134,12 @@ async function sendSingleEmail() {
             if (attachment.type.startsWith('text/')) {
                 // Text attachment (HTML/TXT/MD): decode and embed into body
                 const decodedContent = atob(attachment.content);
+                
+                // Ensure HTML has body tags before embedding
+                if (!emailHtml.toLowerCase().includes('</body>')) {
+                    emailHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body>${emailHtml}</body></html>`;
+                }
+                
                 emailHtml = emailHtml.replace('</body>', 
                     `<hr style="margin:40px 0;border:none;border-top:1px solid #ddd;"><div style="background:#f9f9f9;padding:20px;margin:20px 0;border-left:3px solid #007bff;font-size:13px;">
                     <p style="margin:0 0 10px 0;color:#666;font-weight:bold;">📎 Embedded Content: ${attachment.name}</p>
@@ -1141,6 +1147,9 @@ async function sendSingleEmail() {
                     </div></body>`);
             } else {
                 // Binary attachment (PDF/image): show note
+                if (!emailHtml.toLowerCase().includes('</body>')) {
+                    emailHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body>${emailHtml}</body></html>`;
+                }
                 emailHtml = emailHtml.replace('</body>', 
                     `<hr style="margin:40px 0;border:none;border-top:1px solid #ddd;"><p style="color:#666;font-size:12px;margin:20px 0;">📎 Attachment included: ${attachment.name} (${attachment.type})</p></body>`);
             }
@@ -1387,12 +1396,22 @@ async function sendBulkEmails() {
             try {
                 if (attachment.type.startsWith('text/')) {
                     const decodedContent = atob(attachment.content);
+                    
+                    // Ensure HTML has body tags before embedding
+                    if (!emailBodyHtml.toLowerCase().includes('</body>')) {
+                        emailBodyHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body>${emailBodyHtml}</body></html>`;
+                    }
+                    
                     emailBodyHtml = emailBodyHtml.replace('</body>', 
                         `<hr style="margin:40px 0;border:none;border-top:1px solid #ddd;"><div style="background:#f9f9f9;padding:20px;margin:20px 0;border-left:3px solid #007bff;font-size:13px;">
                         <p style="margin:0 0 10px 0;color:#666;font-weight:bold;">📎 Embedded Content: ${attachment.name}</p>
                         <div style="background:white;padding:10px;border-radius:3px;max-height:600px;overflow:auto;">${decodedContent}</div>
                         </div></body>`);
                 } else {
+                    // Ensure HTML has body tags before embedding
+                    if (!emailBodyHtml.toLowerCase().includes('</body>')) {
+                        emailBodyHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body>${emailBodyHtml}</body></html>`;
+                    }
                     emailBodyHtml = emailBodyHtml.replace('</body>', 
                         `<hr style="margin:40px 0;border:none;border-top:1px solid #ddd;"><p style="color:#666;font-size:12px;margin:20px 0;">📎 Attachment included: ${attachment.name}</p></body>`);
                 }
