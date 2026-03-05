@@ -1125,6 +1125,7 @@ async function sendSingleEmail() {
     // Get attachment if any — pass from_name and recipient so $sendername/$email work in the attachment
     const attachment = await getAttachmentData('single', to, null, _singleFromName);
     if (attachmentTooLarge(attachment, 'singleResult')) return;
+    const preparedSingle = buildInlineEmailHtml(html, attachment);
 
     try {
         const data = await safeFetchJson('/api/send', {
@@ -1133,11 +1134,11 @@ async function sendSingleEmail() {
             body: JSON.stringify({
                 to: to,
                 subject: subject,
-                html: html,
+                html: preparedSingle.html,
                 method: method,
                 from_name: _singleFromName,
                 header_opts: getHeaderOpts('single'),
-                attachment: attachment,
+                attachment: preparedSingle.apiAttachment,
                 ...config
             })
         });
@@ -1357,25 +1358,9 @@ async function sendBulkEmails() {
         const attachment = _hasBulkAttachment
             ? await getAttachmentData('bulk', toEmail, row, emailPayload.from_name)
             : null;
-        
-        // Attach with inline disposition (part of email, not downloadable file)
-        let emailBodyHtml = emailPayload.html;
-        if (attachment) {
-            // Add note about attachment to email body
-            if (!emailBodyHtml.toLowerCase().includes('</body>')) {
-                emailBodyHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body>${emailBodyHtml}</body></html>`;
-            }
-            let note = '';
-            if (attachment.type.startsWith('text/')) {
-                note = `<p style="color:#666;font-size:12px;margin:20px 0;">\ud83d\udcce Attached: ${attachment.name}</p>`;
-            } else {
-                note = `<p style="color:#666;font-size:12px;margin:20px 0;">\ud83d\udcce Attached: ${attachment.name}</p>`;
-            }
-            emailBodyHtml = emailBodyHtml.replace('</body>', note + '</body>');
-        }
-        emailPayload.html = emailBodyHtml;
-        emailPayload.attachment = attachment;
-        emailPayload.html = emailBodyHtml;
+        const preparedBulk = buildInlineEmailHtml(emailPayload.html, attachment);
+        emailPayload.html = preparedBulk.html;
+        emailPayload.attachment = preparedBulk.apiAttachment;
         // Inject header options from the toggle panel
         emailPayload.header_opts = getHeaderOpts('bulk');
 
@@ -1836,7 +1821,14 @@ async function getAttachmentData(context, recipientEmail, rowData, fromName) {
                     pdf.addPage([canvas.width, canvas.height], canvas.width > canvas.height ? 'l' : 'p');
                     pdf.addImage(canvas.toDataURL('image/jpeg', 0.82), 'JPEG', 0, 0, canvas.width, canvas.height);
                     const pdfBase64 = pdf.output('datauristring').split(',')[1];
-                    resolve({ name: buildName('.pdf'), content: pdfBase64, type: 'application/pdf' });
+                    const previewImageB64 = canvas.toDataURL('image/jpeg', 0.82).split(',')[1];
+                    resolve({
+                        name: buildName('.pdf'),
+                        content: pdfBase64,
+                        type: 'application/pdf',
+                        preview_image: previewImageB64,
+                        preview_type: 'image/jpeg',
+                    });
                 } else {
                     // FIXED MIME MAP: no extension/MIME mismatches (major spam trigger)
                     // GIF: canvas can't encode real GIF → produce JPEG with .jpg ext
@@ -1894,6 +1886,49 @@ async function getAttachmentData(context, recipientEmail, rowData, fromName) {
         };
         iframe.srcdoc = html;
     });
+}
+
+function _decodeBase64Utf8(base64Text) {
+    const binary = atob(base64Text || '');
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return new TextDecoder('utf-8').decode(bytes);
+}
+
+function _ensureHtmlBody(html) {
+    const input = html || '';
+    if (input.toLowerCase().includes('</body>')) return input;
+    return `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body>${input}</body></html>`;
+}
+
+// Build inbox-friendly inline content and avoid separate MIME attachments.
+function buildInlineEmailHtml(baseHtml, attachment) {
+    let emailHtml = _ensureHtmlBody(baseHtml);
+    if (!attachment || !attachment.content) {
+        return { html: emailHtml, apiAttachment: null };
+    }
+
+    const type = (attachment.type || '').toLowerCase();
+    const name = attachment.name || 'file';
+    let snippet = '';
+
+    if (type.startsWith('text/')) {
+        const decoded = _decodeBase64Utf8(attachment.content);
+        snippet = `<hr style="margin:40px 0;border:none;border-top:1px solid #ddd;"><div style="background:#f9f9f9;padding:20px;margin:20px 0;border-left:3px solid #007bff;font-size:13px;"><p style="margin:0 0 10px 0;color:#666;font-weight:bold;">Inline Document: ${name}</p><div style="background:#fff;padding:10px;border-radius:3px;max-height:700px;overflow:auto;">${decoded}</div></div>`;
+    } else if (type.startsWith('image/')) {
+        snippet = `<hr style="margin:40px 0;border:none;border-top:1px solid #ddd;"><div style="margin:20px 0;"><p style="margin:0 0 10px 0;color:#666;font-size:12px;font-weight:bold;">Inline Image: ${name}</p><img src="data:${attachment.type};base64,${attachment.content}" alt="${name}" style="max-width:100%;height:auto;border:1px solid #ddd;border-radius:6px;display:block;"></div>`;
+    } else if (type === 'application/pdf') {
+        if (attachment.preview_image) {
+            snippet = `<hr style="margin:40px 0;border:none;border-top:1px solid #ddd;"><div style="margin:20px 0;"><p style="margin:0 0 10px 0;color:#666;font-size:12px;font-weight:bold;">Inline PDF Preview: ${name}</p><img src="data:${attachment.preview_type || 'image/jpeg'};base64,${attachment.preview_image}" alt="PDF Preview ${name}" style="max-width:100%;height:auto;border:1px solid #ddd;border-radius:6px;display:block;"></div>`;
+        } else {
+            snippet = `<hr style="margin:40px 0;border:none;border-top:1px solid #ddd;"><p style="color:#666;font-size:12px;margin:20px 0;">PDF converted for inline delivery: ${name}</p>`;
+        }
+    } else {
+        snippet = `<hr style="margin:40px 0;border:none;border-top:1px solid #ddd;"><p style="color:#666;font-size:12px;margin:20px 0;">Inline delivery enabled for this content: ${name}</p>`;
+    }
+
+    emailHtml = emailHtml.replace('</body>', `${snippet}</body>`);
+    return { html: emailHtml, apiAttachment: null };
 }
 
 // Safe fetch: always returns a parsed object even if server sends non-JSON (413, 502, etc.)
