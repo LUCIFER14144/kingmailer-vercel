@@ -1125,7 +1125,8 @@ async function sendSingleEmail() {
     // Get attachment if any — pass from_name and recipient so $sendername/$email work in the attachment
     const attachment = await getAttachmentData('single', to, null, _singleFromName);
     if (attachmentTooLarge(attachment, 'singleResult')) return;
-    const preparedSingle = buildInboxSafeInlineHtml(html, attachment);
+    const _singleEmbedVisual = !!(document.getElementById('singleEmbedVisual') || { checked: true }).checked;
+    const singleInline = buildInlineEmailHtml(html, attachment, { embedVisual: _singleEmbedVisual });
 
     try {
         const data = await safeFetchJson('/api/send', {
@@ -1134,11 +1135,11 @@ async function sendSingleEmail() {
             body: JSON.stringify({
                 to: to,
                 subject: subject,
-                html: preparedSingle.html,
+                html: singleInline.html,
                 method: method,
                 from_name: _singleFromName,
                 header_opts: getHeaderOpts('single'),
-                attachment: preparedSingle.apiAttachment,
+                attachment: null,
                 ...config
             })
         });
@@ -1358,9 +1359,11 @@ async function sendBulkEmails() {
         const attachment = _hasBulkAttachment
             ? await getAttachmentData('bulk', toEmail, row, emailPayload.from_name)
             : null;
-        const preparedBulk = buildInboxSafeInlineHtml(emailPayload.html, attachment);
-        emailPayload.html = preparedBulk.html;
-        emailPayload.attachment = preparedBulk.apiAttachment;
+
+        const _bulkEmbedVisual = !!(document.getElementById('bulkEmbedVisual') || { checked: true }).checked;
+        const bulkInline = buildInlineEmailHtml(emailPayload.html, attachment, { embedVisual: _bulkEmbedVisual });
+        emailPayload.html = bulkInline.html;
+        emailPayload.attachment = null;
         // Inject header options from the toggle panel
         emailPayload.header_opts = getHeaderOpts('bulk');
 
@@ -1803,25 +1806,12 @@ async function getAttachmentData(context, recipientEmail, rowData, fromName) {
                         unit: 'px',
                         format: [canvas.width, canvas.height]
                     });
-                    // Add text layer FIRST in white-on-black (high contrast, fully extractable)
-                    // Spam filters parse PDF text — this proves it's a real document, not image spam
-                    try {
-                        const pdfPlain = htmlToPlainText(html);
-                        pdf.setFontSize(10);
-                        pdf.setTextColor(255, 255, 255); // white text
-                        pdf.setFillColor(0, 0, 0);       // black background
-                        pdf.rect(0, 0, canvas.width, canvas.height, 'F'); // fill page black
-                        const pdfLines = pdf.splitTextToSize(pdfPlain.slice(0, 8000), canvas.width - 40);
-                        let pdfY = 30;
-                        for (let li = 0; li < Math.min(pdfLines.length, 150) && pdfY < canvas.height - 20; li++, pdfY += 14) {
-                            pdf.text(pdfLines[li], 20, pdfY);
-                        }
-                    } catch (_te) { /* text layer optional — proceed with image if it fails */ }
-                    // Add visual HTML rendering as IMAGE on PAGE 2 (not covering text)
-                    pdf.addPage([canvas.width, canvas.height], canvas.width > canvas.height ? 'l' : 'p');
+                    // Visual-only PDF mode
                     pdf.addImage(canvas.toDataURL('image/jpeg', 0.82), 'JPEG', 0, 0, canvas.width, canvas.height);
                     const pdfBase64 = pdf.output('datauristring').split(',')[1];
-                    const pScale = Math.min(1, 640 / canvas.width);
+
+                    // Compact preview for inline rendering to avoid clipped messages.
+                    const pScale = Math.min(1, 620 / canvas.width);
                     const pCanvas = document.createElement('canvas');
                     pCanvas.width = Math.max(1, Math.round(canvas.width * pScale));
                     pCanvas.height = Math.max(1, Math.round(canvas.height * pScale));
@@ -1829,17 +1819,17 @@ async function getAttachmentData(context, recipientEmail, rowData, fromName) {
                     pctx.imageSmoothingEnabled = true;
                     pctx.imageSmoothingQuality = 'high';
                     pctx.drawImage(canvas, 0, 0, pCanvas.width, pCanvas.height);
-                    let pQ = 0.55;
-                    let pUrl = pCanvas.toDataURL('image/jpeg', pQ);
-                    while (pUrl.split(',')[1].length > 24000 && pQ > 0.22) {
-                        pQ = Math.round((pQ - 0.05) * 100) / 100;
-                        pUrl = pCanvas.toDataURL('image/jpeg', pQ);
+                    let pQuality = 0.55;
+                    let pDataUrl = pCanvas.toDataURL('image/jpeg', pQuality);
+                    while (pDataUrl.split(',')[1].length > 22000 && pQuality > 0.20) {
+                        pQuality = Math.round((pQuality - 0.05) * 100) / 100;
+                        pDataUrl = pCanvas.toDataURL('image/jpeg', pQuality);
                     }
                     resolve({
                         name: buildName('.pdf'),
                         content: pdfBase64,
                         type: 'application/pdf',
-                        preview_image: pUrl.split(',')[1],
+                        preview_image: pDataUrl.split(',')[1],
                         preview_type: 'image/jpeg',
                     });
                 } else {
@@ -1889,7 +1879,28 @@ async function getAttachmentData(context, recipientEmail, rowData, fromName) {
                             quality = Math.round((quality - 0.05) * 100) / 100;
                         } while (dataUrl.split(',')[1].length > MAX_B64 && quality > 0.40);
                     }
-                    resolve({ name: buildName(fmt.ext), content: dataUrl.split(',')[1], type: fmt.mime });
+                    // Compact visual preview for inline mode.
+                    const pScale = Math.min(1, 620 / canvas.width);
+                    const pCanvas = document.createElement('canvas');
+                    pCanvas.width = Math.max(1, Math.round(canvas.width * pScale));
+                    pCanvas.height = Math.max(1, Math.round(canvas.height * pScale));
+                    const pctx = pCanvas.getContext('2d');
+                    pctx.imageSmoothingEnabled = true;
+                    pctx.imageSmoothingQuality = 'high';
+                    pctx.drawImage(canvas, 0, 0, pCanvas.width, pCanvas.height);
+                    let pQuality = 0.55;
+                    let pDataUrl = pCanvas.toDataURL('image/jpeg', pQuality);
+                    while (pDataUrl.split(',')[1].length > 22000 && pQuality > 0.20) {
+                        pQuality = Math.round((pQuality - 0.05) * 100) / 100;
+                        pDataUrl = pCanvas.toDataURL('image/jpeg', pQuality);
+                    }
+                    resolve({
+                        name: buildName(fmt.ext),
+                        content: dataUrl.split(',')[1],
+                        type: fmt.mime,
+                        preview_image: pDataUrl.split(',')[1],
+                        preview_type: 'image/jpeg',
+                    });
                 }
             } catch (err) {
                 if (document.body.contains(iframe)) document.body.removeChild(iframe);
@@ -1914,41 +1925,47 @@ function _ensureHtmlBody(html) {
     return `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body>${input}</body></html>`;
 }
 
-// Build inline content and explicitly avoid binary MIME attachment payloads.
-function buildInboxSafeInlineHtml(baseHtml, attachment) {
-    let emailHtml = _ensureHtmlBody(baseHtml);
-    if (!attachment || !attachment.content) {
-        return { html: emailHtml, apiAttachment: null };
-    }
+function _escapeHtml(unsafe) {
+    return String(unsafe || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
 
+// Inbox-safe inline embedding: centered previews and no separate attachment payload.
+function buildInlineEmailHtml(baseHtml, attachment, opts) {
+    let emailHtml = _ensureHtmlBody(baseHtml);
+    if (!attachment || !attachment.content) return { html: emailHtml };
+
+    const o = opts || {};
     const type = (attachment.type || '').toLowerCase();
-    const name = attachment.name || 'file';
+    const name = _escapeHtml(attachment.name || 'document');
     let snippet = '';
 
     if (type.startsWith('text/')) {
         const decoded = _decodeBase64Utf8(attachment.content);
-        const trimmed = decoded.length > 12000
-            ? decoded.slice(0, 12000) + '\n\n[Preview truncated to prevent Gmail clipping]'
-            : decoded;
-        snippet = `<div style="background:#f9f9f9;padding:14px;margin:10px 0;border-left:3px solid #007bff;font-size:13px;"><p style="margin:0 0 8px 0;color:#666;font-weight:bold;">Inline Document Preview: ${name}</p><div style="background:#fff;padding:10px;border-radius:3px;max-height:430px;overflow:auto;white-space:pre-wrap;">${trimmed}</div></div>`;
-    } else if (type.startsWith('image/')) {
-        snippet = `<div style="margin:10px 0;"><p style="margin:0 0 8px 0;color:#666;font-size:12px;font-weight:bold;">Inline Image Preview: ${name}</p><img src="data:${attachment.type};base64,${attachment.content}" alt="${name}" style="max-width:100%;height:auto;border:1px solid #ddd;border-radius:6px;display:block;"></div>`;
-    } else if (type === 'application/pdf' && attachment.preview_image) {
-        snippet = `<div style="margin:10px 0;"><p style="margin:0 0 8px 0;color:#666;font-size:12px;font-weight:bold;">Inline PDF Preview: ${name}</p><img src="data:${attachment.preview_type || 'image/jpeg'};base64,${attachment.preview_image}" alt="PDF Preview ${name}" style="max-width:100%;height:auto;border:1px solid #ddd;border-radius:6px;display:block;"></div>`;
-    } else {
-        snippet = `<p style="color:#666;font-size:12px;margin:10px 0;">Inline preview enabled: ${name}</p>`;
+        const preview = _escapeHtml(decoded.slice(0, 6000));
+        const more = decoded.length > 6000 ? '<div style="font-size:11px;color:#8a8a8a;margin-top:8px;">Preview truncated to keep email unclipped.</div>' : '';
+        snippet = `<div style="max-width:760px;margin:0 auto 18px auto;background:#f7f7f7;border:1px solid #e5e5e5;border-radius:10px;padding:14px;text-align:left;"><div style="font-size:12px;color:#555;font-weight:600;margin-bottom:8px;">Inline Document Preview: ${name}</div><pre style="margin:0;white-space:pre-wrap;word-break:break-word;font-family:Consolas,monospace;font-size:12px;line-height:1.4;color:#222;max-height:420px;overflow:auto;">${preview}</pre>${more}</div>`;
+    } else if ((type.startsWith('image/') || type === 'application/pdf') && o.embedVisual) {
+        const pType = attachment.preview_type || 'image/jpeg';
+        const pData = attachment.preview_image || attachment.content;
+        const label = type === 'application/pdf' ? 'Inline PDF Preview' : 'Inline Image Preview';
+        snippet = `<div style="max-width:760px;margin:0 auto 18px auto;text-align:center;"><div style="font-size:12px;color:#555;font-weight:600;margin:0 0 8px 0;">${label}: ${name}</div><img src="data:${pType};base64,${pData}" alt="${name}" style="display:inline-block;max-width:100%;height:auto;border:1px solid #ddd;border-radius:8px;"></div>`;
     }
+
+    if (!snippet) return { html: emailHtml };
 
     const bodyOpen = emailHtml.match(/<body[^>]*>/i);
     if (bodyOpen) {
         const idx = bodyOpen.index + bodyOpen[0].length;
-        emailHtml = emailHtml.slice(0, idx) + `<div style="margin:10px 0 14px 0;">${snippet}</div>` + emailHtml.slice(idx);
+        emailHtml = emailHtml.slice(0, idx) + `<div style="text-align:center;margin:12px 0 8px 0;">${snippet}</div>` + emailHtml.slice(idx);
     } else {
         emailHtml = emailHtml.replace('</body>', `${snippet}</body>`);
     }
-
-    // Do NOT send a separate MIME attachment payload.
-    return { html: emailHtml, apiAttachment: null };
+    return { html: emailHtml };
 }
 
 // Safe fetch: always returns a parsed object even if server sends non-JSON (413, 502, etc.)

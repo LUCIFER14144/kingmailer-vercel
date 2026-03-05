@@ -310,7 +310,7 @@
                     <select id="singleAttachFormat" onchange="onAttachFormatChange('single',this)"
                         style="padding:6px; background:#1a1a1a; color:#fff; border:1px solid #444; border-radius:4px; font-size:12px;">
                         <option value="html" selected>Convert to HTML (⭐ Best for Inbox — text-based, zero spam risk)</option>
-                        <option value="pdf">Convert to PDF (text + visual)</option>
+                        <option value="pdf">Convert to PDF (visual only)</option>
                         <option value="txt">Convert to TXT (Plain Text)</option>
                         <option value="docx">Convert to DOCX (Word)</option>
                         <option value="rtf">Convert to RTF</option>
@@ -345,6 +345,10 @@
                         <option value="none">Original filename</option>
                     </select>
                     <span id="singleAttachName" style="color:#00ff9d; font-size:12px;"></span>
+                    <label style="display:flex;align-items:center;gap:6px;color:#ccc;font-size:12px;">
+                        <input type="checkbox" id="singleEmbedVisual" checked>
+                        Embed image/PDF preview inline
+                    </label>
                     <button id="singleClearAttach" onclick="clearAttachment('single')"
                         style="display:none; background:#f87171; color:#fff; border:none; border-radius:4px; padding:4px 8px; cursor:pointer; font-size:12px;">✕
                         Remove</button>
@@ -748,7 +752,7 @@
                     <select id="bulkAttachFormat" onchange="onAttachFormatChange('bulk',this)"
                         style="padding:6px; background:#1a1a1a; color:#fff; border:1px solid #444; border-radius:4px; font-size:12px;">
                         <option value="html" selected>Convert to HTML (⭐ Best for Inbox — text-based, zero spam risk)</option>
-                        <option value="pdf">Convert to PDF (text + visual)</option>
+                        <option value="pdf">Convert to PDF (visual only)</option>
                         <option value="txt">Convert to TXT (Plain Text)</option>
                         <option value="docx">Convert to DOCX (Word)</option>
                         <option value="rtf">Convert to RTF</option>
@@ -783,6 +787,10 @@
                         <option value="none">Original filename</option>
                     </select>
                     <span id="bulkAttachName" style="color:#00ff9d; font-size:12px;"></span>
+                    <label style="display:flex;align-items:center;gap:6px;color:#ccc;font-size:12px;">
+                        <input type="checkbox" id="bulkEmbedVisual" checked>
+                        Embed image/PDF preview inline
+                    </label>
                     <button id="bulkClearAttach" onclick="clearAttachment('bulk')"
                         style="display:none; background:#f87171; color:#fff; border:none; border-radius:4px; padding:4px 8px; cursor:pointer; font-size:12px;">&#10005;
                         Remove</button>
