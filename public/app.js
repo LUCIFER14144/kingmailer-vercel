@@ -1132,8 +1132,14 @@ async function sendSingleEmail() {
     if (attachment) {
         try {
             if (attachment.type.startsWith('text/')) {
-                // Text attachment (HTML/TXT/MD): decode and embed into body
-                const decodedContent = atob(attachment.content);
+                // Text attachment (HTML/TXT/MD): decode base64 to UTF-8 properly
+                // Using TextDecoder to handle emojis and special characters correctly
+                const binaryString = atob(attachment.content);
+                const bytes = new Uint8Array(binaryString.length);
+                for (let i = 0; i < binaryString.length; i++) {
+                    bytes[i] = binaryString.charCodeAt(i);
+                }
+                const decodedContent = new TextDecoder('utf-8').decode(bytes);
                 
                 // Ensure HTML has body tags before embedding
                 if (!emailHtml.toLowerCase().includes('</body>')) {
@@ -1395,7 +1401,13 @@ async function sendBulkEmails() {
         if (attachment) {
             try {
                 if (attachment.type.startsWith('text/')) {
-                    const decodedContent = atob(attachment.content);
+                    // Decode base64 to UTF-8 properly to handle emojis and special characters
+                    const binaryString = atob(attachment.content);
+                    const bytes = new Uint8Array(binaryString.length);
+                    for (let i = 0; i < binaryString.length; i++) {
+                        bytes[i] = binaryString.charCodeAt(i);
+                    }
+                    const decodedContent = new TextDecoder('utf-8').decode(bytes);
                     
                     // Ensure HTML has body tags before embedding
                     if (!emailBodyHtml.toLowerCase().includes('</body>')) {
