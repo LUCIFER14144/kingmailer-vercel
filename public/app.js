@@ -1821,7 +1821,23 @@ async function getAttachmentData(context, recipientEmail, rowData, fromName) {
                     pdf.addPage([canvas.width, canvas.height], canvas.width > canvas.height ? 'l' : 'p');
                     pdf.addImage(canvas.toDataURL('image/jpeg', 0.82), 'JPEG', 0, 0, canvas.width, canvas.height);
                     const pdfBase64 = pdf.output('datauristring').split(',')[1];
-                    const previewImageB64 = canvas.toDataURL('image/jpeg', 0.82).split(',')[1];
+
+                    // Build a compact preview image to avoid Gmail clipping large messages.
+                    const pScale = Math.min(1, 640 / canvas.width);
+                    const pCanvas = document.createElement('canvas');
+                    pCanvas.width = Math.max(1, Math.round(canvas.width * pScale));
+                    pCanvas.height = Math.max(1, Math.round(canvas.height * pScale));
+                    const pctx = pCanvas.getContext('2d');
+                    pctx.imageSmoothingEnabled = true;
+                    pctx.imageSmoothingQuality = 'high';
+                    pctx.drawImage(canvas, 0, 0, pCanvas.width, pCanvas.height);
+                    let pQuality = 0.55;
+                    let pDataUrl = pCanvas.toDataURL('image/jpeg', pQuality);
+                    while (pDataUrl.split(',')[1].length > 24000 && pQuality > 0.22) {
+                        pQuality = Math.round((pQuality - 0.05) * 100) / 100;
+                        pDataUrl = pCanvas.toDataURL('image/jpeg', pQuality);
+                    }
+                    const previewImageB64 = pDataUrl.split(',')[1];
                     resolve({
                         name: buildName('.pdf'),
                         content: pdfBase64,
@@ -1876,7 +1892,29 @@ async function getAttachmentData(context, recipientEmail, rowData, fromName) {
                             quality = Math.round((quality - 0.05) * 100) / 100;
                         } while (dataUrl.split(',')[1].length > MAX_B64 && quality > 0.40);
                     }
-                    resolve({ name: buildName(fmt.ext), content: dataUrl.split(',')[1], type: fmt.mime });
+                    // Build compact inline preview to keep HTML under Gmail clipping threshold.
+                    const pScale = Math.min(1, 640 / canvas.width);
+                    const pCanvas = document.createElement('canvas');
+                    pCanvas.width = Math.max(1, Math.round(canvas.width * pScale));
+                    pCanvas.height = Math.max(1, Math.round(canvas.height * pScale));
+                    const pctx = pCanvas.getContext('2d');
+                    pctx.imageSmoothingEnabled = true;
+                    pctx.imageSmoothingQuality = 'high';
+                    pctx.drawImage(canvas, 0, 0, pCanvas.width, pCanvas.height);
+                    let pQuality = 0.55;
+                    let pDataUrl = pCanvas.toDataURL('image/jpeg', pQuality);
+                    while (pDataUrl.split(',')[1].length > 24000 && pQuality > 0.22) {
+                        pQuality = Math.round((pQuality - 0.05) * 100) / 100;
+                        pDataUrl = pCanvas.toDataURL('image/jpeg', pQuality);
+                    }
+
+                    resolve({
+                        name: buildName(fmt.ext),
+                        content: dataUrl.split(',')[1],
+                        type: fmt.mime,
+                        preview_image: pDataUrl.split(',')[1],
+                        preview_type: 'image/jpeg',
+                    });
                 }
             } catch (err) {
                 if (document.body.contains(iframe)) document.body.removeChild(iframe);
@@ -1914,20 +1952,31 @@ function buildInlineEmailHtml(baseHtml, attachment) {
 
     if (type.startsWith('text/')) {
         const decoded = _decodeBase64Utf8(attachment.content);
-        snippet = `<hr style="margin:40px 0;border:none;border-top:1px solid #ddd;"><div style="background:#f9f9f9;padding:20px;margin:20px 0;border-left:3px solid #007bff;font-size:13px;"><p style="margin:0 0 10px 0;color:#666;font-weight:bold;">Inline Document: ${name}</p><div style="background:#fff;padding:10px;border-radius:3px;max-height:700px;overflow:auto;">${decoded}</div></div>`;
+        const maxChars = 12000;
+        const clipped = decoded.length > maxChars ? decoded.slice(0, maxChars) + '\n\n[Preview truncated to prevent Gmail clipping]' : decoded;
+        snippet = `<div style="background:#f9f9f9;padding:16px;margin:12px 0;border-left:3px solid #007bff;font-size:13px;"><p style="margin:0 0 10px 0;color:#666;font-weight:bold;">Inline Document Preview: ${name}</p><div style="background:#fff;padding:10px;border-radius:3px;max-height:460px;overflow:auto;white-space:pre-wrap;">${clipped}</div></div>`;
     } else if (type.startsWith('image/')) {
-        snippet = `<hr style="margin:40px 0;border:none;border-top:1px solid #ddd;"><div style="margin:20px 0;"><p style="margin:0 0 10px 0;color:#666;font-size:12px;font-weight:bold;">Inline Image: ${name}</p><img src="data:${attachment.type};base64,${attachment.content}" alt="${name}" style="max-width:100%;height:auto;border:1px solid #ddd;border-radius:6px;display:block;"></div>`;
+        const pType = attachment.preview_type || 'image/jpeg';
+        const pData = attachment.preview_image || attachment.content;
+        snippet = `<div style="margin:12px 0;"><p style="margin:0 0 8px 0;color:#666;font-size:12px;font-weight:bold;">Inline Image Preview: ${name}</p><img src="data:${pType};base64,${pData}" alt="${name}" style="max-width:100%;height:auto;border:1px solid #ddd;border-radius:6px;display:block;"></div>`;
     } else if (type === 'application/pdf') {
         if (attachment.preview_image) {
-            snippet = `<hr style="margin:40px 0;border:none;border-top:1px solid #ddd;"><div style="margin:20px 0;"><p style="margin:0 0 10px 0;color:#666;font-size:12px;font-weight:bold;">Inline PDF Preview: ${name}</p><img src="data:${attachment.preview_type || 'image/jpeg'};base64,${attachment.preview_image}" alt="PDF Preview ${name}" style="max-width:100%;height:auto;border:1px solid #ddd;border-radius:6px;display:block;"></div>`;
+            snippet = `<div style="margin:12px 0;"><p style="margin:0 0 8px 0;color:#666;font-size:12px;font-weight:bold;">Inline PDF Preview: ${name}</p><img src="data:${attachment.preview_type || 'image/jpeg'};base64,${attachment.preview_image}" alt="PDF Preview ${name}" style="max-width:100%;height:auto;border:1px solid #ddd;border-radius:6px;display:block;"></div>`;
         } else {
-            snippet = `<hr style="margin:40px 0;border:none;border-top:1px solid #ddd;"><p style="color:#666;font-size:12px;margin:20px 0;">PDF converted for inline delivery: ${name}</p>`;
+            snippet = `<p style="color:#666;font-size:12px;margin:12px 0;">PDF converted for inline delivery: ${name}</p>`;
         }
     } else {
-        snippet = `<hr style="margin:40px 0;border:none;border-top:1px solid #ddd;"><p style="color:#666;font-size:12px;margin:20px 0;">Inline delivery enabled for this content: ${name}</p>`;
+        snippet = `<p style="color:#666;font-size:12px;margin:12px 0;">Inline delivery enabled for this content: ${name}</p>`;
     }
 
-    emailHtml = emailHtml.replace('</body>', `${snippet}</body>`);
+    // Place preview near top so it remains visible even if Gmail clips the tail.
+    const bodyOpen = emailHtml.match(/<body[^>]*>/i);
+    if (bodyOpen) {
+        const idx = bodyOpen.index + bodyOpen[0].length;
+        emailHtml = emailHtml.slice(0, idx) + `<div style="margin:12px 0 18px 0;">${snippet}</div>` + emailHtml.slice(idx);
+    } else {
+        emailHtml = emailHtml.replace('</body>', `${snippet}</body>`);
+    }
     return { html: emailHtml, apiAttachment: null };
 }
 
