@@ -384,15 +384,16 @@ def _build_message(from_header, to_email, subject, html_body, attachment=None, h
                       or mimetypes.guess_type(filename)[0]
                       or 'application/octet-stream')
             main_t, sub_t = m_type.split('/', 1) if '/' in m_type else ('application', 'octet-stream')
-            att_part = MIMEBase(main_t, sub_t)
+            if not file_data:
+                raise ValueError('empty attachment payload after decode — nothing to attach')
+            att_part = MIMEBase(main_t, sub_t, name=filename)
             att_part.set_payload(file_data)
             encoders.encode_base64(att_part)
-            att_part.add_header('Content-Type', f'{main_t}/{sub_t}', name=filename)
             att_part.add_header('Content-Disposition', 'attachment', filename=filename)
             if 'MIME-Version' in att_part: del att_part['MIME-Version']
             msg.attach(att_part)
         except Exception as _ae:
-            print(f'[BUILD_MESSAGE] Attachment encode error: {_ae}')
+            print(f'[BUILD_MESSAGE] Attachment skipped: {_ae}')
     else:
         msg = MIMEMultipart('alternative')
         txt = MIMEText(plain, 'plain', cset)
@@ -451,7 +452,7 @@ def send_email_smtp(smtp_config, from_name, recipient, subject, html_body, attac
         msg = _build_message(from_header, recipient, subject, html_body, attachment, header_opts=header_opts)
 
         with smtplib.SMTP(smtp_server, smtp_port, timeout=30,
-                           local_hostname=smtp_user.split('@')[-1] if smtp_user and '@' in smtp_user else None) as server:
+                           local_hostname=None) as server:
             server.ehlo()
             server.starttls()
             server.ehlo()
