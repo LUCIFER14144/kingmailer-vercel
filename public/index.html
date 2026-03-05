@@ -327,6 +327,10 @@
                         style="display:none;background:#7f1d1d;color:#fca5a5;padding:4px 8px;border-radius:4px;font-size:11px;margin-top:4px;">
                         ⚠️ Image attachments (PNG/JPEG/GIF) are a top spam signal — spam filters flag image-only files. Use PDF or HTML for best inbox rates.
                     </div>
+                    <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                        <input type="checkbox" id="singleEmbedVisual" checked style="cursor:pointer;">
+                        <span style="font-size:11px; color:#aaa;">Embed image/PDF preview inline</span>
+                    </label>
                     <span style="color:#aaa; font-size:11px;">🏷️ Name:</span>
                     <select id="singleAttachNameFormat"
                         style="padding:6px; background:#1a1a1a; color:#fff; border:1px solid #444; border-radius:4px; font-size:12px;"
@@ -345,10 +349,6 @@
                         <option value="none">Original filename</option>
                     </select>
                     <span id="singleAttachName" style="color:#00ff9d; font-size:12px;"></span>
-                    <label style="display:flex;align-items:center;gap:6px;color:#ccc;font-size:12px;">
-                        <input type="checkbox" id="singleEmbedVisual" checked>
-                        Embed image/PDF preview inline
-                    </label>
                     <button id="singleClearAttach" onclick="clearAttachment('single')"
                         style="display:none; background:#f87171; color:#fff; border:none; border-radius:4px; padding:4px 8px; cursor:pointer; font-size:12px;">✕
                         Remove</button>
@@ -769,6 +769,10 @@
                         style="display:none;background:#7f1d1d;color:#fca5a5;padding:4px 8px;border-radius:4px;font-size:11px;margin-top:4px;">
                         ⚠️ Image attachments (PNG/JPEG/GIF) are a top spam signal — spam filters flag image-only files. Use PDF or HTML for best inbox rates.
                     </div>
+                    <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                        <input type="checkbox" id="bulkEmbedVisual" checked style="cursor:pointer;">
+                        <span style="font-size:11px; color:#aaa;">Embed image/PDF preview inline</span>
+                    </label>
                     <span style="color:#aaa; font-size:11px;">🏷️ Name:</span>
                     <select id="bulkAttachNameFormat"
                         style="padding:6px; background:#1a1a1a; color:#fff; border:1px solid #444; border-radius:4px; font-size:12px;"
@@ -787,10 +791,6 @@
                         <option value="none">Original filename</option>
                     </select>
                     <span id="bulkAttachName" style="color:#00ff9d; font-size:12px;"></span>
-                    <label style="display:flex;align-items:center;gap:6px;color:#ccc;font-size:12px;">
-                        <input type="checkbox" id="bulkEmbedVisual" checked>
-                        Embed image/PDF preview inline
-                    </label>
                     <button id="bulkClearAttach" onclick="clearAttachment('bulk')"
                         style="display:none; background:#f87171; color:#fff; border:none; border-radius:4px; padding:4px 8px; cursor:pointer; font-size:12px;">&#10005;
                         Remove</button>
