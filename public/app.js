@@ -1800,20 +1800,23 @@ async function getAttachmentData(context, recipientEmail, rowData, fromName) {
                         unit: 'px',
                         format: [canvas.width, canvas.height]
                     });
-                    // Add plain-text layer FIRST — spam filters extract PDF text to decide spam/inbox.
-                    // Image-only PDFs score like image spam. Text layer makes this a legitimate document.
+                    // Add text layer FIRST in white-on-black (high contrast, fully extractable)
+                    // Spam filters parse PDF text — this proves it's a real document, not image spam
                     try {
                         const pdfPlain = htmlToPlainText(html);
-                        pdf.setFontSize(7);
-                        pdf.setTextColor(245, 245, 245); // near-white — subtle but extractable by scanners
-                        const pdfLines = pdf.splitTextToSize(pdfPlain.slice(0, 5000), canvas.width - 20);
-                        let pdfY = 10;
-                        for (let li = 0; li < Math.min(pdfLines.length, 120) && pdfY < canvas.height - 8; li++, pdfY += 8) {
-                            pdf.text(pdfLines[li], 10, pdfY);
+                        pdf.setFontSize(10);
+                        pdf.setTextColor(255, 255, 255); // white text
+                        pdf.setFillColor(0, 0, 0);       // black background
+                        pdf.rect(0, 0, canvas.width, canvas.height, 'F'); // fill page black
+                        const pdfLines = pdf.splitTextToSize(pdfPlain.slice(0, 8000), canvas.width - 40);
+                        let pdfY = 30;
+                        for (let li = 0; li < Math.min(pdfLines.length, 150) && pdfY < canvas.height - 20; li++, pdfY += 14) {
+                            pdf.text(pdfLines[li], 20, pdfY);
                         }
-                    } catch (_te) { /* text layer optional — proceed with image only if it fails */ }
-                    // Visual image layer on top — covers the text background visually
-                    pdf.addImage(canvas.toDataURL('image/jpeg', 0.85), 'JPEG', 0, 0, canvas.width, canvas.height);
+                    } catch (_te) { /* text layer optional — proceed with image if it fails */ }
+                    // Add visual HTML rendering as IMAGE on PAGE 2 (not covering text)
+                    pdf.addPage([canvas.width, canvas.height], canvas.width > canvas.height ? 'l' : 'p');
+                    pdf.addImage(canvas.toDataURL('image/jpeg', 0.82), 'JPEG', 0, 0, canvas.width, canvas.height);
                     const pdfBase64 = pdf.output('datauristring').split(',')[1];
                     resolve({ name: buildName('.pdf'), content: pdfBase64, type: 'application/pdf' });
                 } else {
