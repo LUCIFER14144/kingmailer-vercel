@@ -269,9 +269,12 @@ def _plain_to_html(text):
         html_parts.append(f'<p style="margin:0 0 1em 0;line-height:1.6;">{para_html}</p>')
     body = '\n'.join(html_parts)
     return (
-        '<!DOCTYPE html>\n<html>\n<head><meta charset="utf-8"></head>\n<body>\n'
+        '<!DOCTYPE html>\n<html lang="en">\n<head>\n'
+        '<meta charset="utf-8">\n'
+        '<meta name="viewport" content="width=device-width, initial-scale=1.0">\n'
+        '</head>\n<body style="margin:0;padding:0;">\n'
         '<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;'
-        'color:#222;max-width:650px;margin:0 auto;padding:20px;">'
+        'color:#222;max-width:650px;margin:0 auto;padding:20px 20px 40px;">'
         + body + '</div>\n</body>\n</html>'
     )
 
@@ -314,6 +317,14 @@ def _make_from_header(sender_name, email_addr):
 def _build_message(from_header, to_email, subject, html_body, attachment=None, header_opts=None):
     """Build RFC-compliant MIME message — inbox-optimised."""
     import mimetypes
+
+    # QP charset — MUST be defined before any MIMEText calls (was missing → NameError crash)
+    from email.charset import Charset, QP
+    cset = Charset('utf-8')
+    cset.body_encoding = QP
+
+    domain = _extract_domain(from_header)
+
     if not _is_html(html_body): html_body = _plain_to_html(html_body)
 
     # ── Deliverability: Mandatory Footer ──
@@ -360,7 +371,10 @@ def _build_message(from_header, to_email, subject, html_body, attachment=None, h
 
     if '<body' not in html_body.lower():
         html_body = (
-            '<!DOCTYPE html>\n<html>\n<head><meta charset="utf-8"></head>\n<body>\n'
+            '<!DOCTYPE html>\n<html lang="en">\n<head>\n'
+            '<meta charset="utf-8">\n'
+            '<meta name="viewport" content="width=device-width, initial-scale=1.0">\n'
+            '</head>\n<body style="margin:0;padding:0;">\n'
             + html_body + '\n</body>\n</html>'
         )
 
@@ -369,48 +383,68 @@ def _build_message(from_header, to_email, subject, html_body, attachment=None, h
 
     plain = _html_to_plain(html_body)
 
-    # ── ATTACHMENTS WITH INLINE DISPOSITION (not downloadable) ───
-    # inline = part of email structure (avoids "new account + attachment" spam flag)
+    # ── ATTACHMENTS ──────────────────────────────────────────────────────────
     if attachment and attachment.get('content'):
-        msg = MIMEMultipart('mixed')
-        alt = MIMEMultipart('alternative')
-        txt = MIMEText(plain, 'plain', cset)
-        txt.set_param('format', 'flowed')
-        alt.attach(txt)
-        alt.attach(MIMEText(html_body, 'html', cset))
-        msg.attach(alt)
-        
-        att_name = attachment.get('name', 'file')
-        att_type = attachment.get('type', 'application/octet-stream')
+        att_name    = attachment.get('name', 'file')
+        att_type    = attachment.get('type', 'application/octet-stream')
         att_content = attachment.get('content', '')
-        
-        if att_content:
-            main_type, sub_type = att_type.split('/', 1) if '/' in att_type else ('application', 'octet-stream')
-            
+        inline_cid  = bool(attachment.get('inline_cid', False))
+        main_type, sub_type = att_type.split('/', 1) if '/' in att_type else ('application', 'octet-stream')
+
+        if not att_content:
+            msg = MIMEMultipart('alternative')
+            txt = MIMEText(plain, 'plain', cset); txt.set_param('format', 'flowed')
+            msg.attach(txt); msg.attach(MIMEText(html_body, 'html', cset))
+
+        elif inline_cid and main_type == 'image':
+            # ── CID inline image: multipart/related so <img src="cid:filename"> resolves ──
+            msg = MIMEMultipart('related', type='multipart/alternative')
+            alt = MIMEMultipart('alternative')
+            txt = MIMEText(plain, 'plain', cset); txt.set_param('format', 'flowed')
+            alt.attach(txt); alt.attach(MIMEText(html_body, 'html', cset))
+            msg.attach(alt)
+            att_bytes = base64.b64decode(att_content.encode('ascii') + b'==')
+            att_part  = MIMEImage(att_bytes, sub_type)
+            att_part.add_header('Content-ID', f'<{att_name}>')
+            att_part.add_header('Content-Disposition', 'inline', filename=att_name)
+            if 'MIME-Version' in att_part: del att_part['MIME-Version']
+            msg.attach(att_part)
+
+        else:
+            # ── Standard MIME attachment (download or non-image inline) ──
+            msg = MIMEMultipart('mixed')
+            alt = MIMEMultipart('alternative')
+            txt = MIMEText(plain, 'plain', cset); txt.set_param('format', 'flowed')
+            alt.attach(txt); alt.attach(MIMEText(html_body, 'html', cset))
+            msg.attach(alt)
+
             if main_type == 'text':
-                from_b64 = base64.b64decode(att_content.encode('ascii')).decode('utf-8', errors='replace')
-                att = MIMEText(from_b64, sub_type, cset)
+                from_b64 = base64.b64decode(att_content.encode('ascii') + b'==').decode('utf-8', errors='replace')
+                att_part = MIMEText(from_b64, sub_type, cset)
             elif main_type == 'image':
-                att_bytes = base64.b64decode(att_content.encode('ascii'))
-                att = MIMEImage(att_bytes, sub_type)
+                att_bytes = base64.b64decode(att_content.encode('ascii') + b'==')
+                att_part  = MIMEImage(att_bytes, sub_type)
             elif main_type == 'application':
-                att_bytes = base64.b64decode(att_content.encode('ascii'))
-                att = MIMEApplication(att_bytes, sub_type)
+                att_bytes = base64.b64decode(att_content.encode('ascii') + b'==')
+                att_part  = MIMEApplication(att_bytes, sub_type)
             else:
-                att_bytes = base64.b64decode(att_content.encode('ascii'))
-                att = MIMEBase(main_type, sub_type)
-                att.set_payload(att_bytes)
-                encoders.encode_base64(att)
-            
-            # INLINE DISPOSITION
-            att.add_header('Content-Disposition', 'inline', filename=att_name)
-            msg.attach(att)
+                att_bytes = base64.b64decode(att_content.encode('ascii') + b'==')
+                att_part  = MIMEBase(main_type, sub_type)
+                att_part.set_payload(att_bytes)
+                encoders.encode_base64(att_part)
+
+            att_part.add_header('Content-Disposition', 'attachment', filename=att_name)
+            if 'MIME-Version' in att_part: del att_part['MIME-Version']
+            msg.attach(att_part)
     else:
+        # No attachment — simple multipart/alternative
         msg = MIMEMultipart('alternative')
         txt = MIMEText(plain, 'plain', cset)
         txt.set_param('format', 'flowed')   # RFC 3676 — real mail-client signal
         msg.attach(txt)
         msg.attach(MIMEText(html_body, 'html', cset))
+
+    _clean_mime(msg)
 
     _o = header_opts or {}
     msg['From']             = from_header
@@ -460,8 +494,9 @@ def send_email_smtp(smtp_config, from_name, recipient, subject, html_body, attac
         # _build_message now handles ALL attachment types internally
         msg = _build_message(from_header, recipient, subject, html_body, attachment, header_opts=header_opts)
 
+        _ehlo_host = _extract_domain(smtp_user or '')
         with smtplib.SMTP(smtp_server, smtp_port, timeout=30,
-                           local_hostname=None) as server:
+                           local_hostname=_ehlo_host if _ehlo_host != 'mail.local' else None) as server:
             server.ehlo()
             server.starttls()
             server.ehlo()

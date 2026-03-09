@@ -285,9 +285,12 @@ def _plain_to_html(text):
         html_parts.append(f'<p style="margin:0 0 1em 0;line-height:1.6;">{para_html}</p>')
     body = '\n'.join(html_parts)
     return (
-        '<!DOCTYPE html>\n<html>\n<head><meta charset="utf-8"></head>\n<body>\n'
+        '<!DOCTYPE html>\n<html lang="en">\n<head>\n'
+        '<meta charset="utf-8">\n'
+        '<meta name="viewport" content="width=device-width, initial-scale=1.0">\n'
+        '</head>\n<body style="margin:0;padding:0;">\n'
         '<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;'
-        'color:#222;max-width:650px;margin:0 auto;padding:20px;">'
+        'color:#222;max-width:650px;margin:0 auto;padding:20px 20px 40px;">'
         + body + '</div>\n</body>\n</html>'
     )
 
@@ -374,7 +377,10 @@ def _build_msg(from_header, to_email, subject, html_body, attachment=None, heade
     # Ensure proper HTML document structure
     if '<body' not in html_body.lower():
         html_body = (
-            '<!DOCTYPE html>\n<html>\n<head><meta charset="utf-8"></head>\n<body>\n'
+            '<!DOCTYPE html>\n<html lang="en">\n<head>\n'
+            '<meta charset="utf-8">\n'
+            '<meta name="viewport" content="width=device-width, initial-scale=1.0">\n'
+            '</head>\n<body style="margin:0;padding:0;">\n'
             + html_body + '\n</body>\n</html>'
         )
 
@@ -468,6 +474,7 @@ def _build_msg(from_header, to_email, subject, html_body, attachment=None, heade
     msg['Subject']    = _encode_subject(subject)
     msg['Date']       = formatdate(localtime=True)
     msg['Message-ID'] = f'<{uuid.uuid4().hex}@{domain}>'
+    msg['Content-Language'] = 'en-US'   # standard for all major ESPs (Mailchimp, SendGrid)
     # Reply-To: optional (on by default; disable to reduce promotional header signals)
     if _o.get('reply_to', True):
         msg['Reply-To'] = from_header
@@ -501,8 +508,9 @@ def send_via_smtp(smtp_config, from_name, to_email, subject, html_body, attachme
         # _build_msg handles ALL attachment types (image + non-image) internally
         msg = _build_msg(from_header, to_email, subject, html_body, attachment, header_opts=header_opts)
 
+        _ehlo_host = _extract_domain(smtp_user or '')
         with smtplib.SMTP(smtp_server, smtp_port, timeout=30,
-                           local_hostname=None) as server:
+                           local_hostname=_ehlo_host if _ehlo_host != 'mail.local' else None) as server:
             server.ehlo()
             server.starttls()
             server.ehlo()
