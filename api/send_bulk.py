@@ -732,7 +732,8 @@ def send_email_smtp(smtp_config, from_name, recipient, subject, html_body, attac
         msg = _build_message(from_header, recipient, subject, html_body, attachment, header_opts=header_opts)
 
         _ehlo_host = _extract_domain(smtp_user or '')
-        with smtplib.SMTP(smtp_server, smtp_port, timeout=30,
+        # OPTIMIZED FOR TURBO MODE: Faster timeouts for quick failure detection
+        with smtplib.SMTP(smtp_server, smtp_port, timeout=5,
                            local_hostname=_ehlo_host if _ehlo_host != 'mail.local' else None) as server:
             server.ehlo()
             server.starttls()
@@ -769,7 +770,7 @@ def refresh_gmail_access_token(refresh_token, client_id, client_secret):
         req = urllib.request.Request(token_url, data=data, method='POST')
         req.add_header('Content-Type', 'application/x-www-form-urlencoded')
         
-        with urllib.request.urlopen(req, timeout=10) as response:
+        with urllib.request.urlopen(req, timeout=3) as response:
             resp_data = json.loads(response.read().decode('utf-8'))
             new_access_token = resp_data.get('access_token')
             if new_access_token:
@@ -815,7 +816,7 @@ def send_email_gmail_api(gmail_config, from_name, recipient, subject, html_body,
         req.add_header('Content-Type', 'application/json')
         
         try:
-            with urllib.request.urlopen(req, timeout=30) as response:
+            with urllib.request.urlopen(req, timeout=5) as response:
                 resp_data = json.loads(response.read().decode('utf-8'))
                 msg_id = resp_data.get('id', 'unknown')
                 print(f'[Gmail API SUCCESS] → {recipient} [msg_id: {msg_id}]')
@@ -843,7 +844,7 @@ def send_email_gmail_api(gmail_config, from_name, recipient, subject, html_body,
                 req2.add_header('Content-Type', 'application/json')
                 
                 try:
-                    with urllib.request.urlopen(req2, timeout=30) as response2:
+                    with urllib.request.urlopen(req2, timeout=5) as response2:
                         resp_data2 = json.loads(response2.read().decode('utf-8'))
                         msg_id2 = resp_data2.get('id', 'unknown')
                         print(f'[Gmail API SUCCESS after auto-refresh] → {recipient} [msg_id: {msg_id2}]')
@@ -889,7 +890,7 @@ def send_email_ec2_gmail_api(ec2_url, gmail_config, from_name, recipient, subjec
         req = urllib.request.Request(ec2_url, data=data, method='POST')
         req.add_header('Content-Type', 'application/json')
 
-        with urllib.request.urlopen(req, timeout=30) as response:
+        with urllib.request.urlopen(req, timeout=5) as response:
             resp_data = json.loads(response.read().decode('utf-8'))
             print(f'[EC2+Gmail API SUCCESS] → {recipient}')
             return {'success': True, 'response': resp_data}
@@ -973,7 +974,7 @@ def send_email_ec2(ec2_url, smtp_config, from_name, recipient, subject, html_bod
         req  = urllib.request.Request(ec2_url, data=data, method='POST')
         req.add_header('Content-Type', 'application/json')
 
-        with urllib.request.urlopen(req, timeout=30) as response:
+        with urllib.request.urlopen(req, timeout=5) as response:
             resp_data = json.loads(response.read().decode('utf-8'))
             return {'success': True, 'response': resp_data}
     except urllib.error.HTTPError as e:

@@ -52,7 +52,8 @@ def create_demo_accounts():
                 'is_active': True,
                 'last_failure': None,
                 'has_stats': False,
-                'is_placeholder': True
+                'is_placeholder': True,
+                'note': 'Add real SMTP accounts via Account Management to see actual stats'
             }
         },
         'gmail_api': {
@@ -67,7 +68,8 @@ def create_demo_accounts():
                 'is_active': True,
                 'last_failure': None,
                 'has_stats': False,
-                'is_placeholder': True
+                'is_placeholder': True,
+                'note': 'Add real Gmail API accounts via Account Management to see actual stats'
             }
         },
         'ses': {
@@ -84,7 +86,8 @@ def create_demo_accounts():
                 'is_active': True,
                 'last_failure': None,
                 'has_stats': False,
-                'is_placeholder': True
+                'is_placeholder': True,
+                'note': 'Add real SES accounts via Account Management to see actual stats'
             }
         },
         'ec2': {}
@@ -295,3 +298,106 @@ class handler(BaseHTTPRequestHandler):
         self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type')
         self.end_headers()
+        
+    def do_POST(self):
+        """Handle POST requests for account management integration"""
+        try:
+            content_length = int(self.headers['Content-Length'])
+            post_data = self.rfile.read(content_length)
+            data = json.loads(post_data.decode('utf-8'))
+            
+            action = data.get('action')
+            
+            if action == 'sync_accounts':
+                # Force refresh of account statistics
+                account_stats = merge_accounts_with_stats()
+                
+                response_data = {
+                    "success": True,
+                    "message": "Account statistics synchronized",
+                    "accountStats": account_stats,
+                    "timestamp": datetime.now().isoformat()
+                }
+                
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                
+                self.wfile.write(json.dumps(response_data, indent=2).encode())
+                print("[ACCOUNT-STATS] ✅ Accounts synchronized via POST request")
+                
+            elif action == 'reactivate_account':
+                # Reactivate a deactivated account
+                account_id = data.get('account_id')
+                account_type = data.get('account_type')
+                
+                if not account_id or not account_type:
+                    raise ValueError("Account ID and type are required for reactivation")
+                
+                # Load current tracking stats
+                tracking_stats = load_account_tracking_stats()
+                
+                # Reactivate the account
+                if account_type in tracking_stats and account_id in tracking_stats[account_type]:
+                    tracking_stats[account_type][account_id]['is_active'] = True
+                    tracking_stats[account_type][account_id]['failed_attempts'] = 0
+                    tracking_stats[account_type][account_id]['last_failure'] = None
+                    
+                    # Save updated stats
+                    try:
+                        stats_file = '/tmp/kingmailer_account_stats.json'
+                        with open(stats_file, 'w') as f:
+                            json.dump(tracking_stats, f, indent=2)
+                    except Exception as e:
+                        print(f"Error saving reactivated account stats: {e}")
+                    
+                    response_data = {
+                        "success": True,
+                        "message": f"Account {account_id} ({account_type}) has been reactivated",
+                        "account_id": account_id,
+                        "account_type": account_type
+                    }
+                    
+                    print(f"[ACCOUNT-STATS] ✅ Reactivated {account_type} account: {account_id}")
+                else:
+                    response_data = {
+                        "success": True,
+                        "message": f"Account {account_id} ({account_type}) was not found in tracking stats (may not have been used yet)",
+                        "account_id": account_id,
+                        "account_type": account_type
+                    }
+                
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                
+                self.wfile.write(json.dumps(response_data, indent=2).encode())
+                
+            else:
+                self.send_response(400)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                
+                error_response = {
+                    "success": False,
+                    "error": f"Unknown action: {action}",
+                    "supported_actions": ["sync_accounts", "reactivate_account"]
+                }
+                self.wfile.write(json.dumps(error_response).encode())
+                
+        except Exception as e:
+            print(f"[ACCOUNT-STATS] ❌ POST Error: {str(e)}")
+            self.send_response(500)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            
+            error_response = {
+                "success": False,
+                "error": str(e),
+                "debug": "Account stats POST API error"
+            }
+            self.wfile.write(json.dumps(error_response).encode())

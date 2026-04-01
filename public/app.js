@@ -4131,7 +4131,10 @@ function renderAccountStatistics(stats) {
                     <div style="background:#2d2d2d;padding:10px;border-radius:6px;margin:5px 0;border-left:4px solid ${statusColor};">
                         <div style="display:flex;justify-content:space-between;align-items:center;">
                             <strong>${username}</strong>
-                            <span style="color:${statusColor};font-weight:600;">${status}</span>
+                            <div>
+                                <span style="color:${statusColor};font-weight:600;">${status}</span>
+                                ${!stats.is_active ? `<button onclick="reactivateAccount('${username}', 'smtp')" style="margin-left:10px;padding:3px 8px;background:#10b981;color:white;border:none;border-radius:4px;font-size:11px;cursor:pointer;">Reactivate</button>` : ''}
+                            </div>
                         </div>
                         <div style="font-size:13px;color:#aaa;margin-top:5px;">
                             Emails Sent: <strong style="color:#fff;">${stats.emails_sent || 0}</strong> | 
@@ -4139,6 +4142,7 @@ function renderAccountStatistics(stats) {
                             Total Failures: <strong>${stats.total_failures || 0}</strong>
                         </div>
                         ${stats.last_failure ? `<div style="font-size:12px;color:#666;margin-top:3px;">Last Failure: ${stats.last_failure}</div>` : ''}
+                        ${stats.note ? `<div style="font-size:12px;color:#34d399;margin-top:3px;font-style:italic;">${stats.note}</div>` : ''}
                     </div>
                 `;
                 
@@ -4161,7 +4165,10 @@ function renderAccountStatistics(stats) {
                     <div style="background:#2d2d2d;padding:10px;border-radius:6px;margin:5px 0;border-left:4px solid ${statusColor};">
                         <div style="display:flex;justify-content:space-between;align-items:center;">
                             <strong>${email}</strong>
-                            <span style="color:${statusColor};font-weight:600;">${status}</span>
+                            <div>
+                                <span style="color:${statusColor};font-weight:600;">${status}</span>
+                                ${!stats.is_active ? `<button onclick="reactivateAccount('${email}', 'gmail_api')" style="margin-left:10px;padding:3px 8px;background:#10b981;color:white;border:none;border-radius:4px;font-size:11px;cursor:pointer;">Reactivate</button>` : ''}
+                            </div>
                         </div>
                         <div style="font-size:13px;color:#aaa;margin-top:5px;">
                             Emails Sent: <strong style="color:#fff;">${stats.emails_sent || 0}</strong> | 
@@ -4169,6 +4176,7 @@ function renderAccountStatistics(stats) {
                             Total Failures: <strong>${stats.total_failures || 0}</strong>
                         </div>
                         ${stats.last_failure ? `<div style="font-size:12px;color:#666;margin-top:3px;">Last Failure: ${stats.last_failure}</div>` : ''}
+                        ${stats.note ? `<div style="font-size:12px;color:#34d399;margin-top:3px;font-style:italic;">${stats.note}</div>` : ''}
                     </div>
                 `;
                 
@@ -4239,6 +4247,18 @@ async function reactivateAllAccounts() {
  * Refresh account statistics display
  */
 function refreshAccountStats() {
+    // Add sync functionality to refresh data from server
+    fetch('/api/account-stats', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({action: 'sync_accounts'})})
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                console.log('Account stats synchronized successfully');
+            }
+        })
+        .catch(error => {
+            console.log('Sync request failed, using regular refresh');
+        });
+    
     showAccountStatistics();
 }
 
@@ -4247,6 +4267,34 @@ function refreshAccountStats() {
  */
 function closeAccountStats() {
     document.getElementById('accountStatsModal').style.display = 'none';
+}
+
+/**
+ * Reactivate a deactivated account
+ */
+async function reactivateAccount(accountId, accountType) {
+    try {
+        const response = await fetch('/api/account-stats', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                action: 'reactivate_account',
+                account_id: accountId,
+                account_type: accountType
+            })
+        });
+
+        const data = await response.json();
+        
+        if (data.success) {
+            showResult('bulkResult', `✅ Account ${accountId} reactivated successfully`, 'success');
+            refreshAccountStats(); // Refresh the stats display
+        } else {
+            showResult('bulkResult', `❌ Failed to reactivate account: ${data.error}`, 'error');
+        }
+    } catch (error) {
+        showResult('bulkResult', `❌ Reactivation error: ${error.message}`, 'error');
+    }
 }
 
 // Initialize fast mode status when page loads
