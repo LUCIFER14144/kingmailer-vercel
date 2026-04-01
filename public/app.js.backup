@@ -3619,7 +3619,7 @@ function authenticateWithGoogle() {
         access_type: 'offline',
         prompt: 'consent'
     });
-    
+
     if (credential_type === 'installed') {
         // Desktop app flow - open window, user copies code manually
         const width = 600;
@@ -3634,7 +3634,537 @@ function authenticateWithGoogle() {
         );
         
         // Show code input field
-        showResult('gmailApiResult', 
+        showResult('gmailApiResult',
+            `<strong>🔒 Google OAuth Authorization</strong><br><br>` +
+            `1. Sign in with your Google account<br>` +
+            `2. Click "Allow" to authorize<br>` +
+            `3. Browser will redirect to localhost and may show a connection error (this is normal)<br>` +
+            `4. Copy the FULL URL from that browser address bar and paste below (or paste only the code):<br><br>` +
+            `<div style="margin:15px 0;">` +
+            `<input type="text" id="manualAuthCode" placeholder="Paste full localhost URL OR authorization code" style="width:100%; padding:10px; background:#1a1a1a; border:1px solid #00ff9d; color:#00ff9d; border-radius:6px; font-family:monospace; font-size:14px;"><br>` +
+            `<button onclick="exchangeManualCode()" style="margin-top:10px; padding:10px 20px; background:#00ff9d; color:#000; border:none; border-radius:6px; font-weight:bold; cursor:pointer;">Submit Code</button>` +
+            `</div>`, 
+            'info'
+        );
+    } else {
+        // Web app flow - automatic popup callback
+        const width = 500;
+        const height = 600;
+        const left = (screen.width / 2) - (width / 2);
+        const top = (screen.height / 2) - (height / 2);
+        
+        window.open(authUrl, '_blank', `width=${width},height=${height},left=${left},top=${top}`);
+    }
+}
+
+// ============================================================================
+// ACCOUNT STATISTICS & FAST MODE DETECTION - New Features
+// ============================================================================
+
+// Account statistics data
+let accountStats = {
+    smtp: {},
+    gmail_api: {},
+    ses: {}
+};
+
+/**
+ * Update fast mode status indicator based on delay settings
+ */
+function updateFastModeStatus() {
+    const minDelayInput = document.getElementById('bulkMinDelay');
+    const maxDelayInput = document.getElementById('bulkMaxDelay');
+    const statusDiv = document.getElementById('fastModeStatus');
+    
+    if (!minDelayInput || !maxDelayInput || !statusDiv) return;
+    
+    const minDelay = parseInt(minDelayInput.value) || 0;
+    const maxDelay = parseInt(maxDelayInput.value) || 0;
+    
+    let statusText = '';
+    let statusColor = '';
+    let bgColor = '';
+    
+    if (maxDelay <= 1000 && minDelay <= 1000) {
+        statusText = '🚀 FAST MODE ACTIVE - Minimal delays for rapid sending';
+        statusColor = '#fff';
+        bgColor = '#10b981';
+    } else if (maxDelay <= 5000) {
+        statusText = '⚡ SPEED MODE - Low delays for faster sending';
+        statusColor = '#fff';
+        bgColor = '#f59e0b';
+    } else {
+        statusText = '🐌 SAFE MODE - Conservative delays for maximum inbox rate';
+        statusColor = '#fff';
+        bgColor = '#3b82f6';
+    }
+    
+    statusDiv.textContent = statusText;
+    statusDiv.style.color = statusColor;
+    statusDiv.style.background = bgColor;
+    statusDiv.style.display = 'block';
+    
+    // Log fast mode detection for console visibility
+    if (maxDelay <= 1000) {
+        console.log('🚀 FAST MODE DETECTED: Max delay = ' + maxDelay + 'ms, using minimal delays for rapid sending');
+    }
+}
+
+/**
+ * Show account statistics modal
+ */
+async function showAccountStatistics() {
+    const modal = document.getElementById('accountStatsModal');
+    const content = document.getElementById('accountStatsContent');
+    
+    modal.style.display = 'block';
+    content.innerHTML = '<div style="text-align:center;padding:40px;color:#666;">Loading account statistics...</div>';
+    
+    try {
+        // Fetch account statistics from the server
+        const response = await fetch('/api/account-stats');
+        const stats = response.ok ? await response.json() : {};
+        
+        // Update local stats
+        accountStats = stats.accountStats || {smtp: {}, gmail_api: {}, ses: {}};
+        
+        renderAccountStatistics(stats);
+    } catch (error) {
+        console.error('Error loading account statistics:', error);
+        content.innerHTML = '<div style="text-align:center;padding:40px;color:#f87171;">Error loading statistics: ' + error.message + '</div>';
+    }
+}
+
+/**
+ * Render account statistics content
+ */
+function renderAccountStatistics(stats) {
+    const content = document.getElementById('accountStatsContent');
+    const accountStats = stats.accountStats || {smtp: {}, gmail_api: {}, ses: {}};
+    
+    let html = `
+        <div style="background:#1a1a2e;padding:20px;border-radius:8px;margin-bottom:20px;">
+            <h4 style="margin:0 0 15px 0;color:#fff;">📊 KINGMAILER ACCOUNT STATISTICS</h4>
+            <div style="border-bottom:1px solid #333;margin:15px 0;"></div>
+    `;
+    
+    let totalEmailsSent = 0;
+    let totalActiveAccounts = 0;
+    let totalDeactivatedAccounts = 0;
+    
+    // SMTP Accounts
+    html += '<h5 style="color:#60a5fa;margin:15px 0 10px 0;">🔗 SMTP ACCOUNTS:</h5>';
+    if (Object.keys(accountStats.smtp || {}).length > 0) {
+        Object.entries(accountStats.smtp).forEach(([username, stats]) => {
+            const status = stats.is_active ? '🟢 ACTIVE' : '🔴 DEACTIVATED';
+            const statusColor = stats.is_active ? '#10b981' : '#f87171';
+            
+            html += `
+                <div style="background:#2d2d2d;padding:10px;border-radius:6px;margin:5px 0;border-left:4px solid ${statusColor};">
+                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                        <strong>${username}</strong>
+                        <span style="color:${statusColor};font-weight:600;">${status}</span>
+                    </div>
+                    <div style="font-size:13px;color:#aaa;margin-top:5px;">
+                        Emails Sent: <strong style="color:#fff;">${stats.emails_sent || 0}</strong> | 
+                        Failed Attempts: <strong style="color:#f87171;">${stats.failed_attempts || 0}/3</strong> |
+                        Total Failures: <strong>${stats.total_failures || 0}</strong>
+                    </div>
+                    ${stats.last_failure ? `<div style="font-size:12px;color:#666;margin-top:3px;">Last Failure: ${stats.last_failure}</div>` : ''}
+                </div>
+            `;
+            
+            totalEmailsSent += stats.emails_sent || 0; 
+            if (stats.is_active) totalActiveAccounts++;
+            else totalDeactivatedAccounts++;
+        });
+    } else {
+        html += '<div style="color:#666;font-style:italic;">No SMTP accounts configured or used yet.</div>';
+    }
+    
+    // Gmail API Accounts
+    html += '<h5 style="color:#34d399;margin:20px 0 10px 0;">📧 GMAIL API ACCOUNTS:</h5>';
+    if (Object.keys(accountStats.gmail_api || {}).length > 0) {
+        Object.entries(accountStats.gmail_api).forEach(([email, stats]) => {
+            const status = stats.is_active ? '🟢 ACTIVE' : '🔴 DEACTIVATED';
+            const statusColor = stats.is_active ? '#10b981' : '#f87171';
+            
+            html += `
+                <div style="background:#2d2d2d;padding:10px;border-radius:6px;margin:5px 0;border-left:4px solid ${statusColor};">
+                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                        <strong>${email}</strong>
+                        <span style="color:${statusColor};font-weight:600;">${status}</span>
+                    </div>
+                    <div style="font-size:13px;color:#aaa;margin-top:5px;">
+                        Emails Sent: <strong style="color:#fff;">${stats.emails_sent || 0}</strong> | 
+                        Failed Attempts: <strong style="color:#f87171;">${stats.failed_attempts || 0}/3</strong> |
+                        Total Failures: <strong>${stats.total_failures || 0}</strong>
+                    </div>
+                    ${stats.last_failure ? `<div style="font-size:12px;color:#666;margin-top:3px;">Last Failure: ${stats.last_failure}</div>` : ''}
+                </div>
+            `;
+            
+            totalEmailsSent += stats.emails_sent || 0;
+            if (stats.is_active) totalActiveAccounts++;
+            else totalDeactivatedAccounts++;
+        });
+    } else {
+        html += '<div style="color:#666;font-style:italic;">No Gmail API accounts configured or used yet.</div>';
+    }
+    
+    // AWS SES Accounts
+    html += '<h5 style="color:#f59e0b;margin:20px 0 10px 0;">☁️ AWS SES ACCOUNTS:</h5>';
+    if (Object.keys(accountStats.ses || {}).length > 0) {
+        Object.entries(accountStats.ses).forEach(([name, stats]) => {
+            const status = stats.is_active ? '🟢 ACTIVE' : '🔴 DEACTIVATED';
+            const statusColor = stats.is_active ? '#10b981' : '#f87171';
+            
+            html += `
+                <div style="background:#2d2d2d;padding:10px;border-radius:6px;margin:5px 0;border-left:4px solid ${statusColor};">
+                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                        <strong>${name}</strong>
+                        <span style="color:${statusColor};font-weight:600;">${status}</span>
+                    </div>
+                    <div style="font-size:13px;color:#aaa;margin-top:5px;">
+                        Emails Sent: <strong style="color:#fff;">${stats.emails_sent || 0}</strong> | 
+                        Failed Attempts: <strong style="color:#f87171;">${stats.failed_attempts || 0}/3</strong> |
+                        Total Failures: <strong>${stats.total_failures || 0}</strong>
+                    </div>
+                    ${stats.last_failure ? `<div style="font-size:12px;color:#666;margin-top:3px;">Last Failure: ${stats.last_failure}</div>` : ''}
+                </div>
+            `;
+            
+            totalEmailsSent += stats.emails_sent || 0;
+            if (stats.is_active) totalActiveAccounts++;
+            else totalDeactivatedAccounts++;
+        });
+    } else {
+        html += '<div style="color:#666;font-style:italic;">No SES accounts configured or used yet.</div>';
+    }
+    
+    // Summary
+    html += `
+            <div style="border-top:1px solid #333;margin:20px 0 15px 0;padding-top:15px;">
+                <h5 style="color:#fff;margin:0 0 10px 0;">📈 SUMMARY:</h5>
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:15px;text-align:center;">
+                    <div style="background:#059669;padding:10px;border-radius:6px;">
+                        <div style="font-size:24px;font-weight:bold;">${totalEmailsSent}</div>
+                        <div style="font-size:12px;opacity:0.8;">Total Emails Sent</div>
+                    </div>
+                    <div style="background:#10b981;padding:10px;border-radius:6px;">
+                        <div style="font-size:24px;font-weight:bold;">${totalActiveAccounts}</div>
+                        <div style="font-size:12px;opacity:0.8;">Active Accounts</div>
+                    </div>
+                    <div style="background:#f87171;padding:10px;border-radius:6px;">
+                        <div style="font-size:24px;font-weight:bold;">${totalDeactivatedAccounts}</div>
+                        <div style="font-size:12px;opacity:0.8;">Deactivated</div>
+                    </div>
+                </div>
+            </div>
+            
+            <div style="background:#374151;padding:12px;border-radius:6px;margin-top:15px;">
+                <div style="color:#d1d5db;font-size:13px;line-height:1.4;">
+                    <strong>💡 TIPS:</strong><br>
+                    • Accounts are deactivated after 3 consecutive failures<br>
+                    • Accounts are automatically reactivated after a successful send<br>
+                    • Use 'Reactivate All' button to manually reactivate all accounts
+                </div>
+            </div>
+        </div>
+    `;
+    
+    content.innerHTML = html;
+}
+
+/**
+ * Reactivate all deactivated accounts
+ */
+async function reactivateAllAccounts() {
+    try {
+        const response = await fetch('/api/reactivate-accounts', { method: 'POST' });
+        const result = await response.json();
+        
+        if (response.ok) {
+            alert(`✅ ${result.reactivated_count || 0} accounts have been reactivated.\\n\\nAll accounts are now ready to send emails again.`);
+            refreshAccountStats();
+        } else {
+            alert('❌ Error reactivating accounts: ' + (result.error || 'Unknown error'));
+        }
+    } catch (error) {
+        console.error('Error reactivating accounts:', error);
+        alert('❌ Error reactivating accounts: ' + error.message);
+    }
+}
+
+/**
+ * Refresh account statistics display
+ */
+function refreshAccountStats() {
+    showAccountStatistics();
+}
+
+/**
+ * Close account statistics modal
+ */
+function closeAccountStats() {
+    document.getElementById('accountStatsModal').style.display = 'none';
+}
+
+// Initialize fast mode status on page load
+document.addEventListener('DOMContentLoaded', function() {
+    updateFastModeStatus();
+});
+
+// ============================================================================
+// ADDITIONAL ACCOUNT STATISTICS FUNCTIONS
+// ============================================================================
+
+/**
+ * Update fast mode status indicator based on delay settings
+ */
+function updateFastModeStatus() {
+    const minDelayInput = document.getElementById('bulkMinDelay');
+    const maxDelayInput = document.getElementById('bulkMaxDelay');
+    const statusDiv = document.getElementById('fastModeStatus');
+    
+    if (!minDelayInput || !maxDelayInput || !statusDiv) return;
+    
+    const minDelay = parseInt(minDelayInput.value) || 0;
+    const maxDelay = parseInt(maxDelayInput.value) || 0;
+    
+    let statusText = '';
+    let statusColor = '';
+    let bgColor = '';
+    
+    if (maxDelay <= 1000 && minDelay <= 1000) {
+        statusText = '🚀 FAST MODE ACTIVE - Minimal delays for rapid sending';
+        statusColor = '#fff';
+        bgColor = '#10b981';
+    } else if (maxDelay <= 5000) {
+        statusText = '⚡ SPEED MODE - Low delays for faster sending';
+        statusColor = '#fff';
+        bgColor = '#f59e0b';
+    } else {
+        statusText = '🐌 SAFE MODE - Conservative delays for maximum inbox rate';
+        statusColor = '#fff';
+        bgColor = '#3b82f6';
+    }
+    
+    statusDiv.textContent = statusText;
+    statusDiv.style.color = statusColor;
+    statusDiv.style.background = bgColor;
+    statusDiv.style.display = 'block';
+    
+    // Log fast mode detection for console visibility
+    if (maxDelay <= 1000) {
+        console.log('🚀 FAST MODE DETECTED: Max delay = ' + maxDelay + 'ms, using minimal delays for rapid sending');
+    }
+}
+
+/**
+ * Show account statistics modal
+ */
+async function showAccountStatistics() {
+    const modal = document.getElementById('accountStatsModal');
+    const content = document.getElementById('accountStatsContent');
+    
+    modal.style.display = 'block';
+    content.innerHTML = '<div style="text-align:center;padding:40px;color:#666;">Loading account statistics...</div>';
+    
+    try {
+        // Fetch account statistics from the server
+        const response = await fetch('/api/account-stats');
+        const stats = response.ok ? await response.json() : {};
+        
+        // Update local stats
+        accountStats = stats.accountStats || {smtp: {}, gmail_api: {}, ses: {}};
+        
+        renderAccountStatistics(stats);
+    } catch (error) {
+        console.error('Error loading account statistics:', error);
+        content.innerHTML = '<div style="text-align:center;padding:40px;color:#f87171;">Error loading statistics: ' + error.message + '</div>';
+    }
+}
+
+/**
+ * Render account statistics content
+ */
+function renderAccountStatistics(stats) {
+    const content = document.getElementById('accountStatsContent');
+    const accountStats = stats.accountStats || {smtp: {}, gmail_api: {}, ses: {}};
+    
+    let html = `
+        <div style="background:#1a1a2e;padding:20px;border-radius:8px;margin-bottom:20px;">
+            <h4 style="margin:0 0 15px 0;color:#fff;">📊 KINGMAILER ACCOUNT STATISTICS</h4>
+            <div style="border-bottom:1px solid #333;margin:15px 0;"></div>
+    `;
+    
+    let totalEmailsSent = 0;
+    let totalActiveAccounts = 0;
+    let totalDeactivatedAccounts = 0;
+    
+    // SMTP Accounts
+    html += '<h5 style="color:#60a5fa;margin:15px 0 10px 0;">🔗 SMTP ACCOUNTS:</h5>';
+    if (Object.keys(accountStats.smtp || {}).length > 0) {
+        Object.entries(accountStats.smtp).forEach(([username, stats]) => {
+            const status = stats.is_active ? '🟢 ACTIVE' : '🔴 DEACTIVATED';
+            const statusColor = stats.is_active ? '#10b981' : '#f87171';
+            
+            html += `
+                <div style="background:#2d2d2d;padding:10px;border-radius:6px;margin:5px 0;border-left:4px solid ${statusColor};">
+                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                        <strong>${username}</strong>
+                        <span style="color:${statusColor};font-weight:600;">${status}</span>
+                    </div>
+                    <div style="font-size:13px;color:#aaa;margin-top:5px;">
+                        Emails Sent: <strong style="color:#fff;">${stats.emails_sent || 0}</strong> | 
+                        Failed Attempts: <strong style="color:#f87171;">${stats.failed_attempts || 0}/3</strong> |
+                        Total Failures: <strong>${stats.total_failures || 0}</strong>
+                    </div>
+                    ${stats.last_failure ? `<div style="font-size:12px;color:#666;margin-top:3px;">Last Failure: ${stats.last_failure}</div>` : ''}
+                </div>
+            `;
+            
+            totalEmailsSent += stats.emails_sent || 0; 
+            if (stats.is_active) totalActiveAccounts++;
+            else totalDeactivatedAccounts++;
+        });
+    } else {
+        html += '<div style="color:#666;font-style:italic;">No SMTP accounts configured or used yet.</div>';
+    }
+    
+    // Gmail API Accounts
+    html += '<h5 style="color:#34d399;margin:20px 0 10px 0;">📧 GMAIL API ACCOUNTS:</h5>';
+    if (Object.keys(accountStats.gmail_api || {}).length > 0) {
+        Object.entries(accountStats.gmail_api).forEach(([email, stats]) => {
+            const status = stats.is_active ? '🟢 ACTIVE' : '🔴 DEACTIVATED';
+            const statusColor = stats.is_active ? '#10b981' : '#f87171';
+            
+            html += `
+                <div style="background:#2d2d2d;padding:10px;border-radius:6px;margin:5px 0;border-left:4px solid ${statusColor};">
+                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                        <strong>${email}</strong>
+                        <span style="color:${statusColor};font-weight:600;">${status}</span>
+                    </div>
+                    <div style="font-size:13px;color:#aaa;margin-top:5px;">
+                        Emails Sent: <strong style="color:#fff;">${stats.emails_sent || 0}</strong> | 
+                        Failed Attempts: <strong style="color:#f87171;">${stats.failed_attempts || 0}/3</strong> |
+                        Total Failures: <strong>${stats.total_failures || 0}</strong>
+                    </div>
+                    ${stats.last_failure ? `<div style="font-size:12px;color:#666;margin-top:3px;">Last Failure: ${stats.last_failure}</div>` : ''}
+                </div>
+            `;
+            
+            totalEmailsSent += stats.emails_sent || 0;
+            if (stats.is_active) totalActiveAccounts++;
+            else totalDeactivatedAccounts++;
+        });
+    } else {
+        html += '<div style="color:#666;font-style:italic;">No Gmail API accounts configured or used yet.</div>';
+    }
+    
+    // AWS SES Accounts
+    html += '<h5 style="color:#f59e0b;margin:20px 0 10px 0;">☁️ AWS SES ACCOUNTS:</h5>';
+    if (Object.keys(accountStats.ses || {}).length > 0) {
+        Object.entries(accountStats.ses).forEach(([name, stats]) => {
+            const status = stats.is_active ? '🟢 ACTIVE' : '🔴 DEACTIVATED';
+            const statusColor = stats.is_active ? '#10b981' : '#f87171';
+            
+            html += `
+                <div style="background:#2d2d2d;padding:10px;border-radius:6px;margin:5px 0;border-left:4px solid ${statusColor};">
+                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                        <strong>${name}</strong>
+                        <span style="color:${statusColor};font-weight:600;">${status}</span>
+                    </div>
+                    <div style="font-size:13px;color:#aaa;margin-top:5px;">
+                        Emails Sent: <strong style="color:#fff;">${stats.emails_sent || 0}</strong> | 
+                        Failed Attempts: <strong style="color:#f87171;">${stats.failed_attempts || 0}/3</strong> |
+                        Total Failures: <strong>${stats.total_failures || 0}</strong>
+                    </div>
+                    ${stats.last_failure ? `<div style="font-size:12px;color:#666;margin-top:3px;">Last Failure: ${stats.last_failure}</div>` : ''}
+                </div>
+            `;
+            
+            totalEmailsSent += stats.emails_sent || 0;
+            if (stats.is_active) totalActiveAccounts++;
+            else totalDeactivatedAccounts++;
+        });
+    } else {
+        html += '<div style="color:#666;font-style:italic;">No SES accounts configured or used yet.</div>';
+    }
+    
+    // Summary
+    html += `
+            <div style="border-top:1px solid #333;margin:20px 0 15px 0;padding-top:15px;">
+                <h5 style="color:#fff;margin:0 0 10px 0;">📈 SUMMARY:</h5>
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:15px;text-align:center;">
+                    <div style="background:#059669;padding:10px;border-radius:6px;">
+                        <div style="font-size:24px;font-weight:bold;">${totalEmailsSent}</div>
+                        <div style="font-size:12px;opacity:0.8;">Total Emails Sent</div>
+                    </div>
+                    <div style="background:#10b981;padding:10px;border-radius:6px;">
+                        <div style="font-size:24px;font-weight:bold;">${totalActiveAccounts}</div>
+                        <div style="font-size:12px;opacity:0.8;">Active Accounts</div>
+                    </div>
+                    <div style="background:#f87171;padding:10px;border-radius:6px;">
+                        <div style="font-size:24px;font-weight:bold;">${totalDeactivatedAccounts}</div>
+                        <div style="font-size:12px;opacity:0.8;">Deactivated</div>
+                    </div>
+                </div>
+            </div>
+            
+            <div style="background:#374151;padding:12px;border-radius:6px;margin-top:15px;">
+                <div style="color:#d1d5db;font-size:13px;line-height:1.4;">
+                    <strong>💡 TIPS:</strong><br>
+                    • Accounts are deactivated after 3 consecutive failures<br>
+                    • Accounts are automatically reactivated after a successful send<br>
+                    • Use 'Reactivate All' button to manually reactivate all accounts
+                </div>
+            </div>
+        </div>
+    `;
+    
+    content.innerHTML = html;
+}
+
+/**
+ * Reactivate all deactivated accounts
+ */
+async function reactivateAllAccounts() {
+    try {
+        const response = await fetch('/api/reactivate-accounts', { method: 'POST' });
+        const result = await response.json();
+        
+        if (response.ok) {
+            alert(`✅ ${result.reactivated_count || 0} accounts have been reactivated.\\n\\nAll accounts are now ready to send emails again.`);
+            refreshAccountStats();
+        } else {
+            alert('❌ Error reactivating accounts: ' + (result.error || 'Unknown error'));
+        }
+    } catch (error) {
+        console.error('Error reactivating accounts:', error);
+        alert('❌ Error reactivating accounts: ' + error.message);
+    }
+}
+
+/**
+ * Refresh account statistics display
+ */
+function refreshAccountStats() {
+    showAccountStatistics();
+}
+
+/**
+ * Close account statistics modal
+ */
+function closeAccountStats() {
+    document.getElementById('accountStatsModal').style.display = 'none';
+}
+
+// Initialize fast mode status on page load
+document.addEventListener('DOMContentLoaded', function() {
+    updateFastModeStatus();
+}); 
             `🔐 <strong>Google sign-in window opened!</strong><br><br>` +
             `<strong>Steps:</strong><br>` +
             `1. Sign in with your Google account<br>` +
@@ -3993,234 +4523,3 @@ function deleteGmailApiAccount(index) {
 }
 
 // ── safeFetchJson is defined earlier in this file ────────────────────────────
-
-// ============================================================================
-// ACCOUNT STATISTICS & FAST MODE DETECTION - Added Features
-// ============================================================================
-
-/**
- * Update fast mode status indicator based on delay settings
- */
-function updateFastModeStatus() {
-    const minDelayInput = document.getElementById('bulkMinDelay');
-    const maxDelayInput = document.getElementById('bulkMaxDelay');
-    const statusDiv = document.getElementById('fastModeStatus');
-    
-    if (!minDelayInput || !maxDelayInput || !statusDiv) return;
-    
-    const minDelay = parseInt(minDelayInput.value) || 0;
-    const maxDelay = parseInt(maxDelayInput.value) || 0;
-    
-    let statusText = '';
-    let statusColor = '';
-    let bgColor = '';
-    
-    if (maxDelay <= 1000 && minDelay <= 1000) {
-        statusText = '🚀 FAST MODE ACTIVE - Minimal delays for rapid sending';
-        statusColor = '#fff';
-        bgColor = '#10b981';
-    } else if (maxDelay <= 5000) {
-        statusText = '⚡ SPEED MODE - Low delays for faster sending';
-        statusColor = '#fff';
-        bgColor = '#f59e0b';
-    } else {
-        statusText = '🐌 SAFE MODE - Conservative delays for maximum inbox rate';
-        statusColor = '#fff';
-        bgColor = '#3b82f6';
-    }
-    
-    statusDiv.textContent = statusText;
-    statusDiv.style.color = statusColor;
-    statusDiv.style.background = bgColor;
-    statusDiv.style.display = 'block';
-    
-    // Log fast mode detection for console visibility
-    if (maxDelay <= 1000) {
-        console.log('🚀 FAST MODE DETECTED: Max delay = ' + maxDelay + 'ms, using minimal delays for rapid sending');
-    }
-}
-
-/**
- * Show account statistics modal
- */
-async function showAccountStatistics() {
-    const modal = document.getElementById('accountStatsModal');
-    const content = document.getElementById('accountStatsContent');
-    
-    modal.style.display = 'block';
-    content.innerHTML = '<div style="text-align:center;padding:40px;color:#666;">Loading account statistics...</div>';
-    
-    try {
-        // Fetch account statistics from the server
-        const response = await fetch('/api/account-stats');
-        const stats = response.ok ? await response.json() : {};
-        
-        renderAccountStatistics(stats);
-    } catch (error) {
-        console.error('Error loading account statistics:', error);
-        content.innerHTML = '<div style="text-align:center;padding:40px;color:#f87171;">Error loading statistics: ' + error.message + '</div>';
-    }
-}
-
-/**
- * Render account statistics content
- */
-function renderAccountStatistics(stats) {
-    const content = document.getElementById('accountStatsContent');
-    const accountStats = stats.accountStats || {smtp: {}, gmail_api: {}, ses: {}};
-    
-    let html = `
-        <div style="background:#1a1a2e;padding:20px;border-radius:8px;margin-bottom:20px;">
-            <h4 style="margin:0 0 15px 0;color:#fff;">📊 KINGMAILER ACCOUNT STATISTICS</h4>
-            <div style="border-bottom:1px solid #333;margin:15px 0;"></div>
-    `;
-    
-    let totalEmailsSent = 0;
-    let totalActiveAccounts = 0;
-    let totalDeactivatedAccounts = 0;
-    
-    // Show placeholder data if no real stats
-    if (Object.keys(accountStats.smtp || {}).length === 0 && 
-        Object.keys(accountStats.gmail_api || {}).length === 0 && 
-        Object.keys(accountStats.ses || {}).length === 0) {
-        html += `
-            <div style="text-align:center;padding:20px;color:#666;">
-                <p>📊 No account statistics available yet.</p>
-                <p>Statistics will appear here after you send some emails.</p>
-            </div>
-        `;
-    } else {
-        // SMTP Accounts
-        html += '<h5 style="color:#60a5fa;margin:15px 0 10px 0;">🔗 SMTP ACCOUNTS:</h5>';
-        if (Object.keys(accountStats.smtp || {}).length > 0) {
-            Object.entries(accountStats.smtp).forEach(([username, stats]) => {
-                const status = stats.is_active ? '🟢 ACTIVE' : '🔴 DEACTIVATED';
-                const statusColor = stats.is_active ? '#10b981' : '#f87171';
-                
-                html += `
-                    <div style="background:#2d2d2d;padding:10px;border-radius:6px;margin:5px 0;border-left:4px solid ${statusColor};">
-                        <div style="display:flex;justify-content:space-between;align-items:center;">
-                            <strong>${username}</strong>
-                            <span style="color:${statusColor};font-weight:600;">${status}</span>
-                        </div>
-                        <div style="font-size:13px;color:#aaa;margin-top:5px;">
-                            Emails Sent: <strong style="color:#fff;">${stats.emails_sent || 0}</strong> | 
-                            Failed Attempts: <strong style="color:#f87171;">${stats.failed_attempts || 0}/3</strong> |
-                            Total Failures: <strong>${stats.total_failures || 0}</strong>
-                        </div>
-                        ${stats.last_failure ? `<div style="font-size:12px;color:#666;margin-top:3px;">Last Failure: ${stats.last_failure}</div>` : ''}
-                    </div>
-                `;
-                
-                totalEmailsSent += stats.emails_sent || 0; 
-                if (stats.is_active) totalActiveAccounts++;
-                else totalDeactivatedAccounts++;
-            });
-        } else {
-            html += '<div style="color:#666;font-style:italic;">No SMTP accounts used yet.</div>';
-        }
-        
-        // Gmail API Accounts  
-        html += '<h5 style="color:#34d399;margin:20px 0 10px 0;">📧 GMAIL API ACCOUNTS:</h5>';
-        if (Object.keys(accountStats.gmail_api || {}).length > 0) {
-            Object.entries(accountStats.gmail_api).forEach(([email, stats]) => {
-                const status = stats.is_active ? '🟢 ACTIVE' : '🔴 DEACTIVATED';
-                const statusColor = stats.is_active ? '#10b981' : '#f87171';
-                
-                html += `
-                    <div style="background:#2d2d2d;padding:10px;border-radius:6px;margin:5px 0;border-left:4px solid ${statusColor};">
-                        <div style="display:flex;justify-content:space-between;align-items:center;">
-                            <strong>${email}</strong>
-                            <span style="color:${statusColor};font-weight:600;">${status}</span>
-                        </div>
-                        <div style="font-size:13px;color:#aaa;margin-top:5px;">
-                            Emails Sent: <strong style="color:#fff;">${stats.emails_sent || 0}</strong> | 
-                            Failed Attempts: <strong style="color:#f87171;">${stats.failed_attempts || 0}/3</strong> |
-                            Total Failures: <strong>${stats.total_failures || 0}</strong>
-                        </div>
-                        ${stats.last_failure ? `<div style="font-size:12px;color:#666;margin-top:3px;">Last Failure: ${stats.last_failure}</div>` : ''}
-                    </div>
-                `;
-                
-                totalEmailsSent += stats.emails_sent || 0;
-                if (stats.is_active) totalActiveAccounts++;
-                else totalDeactivatedAccounts++;
-            });
-        } else {
-            html += '<div style="color:#666;font-style:italic;">No Gmail API accounts used yet.</div>';
-        }
-    }
-    
-    // Summary
-    html += `
-            <div style="border-top:1px solid #333;margin:20px 0 15px 0;padding-top:15px;">
-                <h5 style="color:#fff;margin:0 0 10px 0;">📈 SUMMARY:</h5>
-                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:15px;text-align:center;">
-                    <div style="background:#059669;padding:10px;border-radius:6px;">
-                        <div style="font-size:24px;font-weight:bold;">${totalEmailsSent}</div>
-                        <div style="font-size:12px;opacity:0.8;">Total Emails Sent</div>
-                    </div>
-                    <div style="background:#10b981;padding:10px;border-radius:6px;">
-                        <div style="font-size:24px;font-weight:bold;">${totalActiveAccounts}</div>
-                        <div style="font-size:12px;opacity:0.8;">Active Accounts</div>
-                    </div>
-                    <div style="background:#f87171;padding:10px;border-radius:6px;">
-                        <div style="font-size:24px;font-weight:bold;">${totalDeactivatedAccounts}</div>
-                        <div style="font-size:12px;opacity:0.8;">Deactivated</div>
-                    </div>
-                </div>
-            </div>
-            
-            <div style="background:#374151;padding:12px;border-radius:6px;margin-top:15px;">
-                <div style="color:#d1d5db;font-size:13px;line-height:1.4;">
-                    <strong>💡 TIPS:</strong><br>
-                    • Accounts are deactivated after 3 consecutive failures<br>
-                    • Accounts are automatically reactivated after a successful send<br>
-                    • Use 'Reactivate All' button to manually reactivate all accounts
-                </div>
-            </div>
-        </div>
-    `;
-    
-    content.innerHTML = html;
-}
-
-/**
- * Reactivate all deactivated accounts
- */
-async function reactivateAllAccounts() {
-    try {
-        const response = await fetch('/api/reactivate-accounts', { method: 'POST' });
-        const result = await response.json();
-        
-        if (response.ok) {
-            alert(`✅ ${result.reactivated_count || 0} accounts have been reactivated.\\n\\nAll accounts are now ready to send emails again.`);
-            refreshAccountStats();
-        } else {
-            alert('❌ Error reactivating accounts: ' + (result.error || 'Unknown error'));
-        }
-    } catch (error) {
-        console.error('Error reactivating accounts:', error);
-        alert('❌ Error reactivating accounts: ' + error.message);
-    }
-}
-
-/**
- * Refresh account statistics display
- */
-function refreshAccountStats() {
-    showAccountStatistics();
-}
-
-/**
- * Close account statistics modal
- */
-function closeAccountStats() {
-    document.getElementById('accountStatsModal').style.display = 'none';
-}
-
-// Initialize fast mode status when page loads
-document.addEventListener('DOMContentLoaded', function() {
-    // Give the DOM a moment to render before setting up fast mode status
-    setTimeout(updateFastModeStatus, 100);
-});

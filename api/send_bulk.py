@@ -9,6 +9,7 @@ Features: CSV processing, SMTP/SES/EC2, Account Rotation, Spintax, Placeholders
 ✅ RFC-clean MIME-Version + QP body encoding
 ✅ RFC 2047 From name encoding (_make_from_header)
 ✅ List-Unsubscribe header (Google 2024 bulk sender requirement)
+✅ Account tracking with deactivation after 3 consecutive failures
 """
 
 from http.server import BaseHTTPRequestHandler
@@ -35,6 +36,114 @@ import urllib.request
 import urllib.error
 from datetime import datetime
 import string
+import quopri
+
+
+_AUTH_CACHE = {}
+_RISK_SUBJECT_WORDS = {
+    'urgent', 'act now', 'free', 'winner', 'prize', 'click here', 'confirm',
+    'verify', 'account suspended', 'payment due', 'shipment', 'delivery'
+}
+
+# ============================================================================
+# ACCOUNT TRACKING SYSTEM - Track failures and deactivate accounts  
+# ============================================================================
+
+def load_account_stats():
+    """Load account statistics from file"""
+    stats_file = '/tmp/kingmailer_account_stats.json'
+    try:
+        if os.path.exists(stats_file):
+            with open(stats_file, 'r') as f:
+                return json.load(f)
+    except Exception as e:
+        print(f"Error loading account stats: {e}")
+    
+    return {"smtp": {}, "gmail_api": {}, "ses": {}}
+
+def save_account_stats(account_stats):
+    """Save account statistics to file"""
+    stats_file = '/tmp/kingmailer_account_stats.json'
+    try:
+        os.makedirs(os.path.dirname(stats_file), exist_ok=True)
+        with open(stats_file, 'w') as f:
+            json.dump(account_stats, f, indent=2)
+    except Exception as e:
+        print(f"Error saving account stats: {e}")
+
+def initialize_account_stats(account_id, account_type):
+    """Initialize stats for a new account"""
+    return {
+        'account_id': account_id,
+        'account_type': account_type,
+        'failed_attempts': 0,
+        'emails_sent': 0,
+        'is_active': True,
+        'last_failure': None,
+        'total_failures': 0,
+        'created_at': datetime.now().isoformat()
+    }
+
+def track_send_success(account_id, account_type):
+    """Track successful email send"""
+    account_stats = load_account_stats()
+    
+    if account_type not in account_stats:
+        account_stats[account_type] = {}
+    
+    if account_id not in account_stats[account_type]:
+        account_stats[account_type][account_id] = initialize_account_stats(account_id, account_type)
+    
+    # Reset failed attempts on success and increment send count
+    account_stats[account_type][account_id]['failed_attempts'] = 0
+    account_stats[account_type][account_id]['emails_sent'] += 1
+    account_stats[account_type][account_id]['is_active'] = True
+    
+    save_account_stats(account_stats)
+    print(f"✅ BULK SUCCESS: {account_type} {account_id} - Total sent: {account_stats[account_type][account_id]['emails_sent']}")
+
+def track_send_failure(account_id, account_type, error_msg=""):
+    """Track failed email send and deactivate account if needed"""
+    account_stats = load_account_stats()
+    
+    if account_type not in account_stats:
+        account_stats[account_type] = {}
+    
+    if account_id not in account_stats[account_type]:
+        account_stats[account_type][account_id] = initialize_account_stats(account_id, account_type)
+    
+    # Increment failure counters
+    account_stats[account_type][account_id]['failed_attempts'] += 1
+    account_stats[account_type][account_id]['total_failures'] += 1
+    account_stats[account_type][account_id]['last_failure'] = datetime.now().isoformat()
+    
+    # Deactivate account after 3 consecutive failures
+    if account_stats[account_type][account_id]['failed_attempts'] >= 3:
+        account_stats[account_type][account_id]['is_active'] = False
+        print(f"🚨 BULK ACCOUNT DEACTIVATED: {account_type} account '{account_id}' deactivated after 3 consecutive failures")
+        print(f"   Last error: {error_msg}")
+        save_account_stats(account_stats)
+        return True  # Account was deactivated
+    
+    save_account_stats(account_stats)
+    print(f"⚠️ BULK FAILURE: {account_type} {account_id} - Attempt {account_stats[account_type][account_id]['failed_attempts']}/3")
+    return False  # Account still active
+
+def is_account_active(account_id, account_type):
+    """Check if an account is active (not deactivated due to failures)"""
+    account_stats = load_account_stats()
+    
+    if account_type not in account_stats:
+        return True
+    
+    if account_id not in account_stats[account_type]:
+        return True
+        
+    is_active = account_stats[account_type][account_id].get('is_active', True)
+    if not is_active:
+        print(f"🚨 BULK BLOCKED: {account_type} account '{account_id}' is deactivated - skipping")
+    
+    return is_active
 
 
 # Spintax Processor
@@ -72,7 +181,7 @@ def gen_13_digit():
     return id_str[:13]
 
 
-def replace_template_tags(text, row_data, recipient_email='', sender_name='', sender_email=''):
+def replace_template_tags(text, row_data, recipient_email='', sender_name='', sender_email='', allow_single_brace=False):
     """Replace ALL $tag and {{tag}} placeholders including CSV column data."""
     if not text:
         return text
@@ -113,7 +222,7 @@ def replace_template_tags(text, row_data, recipient_email='', sender_name='', se
         'recipient':     recipient_email,
         'recipientName': first + ' ' + last,
         'sender':        sender_email,
-        'sendername':    sender_name or (first + ' ' + last),
+        'sendername':    sender_name or (sender_email.split('@')[0] if sender_email and '@' in sender_email else 'Support Team'),
         'sendertag':     f"{sender_name} <{sender_email}>" if sender_name else sender_email,
         'randName':      f"{first} {last}",
         'rnd_company_us': _rnd.choice(_US_CO),
@@ -151,7 +260,7 @@ def replace_template_tags(text, row_data, recipient_email='', sender_name='', se
     tag_map['firstname']   = _fname
     tag_map['lastname']    = _lname
     tag_map['fullname']    = f"{first} {last}"
-    tag_map['sender_name'] = sender_name or f"{first} {last}"
+    tag_map['sender_name'] = sender_name or (sender_email.split('@')[0] if sender_email and '@' in sender_email else 'Support Team')
 
     # Merge CSV row data (CSV overrides defaults)
     if row_data:
@@ -167,6 +276,8 @@ def replace_template_tags(text, row_data, recipient_email='', sender_name='', se
         text = re.sub(r'\{\{' + re.escape(key) + r'\}\}', lambda m, v=val: v, text, flags=re.IGNORECASE)
         # NOTE: Do NOT replace {key} (single braces) — HTML/CSS uses {}, would corrupt styles
         text = re.sub(r'\$' + re.escape(key) + r'(?=[^a-zA-Z0-9_]|$)', lambda m, v=val: v, text, flags=re.IGNORECASE)
+        if allow_single_brace:
+            text = re.sub(r'\{' + re.escape(key) + r'\}', lambda m, v=val: v, text, flags=re.IGNORECASE)
     return text
 
 
@@ -204,6 +315,45 @@ def _is_image_attachment(attachment):
     if not m_type or m_type == 'application/octet-stream':
         m_type = mimetypes.guess_type(filename)[0] or ''
     return m_type in _IMAGE_TYPES or ext in _IMAGE_EXTS
+
+
+def _is_html_attachment(attachment):
+    """Return True for risky HTML/script-like attachments."""
+    import mimetypes, os
+    if not attachment:
+        return False
+    filename = (attachment.get('name') or '').lower()
+    m_type = (attachment.get('type') or '').lower()
+    ext = os.path.splitext(filename)[1].lower()
+    if not m_type or m_type == 'application/octet-stream':
+        m_type = (mimetypes.guess_type(filename)[0] or '').lower()
+    return m_type == 'text/html' or ext in {'.html', '.htm', '.js', '.hta'}
+
+
+def _decode_attachment_bytes(attachment):
+    """Decode and validate attachment payload bytes; return (bytes, error)."""
+    if not attachment:
+        return None, None
+    content = attachment.get('content')
+    if not content:
+        return None, 'Attachment content is empty.'
+
+    try:
+        padded = content + '=' * (-len(content) % 4)
+        data = base64.b64decode(padded)
+    except Exception:
+        return None, 'Attachment payload is not valid base64.'
+
+    if not data or len(data) < 32:
+        return None, 'Attachment appears empty or too small.'
+
+    name = (attachment.get('name') or '').lower()
+    m_type = (attachment.get('type') or '').lower()
+    if name.endswith('.pdf') or m_type == 'application/pdf':
+        if not data.startswith(b'%PDF-'):
+            return None, 'Attachment is labeled PDF but payload is not a valid PDF file.'
+
+    return data, None
 
 def _clean_mime(part, is_root=True):
     """Recursively ensure ONLY the root part has MIME-Version: 1.0."""
@@ -249,6 +399,74 @@ def _extract_domain(from_header):
         domain = re.sub(r'[>\s].*$', '', part).strip()
         return domain if domain else 'mail.local'
     return 'mail.local'
+
+
+_WEBMAIL_DOMAINS = {
+    'gmail.com', 'googlemail.com', 'outlook.com', 'hotmail.com', 'live.com',
+    'msn.com', 'yahoo.com', 'ymail.com', 'aol.com', 'icloud.com', 'me.com'
+}
+
+
+def _is_webmail_sender(sender_email):
+    """Return True when sender belongs to consumer webmail domains."""
+    if not sender_email or '@' not in sender_email:
+        return False
+    return sender_email.split('@')[-1].strip().lower() in _WEBMAIL_DOMAINS
+
+
+def _domain_auth_guard(sender_email, header_opts=None):
+    opts = header_opts or {}
+    if opts.get('skip_auth_guard'):
+        return None
+    if not sender_email or '@' not in sender_email:
+        return 'Sender email missing for domain-auth verification.'
+
+    domain = sender_email.split('@')[-1].strip().lower()
+    now_ts = datetime.now().timestamp()
+    cached = _AUTH_CACHE.get(domain)
+    if cached and (now_ts - cached.get('ts', 0) < 900):
+        return cached.get('error')
+
+    try:
+        import deliverability as _deliv
+        spf = _deliv.check_spf(domain)
+        dmarc = _deliv.check_dmarc(domain)
+        mx = _deliv.check_mx(domain)
+    except Exception:
+        _AUTH_CACHE[domain] = {'ts': now_ts, 'error': None}
+        return None
+
+    critical = []
+    if spf.get('status') == 'MISSING' or '+all' in str(spf.get('record') or ''):
+        critical.append('SPF')
+    if dmarc.get('status') == 'MISSING':
+        critical.append('DMARC')
+    if mx.get('status') == 'MISSING':
+        critical.append('MX')
+    err = None
+    if critical:
+        err = f'Send blocked: critical domain-auth issue ({", ".join(critical)}) for {domain}. Fix DNS first.'
+    _AUTH_CACHE[domain] = {'ts': now_ts, 'error': err}
+    return err
+
+
+def _message_risk_guard(subject, html_body, attachment):
+    lower_subject = (subject or '').lower()
+    lower_html = (html_body or '').lower()
+    subject_hits = [w for w in _RISK_SUBJECT_WORDS if w in lower_subject]
+    if len(subject_hits) >= 2:
+        return f'Send blocked: subject contains high-risk keywords ({", ".join(subject_hits[:3])}).'
+    link_count = len(re.findall(r'https?://', html_body or '', flags=re.IGNORECASE))
+    if link_count > 6:
+        return f'Send blocked: body contains too many links ({link_count}).'
+    if attachment:
+        name = (attachment.get('name') or '').lower()
+        att_type = (attachment.get('type') or '').lower()
+        if att_type == 'text/html' or name.endswith(('.html', '.htm', '.js', '.hta')):
+            return 'Send blocked: HTML/script-like attachments are high-risk. Use PDF or image formats.'
+    if 'display:none' in lower_html or 'visibility:hidden' in lower_html:
+        return 'Send blocked: hidden HTML/CSS detected.'
+    return None
 
 def _is_html(text):
     """Return True if text contains at least one HTML tag like <p>, <br>, <div>."""
@@ -317,46 +535,34 @@ def _make_from_header(sender_name, email_addr):
 def _build_message(from_header, to_email, subject, html_body, attachment=None, header_opts=None):
     """Build RFC-compliant MIME message — inbox-optimised."""
     import mimetypes
-
-    # QP charset — MUST be defined before any MIMEText calls (was missing → NameError crash)
-    from email.charset import Charset, QP
-    cset = Charset('utf-8')
-    cset.body_encoding = QP
+    _o = dict(header_opts or {})
 
     domain = _extract_domain(from_header)
+    if _is_webmail_sender(from_header):
+        # Webmail senders get better placement with minimal headers.
+        _o['reply_to'] = False
+        _o['precedence_bulk'] = False
+        _o['list_unsubscribe'] = False
 
     if not _is_html(html_body): html_body = _plain_to_html(html_body)
 
-    # ── Deliverability: Mandatory Footer ──
-    lc_body = html_body.lower()
-    has_unsubscribe = 'unsubscribe' in lc_body or 'opt-out' in lc_body
-    has_address = bool(re.search(
-        r'\b\d{1,6}\b.{0,15}\b(street|st\.|ave\.?|avenue|blvd\.?|boulevard|'
-        r'road|rd\.|drive|dr\.|suite|ste\.?|floor|way|lane|ln\.)\b',
-        lc_body
-    ))
+    # Optional footer injection only when explicitly requested by caller.
+    # Default OFF: auto-generated/random compliance footers can look synthetic and hurt inboxing.
+    if _o.get('auto_footer', False):
+        lc_body = html_body.lower()
+        has_unsubscribe = 'unsubscribe' in lc_body or 'opt-out' in lc_body
+        has_address = bool(re.search(
+            r'\b\d{1,6}\b.{0,15}\b(street|st\.|ave\.?|avenue|blvd\.?|boulevard|'
+            r'road|rd\.|drive|dr\.|suite|ste\.?|floor|way|lane|ln\.)\b',
+            lc_body
+        ))
 
-    # Only inject footer for emails with enough content to be a commercial message.
-    # Forcing a business address + unsubscribe into a short test/personal email
-    # creates a content mismatch that Gmail's ML classifier reads as suspicious bulk.
-    _plain_preview = _html_to_plain(html_body)
-    _word_count    = len(_plain_preview.split())
-    _needs_footer  = _word_count >= 20 and (not has_unsubscribe or not has_address)
-
-    if _needs_footer:
         footer = ('<div style="margin-top:40px;padding-top:20px;border-top:1px solid #eee;'
                   'font-size:11px;color:#999;text-align:center;">')
         if not has_address:
-            _ft_cities = [('New York','NY','10001'),('Los Angeles','CA','90001'),('Chicago','IL','60601'),
-                          ('Houston','TX','77001'),('Austin','TX','78701'),('Seattle','WA','98101'),
-                          ('Denver','CO','80201'),('Miami','FL','33101'),('Atlanta','GA','30301'),
-                          ('Boston','MA','02101'),('Nashville','TN','37201'),('Dallas','TX','75201')]
-            _ft_streets = ['Main St','Oak Ave','Maple Dr','Pine Blvd','Cedar Lane','Elm Rd',
-                           'Washington Blvd','Park Ave','Lake Dr','Hillside Way','Sunset Blvd']
-            _fc, _fs, _fz = random.choice(_ft_cities)
-            _fn = random.randint(100, 9999)
-            _ft_s = random.choice(_ft_streets)
-            footer += f'<p>{_fn} {_ft_s}, {_fc}, {_fs} {_fz}</p>'
+            physical_address = (_o.get('physical_address') or '').strip()
+            if physical_address:
+                footer += f'<p>{physical_address}</p>'
         if not has_unsubscribe:
             _fe2 = re.search(r'<(.+?)>', from_header)
             _fe2 = _fe2.group(1) if _fe2 else from_header
@@ -378,8 +584,22 @@ def _build_message(from_header, to_email, subject, html_body, attachment=None, h
             + html_body + '\n</body>\n</html>'
         )
 
-    # Unique HTML comment per email — breaks Gmail duplicate clustering
-    html_body = html_body.replace('</body>', f'{_get_jitter()}</body>')
+    # Jitter: auto-ON for attachment sends (prevents body-hash fingerprinting across recipients).
+    # Without jitter, identical HTML sent to N recipients is a textbook bulk-spam fingerprint.
+    _has_att = bool(attachment and attachment.get('content'))
+    if (_has_att or _o.get('html_jitter', False)) and '</body>' in html_body:
+        html_body = html_body.replace('</body>', f'{_get_jitter()}</body>')
+
+    def _qp_part(text_value, subtype):
+        """Build a UTF-8 MIMEText part that is truly quoted-printable encoded."""
+        part = MIMEText('', subtype, 'utf-8')
+        qp_payload = quopri.encodestring((text_value or '').encode('utf-8'), quotetabs=True).decode('ascii')
+        part.set_payload(qp_payload)
+        if part.get('Content-Transfer-Encoding'):
+            part.replace_header('Content-Transfer-Encoding', 'quoted-printable')
+        else:
+            part['Content-Transfer-Encoding'] = 'quoted-printable'
+        return part
 
     plain = _html_to_plain(html_body)
 
@@ -393,15 +613,20 @@ def _build_message(from_header, to_email, subject, html_body, attachment=None, h
 
         if not att_content:
             msg = MIMEMultipart('alternative')
-            txt = MIMEText(plain, 'plain', cset); txt.set_param('format', 'flowed')
-            msg.attach(txt); msg.attach(MIMEText(html_body, 'html', cset))
+            txt = _qp_part(plain, 'plain')
+            txt.set_param('format', 'flowed')
+            html_part = _qp_part(html_body, 'html')
+            msg.attach(txt)
+            msg.attach(html_part)
 
         elif inline_cid and main_type == 'image':
-            # ── CID inline image: multipart/related so <img src="cid:filename"> resolves ──
             msg = MIMEMultipart('related', type='multipart/alternative')
             alt = MIMEMultipart('alternative')
-            txt = MIMEText(plain, 'plain', cset); txt.set_param('format', 'flowed')
-            alt.attach(txt); alt.attach(MIMEText(html_body, 'html', cset))
+            txt = _qp_part(plain, 'plain')
+            txt.set_param('format', 'flowed')
+            html_part = _qp_part(html_body, 'html')
+            alt.attach(txt)
+            alt.attach(html_part)
             msg.attach(alt)
             att_bytes = base64.b64decode(att_content.encode('ascii') + b'==')
             att_part  = MIMEImage(att_bytes, sub_type)
@@ -414,48 +639,54 @@ def _build_message(from_header, to_email, subject, html_body, attachment=None, h
             # ── Standard MIME attachment (download or non-image inline) ──
             msg = MIMEMultipart('mixed')
             alt = MIMEMultipart('alternative')
-            txt = MIMEText(plain, 'plain', cset); txt.set_param('format', 'flowed')
-            alt.attach(txt); alt.attach(MIMEText(html_body, 'html', cset))
+            txt = _qp_part(plain, 'plain')
+            txt.set_param('format', 'flowed')
+            html_part = _qp_part(html_body, 'html')
+            alt.attach(txt)
+            alt.attach(html_part)
             msg.attach(alt)
 
-            if main_type == 'text':
-                from_b64 = base64.b64decode(att_content.encode('ascii') + b'==').decode('utf-8', errors='replace')
-                att_part = MIMEText(from_b64, sub_type, cset)
-            elif main_type == 'image':
-                att_bytes = base64.b64decode(att_content.encode('ascii') + b'==')
-                att_part  = MIMEImage(att_bytes, sub_type)
-            elif main_type == 'application':
-                att_bytes = base64.b64decode(att_content.encode('ascii') + b'==')
-                att_part  = MIMEApplication(att_bytes, sub_type)
-            else:
-                att_bytes = base64.b64decode(att_content.encode('ascii') + b'==')
-                att_part  = MIMEBase(main_type, sub_type)
-                att_part.set_payload(att_bytes)
-                encoders.encode_base64(att_part)
-
-            att_part.add_header('Content-Disposition', 'attachment', filename=att_name)
+            # RFC 2183: Content-Type MUST include name= matching filename= in Content-Disposition.
+            # MIMEBase with name= kwarg sets this correctly for all MIME types.
+            # Gmail/Outlook malware scanners flag attachments where name= is absent as suspicious.
+            _att_padded = att_content + '=' * (-len(att_content) % 4)
+            att_bytes = base64.b64decode(_att_padded.encode('ascii'))
+            att_part = MIMEBase(main_type, sub_type, name=att_name)
+            att_part.set_payload(att_bytes)
+            encoders.encode_base64(att_part)
+            try:
+                att_name.encode('ascii')
+                att_part.add_header('Content-Disposition', 'attachment', filename=att_name)
+            except (UnicodeEncodeError, AttributeError):
+                att_part.add_header('Content-Disposition', 'attachment', filename=('utf-8', '', att_name))
             if 'MIME-Version' in att_part: del att_part['MIME-Version']
             msg.attach(att_part)
     else:
         # No attachment — simple multipart/alternative
         msg = MIMEMultipart('alternative')
-        txt = MIMEText(plain, 'plain', cset)
-        txt.set_param('format', 'flowed')   # RFC 3676 — real mail-client signal
+        txt = _qp_part(plain, 'plain')
+        txt.set_param('format', 'flowed')
+        html_part = _qp_part(html_body, 'html')
         msg.attach(txt)
-        msg.attach(MIMEText(html_body, 'html', cset))
+        msg.attach(html_part)
 
     _clean_mime(msg)
 
-    _o = header_opts or {}
+    # Keep headers minimal and standards-based.
+    _uid = uuid.uuid4().hex
     msg['From']             = from_header
     msg['To']               = to_email
     msg['Subject']          = _encode_subject(subject)
     msg['Date']             = formatdate(localtime=True)
-    msg['Message-ID']       = f'<{uuid.uuid4().hex}@{domain}>'
+    msg['Message-ID']       = f'<{_uid}@{domain}>'
+    if msg.get('MIME-Version'):
+        msg.replace_header('MIME-Version', '1.0')
+    else:
+        msg['MIME-Version'] = '1.0'
+    msg['Content-Language'] = 'en-US'
     # Reply-To: optional (on by default; disable to reduce promotional header signals)
-    if _o.get('reply_to', True):
+    if _o.get('reply_to', False):
         msg['Reply-To'] = from_header
-    msg['Content-Language'] = 'en-US'   # standard for all major ESPs (Mailchimp, SendGrid)
     # Precedence: bulk — optional marketing signal (off by default → Primary inbox)
     if _o.get('precedence_bulk', False):
         msg['Precedence'] = 'bulk'
@@ -513,6 +744,168 @@ def send_email_smtp(smtp_config, from_name, recipient, subject, html_body, attac
         return {'success': False, 'error': str(e)}
 
 
+def refresh_gmail_access_token(refresh_token, client_id, client_secret):
+    """Refresh Gmail OAuth2 access token using refresh token."""
+    import urllib.request
+    import urllib.error
+    import urllib.parse
+    
+    try:
+        token_url = 'https://oauth2.googleapis.com/token'
+        payload = {
+            'client_id': client_id,
+            'client_secret': client_secret,
+            'refresh_token': refresh_token,
+            'grant_type': 'refresh_token'
+        }
+        
+        data = urllib.parse.urlencode(payload).encode('utf-8')
+        req = urllib.request.Request(token_url, data=data, method='POST')
+        req.add_header('Content-Type', 'application/x-www-form-urlencoded')
+        
+        with urllib.request.urlopen(req, timeout=10) as response:
+            resp_data = json.loads(response.read().decode('utf-8'))
+            new_access_token = resp_data.get('access_token')
+            if new_access_token:
+                return {'success': True, 'access_token': new_access_token}
+            else:
+                return {'success': False, 'error': 'No access_token in refresh response'}
+                
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode('utf-8') if e.fp else str(e)
+        return {'success': False, 'error': f'Token refresh failed (HTTP {e.code}): {error_body}'}
+    except Exception as e:
+        return {'success': False, 'error': f'Token refresh error: {str(e)}'}
+
+
+def send_email_gmail_api(gmail_config, from_name, recipient, subject, html_body, attachment=None, header_opts=None):
+    """Send single email via Gmail API (OAuth2) with automatic token refresh."""
+    try:
+        access_token = gmail_config.get('access_token', '').strip()
+        refresh_token = gmail_config.get('refresh_token', '').strip()
+        client_id = gmail_config.get('client_id', '').strip()
+        client_secret = gmail_config.get('client_secret', '').strip()
+        gmail_user = gmail_config.get('user', '').strip()
+        
+        if not all([access_token, client_id, client_secret, gmail_user]):
+            return {'success': False, 'error': 'Gmail API requires: access_token, client_id, client_secret, and user email'}
+        
+        sender_name = from_name if from_name and from_name != 'KINGMAILER' else gmail_config.get('sender_name', '')
+        if sender_name == 'KINGMAILER': sender_name = ''
+        from_header = _make_from_header(sender_name, gmail_user) if sender_name else gmail_user
+        
+        msg = _build_message(from_header, recipient, subject, html_body, attachment, header_opts=header_opts)
+        raw_msg = base64.urlsafe_b64encode(msg.as_bytes()).decode('utf-8')
+        
+        import urllib.request
+        import urllib.error
+        
+        api_url = 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send'
+        payload = json.dumps({'raw': raw_msg})
+        
+        # First attempt with current access token
+        req = urllib.request.Request(api_url, data=payload.encode('utf-8'), method='POST')
+        req.add_header('Authorization', f'Bearer {access_token}')
+        req.add_header('Content-Type', 'application/json')
+        
+        try:
+            with urllib.request.urlopen(req, timeout=30) as response:
+                resp_data = json.loads(response.read().decode('utf-8'))
+                msg_id = resp_data.get('id', 'unknown')
+                print(f'[Gmail API SUCCESS] → {recipient} [msg_id: {msg_id}]')
+                return {'success': True, 'gmail_msg_id': msg_id}
+        except urllib.error.HTTPError as e:
+            # If 401 Unauthorized, try to refresh token automatically
+            if e.code == 401 and refresh_token:
+                # Refresh the access token
+                refresh_result = refresh_gmail_access_token(refresh_token, client_id, client_secret)
+                
+                if not refresh_result.get('success'):
+                    return {
+                        'success': False,
+                        'error': f'Failed to refresh Gmail token: {refresh_result.get("error")}',
+                        'needs_refresh': True
+                    }
+                
+                # Got new access token - update config and retry the send
+                new_access_token = refresh_result['access_token']
+                gmail_config['access_token'] = new_access_token  # Update the config for next uses
+                
+                # Retry with new token
+                req2 = urllib.request.Request(api_url, data=payload.encode('utf-8'), method='POST')
+                req2.add_header('Authorization', f'Bearer {new_access_token}')
+                req2.add_header('Content-Type', 'application/json')
+                
+                try:
+                    with urllib.request.urlopen(req2, timeout=30) as response2:
+                        resp_data2 = json.loads(response2.read().decode('utf-8'))
+                        msg_id2 = resp_data2.get('id', 'unknown')
+                        print(f'[Gmail API SUCCESS after auto-refresh] → {recipient} [msg_id: {msg_id2}]')
+                        return {'success': True, 'gmail_msg_id': msg_id2, 'new_access_token': new_access_token}
+                except urllib.error.HTTPError as e2:
+                    error_body2 = e2.read().decode('utf-8') if e2.fp else str(e2)
+                    return {'success': False, 'error': f'Gmail API HTTP {e2.code} after refresh: {error_body2}'}
+            
+            # Not a 401 or no refresh token
+            error_body = e.read().decode('utf-8') if e.fp else str(e)
+            return {'success': False, 'error': f'Gmail API HTTP {e.code}: {error_body}'}
+        except urllib.error.URLError as e:
+            return {'success': False, 'error': f'Gmail API connection failed: {str(e.reason)}'}
+            
+    except Exception as e:
+        return {'success': False, 'error': f'Gmail API error: {str(e)}'}
+
+
+def send_email_ec2_gmail_api(ec2_url, gmail_config, from_name, recipient, subject, html_body, attachment=None, header_opts=None):
+    """Send email via EC2 relay using Gmail API."""
+    try:
+        if not gmail_config:
+            return {'success': False, 'error': 'EC2+Gmail API requires Gmail OAuth config'}
+
+        gmail_user = gmail_config.get('user', '')
+        sender_name = from_name if from_name and from_name != 'KINGMAILER' else gmail_config.get('sender_name', '')
+        if sender_name == 'KINGMAILER': sender_name = ''
+        from_header = _make_from_header(sender_name, gmail_user) if sender_name else gmail_user
+
+        msg = _build_message(from_header, recipient, subject, html_body, attachment, header_opts=header_opts)
+        raw_bytes = msg.as_bytes()
+        raw_b64 = base64.b64encode(raw_bytes).decode('ascii')
+
+        payload = {
+            'type': 'gmail_api',
+            'raw_email': raw_b64,
+            'from_addr': gmail_user,
+            'to_addr': recipient,
+            'gmail_config': gmail_config,
+        }
+
+        data = json.dumps(payload).encode('utf-8')
+        req = urllib.request.Request(ec2_url, data=data, method='POST')
+        req.add_header('Content-Type', 'application/json')
+
+        with urllib.request.urlopen(req, timeout=30) as response:
+            resp_data = json.loads(response.read().decode('utf-8'))
+            print(f'[EC2+Gmail API SUCCESS] → {recipient}')
+            return {'success': True, 'response': resp_data}
+
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode('utf-8') if e.fp else str(e)
+        if 'SMTP config required' in error_body:
+            return {
+                'success': False,
+                'error': (
+                    'EC2 relay is running an old version without Gmail API mode. '
+                    'Open EC2 Management and click "Fix Relay" (or restart relay) for this instance, '
+                    'then try EC2+Gmail API again.'
+                )
+            }
+        return {'success': False, 'error': f'EC2+Gmail API HTTP {e.code}: {error_body}'}
+    except urllib.error.URLError as e:
+        return {'success': False, 'error': f'EC2+Gmail API connection failed: {str(e.reason)}'}
+    except Exception as e:
+        return {'success': False, 'error': f'EC2+Gmail API failed: {str(e)}'}
+
+
 def send_email_ses(aws_config, from_name, recipient, subject, html_body, attachment=None, header_opts=None):
     """Send single email via AWS SES with optional attachment support."""
     try:
@@ -566,13 +959,8 @@ def send_email_ec2(ec2_url, smtp_config, from_name, recipient, subject, html_bod
             'raw_email':   raw_b64,
             'from_addr':   smtp_user,
             'to_addr':     recipient,
-            # Legacy relay fallback: old relay ignores type/raw_email and
-            # reads these fields — prevents missing attachment on old relay instances
-            'to':          recipient,
-            'from_name':   from_name,
-            'subject':     subject,
-            'html':        html_body,
-            'attachment':  attachment,   # ← OLD relay needs this for attachments
+            # Force relay to send exact bytes from raw_email (no server-side rebuild).
+            'strict_raw':  True,
             'smtp_config': smtp_config,
         }
         data = json.dumps(payload).encode('utf-8')
@@ -592,17 +980,45 @@ def send_email_ec2(ec2_url, smtp_config, from_name, recipient, subject, html_bod
 
 
 class SMTPPool:
-    """Round-robin account rotation pool."""
-    def __init__(self, accounts):
+    """Round-robin account rotation pool with automatic account status checking."""
+    def __init__(self, accounts, account_type='smtp'):
         self.accounts = accounts
         self.current_index = 0
+        self.account_type = account_type
 
     def get_next(self):
         if not self.accounts:
             return None
-        account = self.accounts[self.current_index]
-        self.current_index = (self.current_index + 1) % len(self.accounts)
-        return account
+        
+        # Try to find an active account, with a maximum number of attempts
+        # to prevent infinite loops if all accounts are deactivated
+        max_attempts = len(self.accounts)
+        attempts = 0
+        
+        while attempts < max_attempts:
+            account = self.accounts[self.current_index]
+            self.current_index = (self.current_index + 1) % len(self.accounts)
+            
+            # Generate account ID based on account type
+            if self.account_type == 'smtp':
+                account_id = account.get('user', account.get('server', 'unknown'))
+            elif self.account_type == 'ses':
+                account_id = f"{account.get('region', 'unknown')}_{account.get('access_key_id', 'unknown')[:8]}"
+            elif self.account_type == 'gmail_api':
+                account_id = account.get('user', account.get('client_id', 'unknown')[:8])
+            else:
+                account_id = 'unknown'
+            
+            # Check if account is active
+            if is_account_active(account_id, self.account_type):
+                return account
+            else:
+                print(f'[POOL SKIP] {self.account_type} account {account_id} is deactivated, trying next account')
+                attempts += 1
+        
+        # If we reach here, all accounts are deactivated
+        print(f'[POOL WARNING] All {self.account_type} accounts are deactivated!')
+        return None
 
 
 class handler(BaseHTTPRequestHandler):
@@ -629,6 +1045,42 @@ class handler(BaseHTTPRequestHandler):
             smtp_configs = data.get('smtp_configs', [])
             ses_configs = data.get('ses_configs', [])
             ec2_instances = data.get('ec2_instances', [])
+            gmail_configs = data.get('gmail_configs', [])
+
+            # Advisory logging only (non-blocking JetMailer approach)
+            _attachment = data.get('attachment')
+            if _is_html_attachment(_attachment):
+                self.send_response(400)
+                self.send_header('Content-type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': False, 'error': 'HTML attachments are blocked for deliverability. Use PDF, PNG, or JPG.'}).encode())
+                return
+
+            _att_bytes, _att_err = _decode_attachment_bytes(_attachment)
+            if _att_err:
+                self.send_response(400)
+                self.send_header('Content-type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': False, 'error': _att_err}).encode())
+                return
+
+            _risk_err = _message_risk_guard(subject_template, html_template, _attachment)
+            if _risk_err:
+                print(f'[CONTENT WARNING] {_risk_err}')
+
+            _sender_for_auth = ''
+            if method in ('smtp', 'ec2') and smtp_configs:
+                _sender_for_auth = (smtp_configs[0] or {}).get('user', '')
+            elif method == 'ses' and ses_configs:
+                _sender_for_auth = (ses_configs[0] or {}).get('from_email', '')
+            elif method in ('gmail_api', 'ec2_gmail_api') and gmail_configs:
+                _sender_for_auth = (gmail_configs[0] or {}).get('user', '')
+
+            _auth_err = _domain_auth_guard(_sender_for_auth, _header_opts)
+            if _auth_err:
+                print(f'[AUTH WARNING] {_auth_err}')
             
             # Debug logging
             print('='*50)
@@ -636,6 +1088,7 @@ class handler(BaseHTTPRequestHandler):
             print(f'Method selected: {method}')
             print(f'SMTP configs received: {len(smtp_configs)}')
             print(f'SES configs received: {len(ses_configs)}')
+            print(f'Gmail API configs received: {len(gmail_configs)}')
             print(f'EC2 instances received: {len(ec2_instances)}')
             if ec2_instances:
                 print(f'EC2 instance IPs: {[i.get("public_ip") for i in ec2_instances]}')
@@ -672,9 +1125,10 @@ class handler(BaseHTTPRequestHandler):
                 return
             
             # Initialize account pools
-            smtp_pool = SMTPPool(smtp_configs) if smtp_configs else None
-            ses_pool = SMTPPool(ses_configs) if ses_configs else None
-            ec2_pool = SMTPPool(ec2_instances) if ec2_instances else None
+            smtp_pool = SMTPPool(smtp_configs, 'smtp') if smtp_configs else None
+            ses_pool = SMTPPool(ses_configs, 'ses') if ses_configs else None
+            ec2_pool = SMTPPool(ec2_instances, 'ec2') if ec2_instances else None
+            gmail_pool = SMTPPool(gmail_configs, 'gmail_api') if gmail_configs else None
             
             # Send emails
             results = []
@@ -710,7 +1164,8 @@ class handler(BaseHTTPRequestHandler):
 
                 # Then replace template tags (including CSV columns, $tag and {{tag}})
                 subject   = replace_template_tags(subject,   row, recipient,
-                                                   sender_name=_eff_name, sender_email=_cur_s_email)
+                                                   sender_name=_eff_name, sender_email=_cur_s_email,
+                                                   allow_single_brace=True)
                 html_body = replace_template_tags(html_body, row, recipient,
                                                    sender_name=_eff_name, sender_email=_cur_s_email)
                 
@@ -723,30 +1178,101 @@ class handler(BaseHTTPRequestHandler):
 
                 if method == 'smtp' and smtp_pool:
                     smtp_config = smtp_pool.get_next()
-                    print(f'\n[EMAIL {index+1}] Method: SMTP → {recipient}')
-                    result = send_email_smtp(smtp_config, _eff_name, recipient, subject, html_body, attachment, header_opts=_header_opts)
+                    if smtp_config is None:
+                        result = {'success': False, 'error': 'All SMTP accounts are deactivated'}
+                    else:
+                        account_id = smtp_config.get('user', smtp_config.get('server', 'unknown'))
+                        print(f'\n[EMAIL {index+1}] Method: SMTP → {recipient} (Account: {account_id})')
+                        result = send_email_smtp(smtp_config, _eff_name, recipient, subject, html_body, attachment, header_opts=_header_opts)
+                        
+                        # Track result
+                        if result.get('success'):
+                            track_send_success(account_id, 'smtp')
+                        else:
+                            track_send_failure(account_id, 'smtp', str(result.get('error', 'Unknown SMTP error')))
 
                 elif method == 'ses' and ses_pool:
                     ses_config = ses_pool.get_next()
-                    print(f'\n[EMAIL {index+1}] Method: SES → {recipient}')
-                    result = send_email_ses(ses_config, _eff_name, recipient, subject, html_body, attachment, header_opts=_header_opts)
+                    if ses_config is None:
+                        result = {'success': False, 'error': 'All SES accounts are deactivated'}
+                    else:
+                        account_id = f"{ses_config.get('region', 'unknown')}_{ses_config.get('access_key_id', 'unknown')[:8]}"
+                        print(f'\n[EMAIL {index+1}] Method: SES → {recipient} (Account: {account_id})')
+                        result = send_email_ses(ses_config, _eff_name, recipient, subject, html_body, attachment, header_opts=_header_opts)
+                        
+                        # Track result
+                        if result.get('success'):
+                            track_send_success(account_id, 'ses')
+                        else:
+                            track_send_failure(account_id, 'ses', str(result.get('error', 'Unknown SES error')))
+                
+                elif method == 'gmail_api' and gmail_pool:
+                    gmail_config = gmail_pool.get_next()
+                    if gmail_config is None:
+                        result = {'success': False, 'error': 'All Gmail API accounts are deactivated'}
+                    else:
+                        account_id = gmail_config.get('user', gmail_config.get('client_id', 'unknown')[:8])
+                        print(f'\n[EMAIL {index+1}] Method: Gmail API → {recipient} (Account: {account_id})')
+                        result = send_email_gmail_api(gmail_config, _eff_name, recipient, subject, html_body, attachment, header_opts=_header_opts)
+                        
+                        # Track result
+                        if result.get('success'):
+                            track_send_success(account_id, 'gmail_api')
+                        else:
+                            track_send_failure(account_id, 'gmail_api', str(result.get('error', 'Unknown Gmail API error')))
+                
+                elif method == 'ec2_gmail_api' and ec2_pool and gmail_pool:
+                    ec2_instance = ec2_pool.get_next()
+                    gmail_config = gmail_pool.get_next()
+                    
+                    if gmail_config is None:
+                        result = {'success': False, 'error': 'All Gmail API accounts are deactivated'}
+                    elif ec2_instance is None:
+                        result = {'success': False, 'error': 'All EC2 instances are deactivated'}
+                    else:
+                        account_id = gmail_config.get('user', gmail_config.get('client_id', 'unknown')[:8])
+                        ec2_ip = ec2_instance.get('public_ip') if isinstance(ec2_instance, dict) else None
+                        
+                        if ec2_ip and ec2_ip not in ('N/A', 'Pending...'):
+                            ec2_url = f'http://{ec2_ip}:3000/relay'
+                            print(f'\n[EMAIL {index+1}] Method: EC2+Gmail API → {recipient} (via {ec2_ip}, Account: {account_id})')
+                            result = send_email_ec2_gmail_api(ec2_url, gmail_config, _eff_name, recipient, subject, html_body, attachment, header_opts=_header_opts)
+                            
+                            # Track result
+                            if result.get('success'):
+                                track_send_success(account_id, 'gmail_api')
+                            else:
+                                track_send_failure(account_id, 'gmail_api', str(result.get('error', 'Unknown EC2+Gmail API error')))
+                        else:
+                            result = {'success': False, 'error': 'EC2 instance has no public IP'}
                 
                 elif method == 'ec2' and ec2_pool:
                     ec2_instance = ec2_pool.get_next()
-                    smtp_config  = smtp_pool.get_next() if smtp_pool else None
+                    smtp_config = smtp_pool.get_next() if smtp_pool else None
 
                     print(f'\n[EMAIL {index+1}] Method: EC2 RELAY → {recipient}')
 
-                    if ec2_instance:
+                    if ec2_instance is None:
+                        result = {'success': False, 'error': 'All EC2 instances are deactivated'}
+                    elif smtp_config is None and smtp_pool:
+                        result = {'success': False, 'error': 'All SMTP accounts are deactivated'}
+                    elif ec2_instance:
                         ec2_ip = ec2_instance.get('public_ip')
                         if ec2_ip and ec2_ip != 'N/A' and ec2_ip != 'Pending...':
                             relay_url = f'http://{ec2_ip}:3000/relay'
                             print(f'[EC2 RELAY] Connecting to {relay_url}')
                             result = send_email_ec2(relay_url, smtp_config, _eff_name, recipient, subject, html_body, attachment, header_opts=_header_opts)
+                            
                             if result['success']:
                                 result['via_ec2_ip'] = ec2_ip
+                                if smtp_config:
+                                    account_id = smtp_config.get('user', smtp_config.get('server', 'unknown'))
+                                    track_send_success(account_id, 'smtp')
                             else:
                                 result['error'] = f"EC2 relay failed ({ec2_ip}:3000): {result.get('error', 'Unknown error')}"
+                                if smtp_config:
+                                    account_id = smtp_config.get('user', smtp_config.get('server', 'unknown'))
+                                    track_send_failure(account_id, 'smtp', str(result['error']))
                         else:
                             result = {'success': False, 'error': 'EC2 instance has no public IP yet'}
                     else:

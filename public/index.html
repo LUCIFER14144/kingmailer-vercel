@@ -64,6 +64,9 @@
                 </div>
             </div>
             <div style="margin-top:14px;display:flex;justify-content:flex-end;align-items:center;gap:10px;">
+                <button onclick="showAccountStatistics()" 
+                    style="padding:8px 16px;background:linear-gradient(135deg,#10b981,#059669);color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:.8rem;font-weight:600;font-family:inherit;box-shadow:0 2px 8px rgba(16,185,129,.3);">
+                    📊 Account Stats</button>
                 <span style="font-size:.8rem;color:rgba(255,255,255,.4);">Logged in as: <span id="userDisplay"
                         style="color:rgba(255,255,255,.7);font-weight:600;">-</span></span>
                 <button onclick="window.location.href='/admin.html'" id="adminBtn"
@@ -79,6 +82,7 @@
             <button class="tab-btn active" data-tab="send">Single Email</button>
             <button class="tab-btn" data-tab="bulk">Bulk Sending</button>
             <button class="tab-btn" data-tab="smtp">SMTP Config</button>
+            <button class="tab-btn" data-tab="gmail-api">Gmail API</button>
             <button class="tab-btn" data-tab="ses">AWS SES</button>
             <button class="tab-btn" data-tab="ec2">EC2 Relay</button>
             <button class="tab-btn" data-tab="deliverability" style="background:linear-gradient(135deg,#059669,#10b981);color:#fff;">🛡️ Deliverability</button>
@@ -340,16 +344,16 @@
                         style="padding:6px; background:#1a1a1a; color:#fff; border:1px solid #444; border-radius:4px; font-size:12px;"
                         title="Attachment filename format">
                         <option value="random">🎲 Random Format</option>
-                        <option value="5-6-5">5-6-5 &nbsp;(73291-847362-10583)</option>
-                        <option value="8-8">8-8 &nbsp;(73829146-82736492)</option>
-                        <option value="4-4-4-4">4-4-4-4 &nbsp;(7382-9146-8273-6492)</option>
-                        <option value="6-4-6">6-4-6 &nbsp;(738291-4682-739146)</option>
-                        <option value="4-6-4">4-6-4 &nbsp;(7382-914682-7364)</option>
-                        <option value="6-6">6-6 &nbsp;(738291-827364)</option>
-                        <option value="4-4-4">4-4-4 &nbsp;(7382-9146-8273)</option>
-                        <option value="3-4-3">3-4-3 &nbsp;(829-1468-273)</option>
-                        <option value="5-5">5-5 &nbsp;(73829-82736)</option>
-                        <option value="16">16-digit &nbsp;(7382914682736492)</option>
+                        <option value="5-6-5">5-6-5 &nbsp;(A3K8P-B7X2R4-CJ9MN)</option>
+                        <option value="8-8">8-8 &nbsp;(A3K8PB7X-R4CJ9MN2)</option>
+                        <option value="4-4-4-4">4-4-4-4 &nbsp;(A3K8-P7X2-R4CJ-9MN2)</option>
+                        <option value="6-4-6">6-4-6 &nbsp;(A3K8PB-7X2R-4CJ9MN)</option>
+                        <option value="4-6-4">4-6-4 &nbsp;(A3K8-P7X2R4-CJ9M)</option>
+                        <option value="6-6">6-6 &nbsp;(A3K8PB-7X2R4C)</option>
+                        <option value="4-4-4">4-4-4 &nbsp;(A3K8-P7X2-R4CJ)</option>
+                        <option value="3-4-3">3-4-3 &nbsp;(A3K-P7X2-R4C)</option>
+                        <option value="5-5">5-5 &nbsp;(A3K8P-B7X2R)</option>
+                        <option value="16">16-char &nbsp;(A3K8PB7XR4CJ9MN2)</option>
                         <option value="none">Original filename</option>
                     </select>
                     <span id="singleAttachName" style="color:#00ff9d; font-size:12px;"></span>
@@ -426,8 +430,10 @@
                 <label>Send Method:</label>
                 <select id="singleMethod">
                     <option value="smtp">Gmail SMTP (Recommended)</option>
+                    <option value="gmail_api">Gmail API (OAuth2)</option>
                     <option value="ses">AWS SES</option>
-                    <option value="ec2">EC2 Relay</option>
+                    <option value="ec2">EC2 Relay (SMTP)</option>
+                    <option value="ec2_gmail_api">EC2 Relay + Gmail API</option>
                 </select>
             </div>
 
@@ -446,7 +452,7 @@
                         <span>Precedence: bulk header <span style="color:#f87171;font-size:11px;">(triggers Promotions)</span></span>
                     </label>
                     <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;" title="Add Reply-To header — usually the same as From, harmless but redundant">
-                        <input type="checkbox" id="singleHeaderReplyTo" checked>
+                        <input type="checkbox" id="singleHeaderReplyTo">
                         <span>Reply-To header <small style="color:#aaa;">(= From)</small></span>
                     </label>
                 </div>
@@ -786,16 +792,16 @@
                         style="padding:6px; background:#1a1a1a; color:#fff; border:1px solid #444; border-radius:4px; font-size:12px;"
                         title="Attachment filename format">
                         <option value="random">🎲 Random Format</option>
-                        <option value="5-6-5">5-6-5 &nbsp;(73291-847362-10583)</option>
-                        <option value="8-8">8-8 &nbsp;(73829146-82736492)</option>
-                        <option value="4-4-4-4">4-4-4-4 &nbsp;(7382-9146-8273-6492)</option>
-                        <option value="6-4-6">6-4-6 &nbsp;(738291-4682-739146)</option>
-                        <option value="4-6-4">4-6-4 &nbsp;(7382-914682-7364)</option>
-                        <option value="6-6">6-6 &nbsp;(738291-827364)</option>
-                        <option value="4-4-4">4-4-4 &nbsp;(7382-9146-8273)</option>
-                        <option value="3-4-3">3-4-3 &nbsp;(829-1468-273)</option>
-                        <option value="5-5">5-5 &nbsp;(73829-82736)</option>
-                        <option value="16">16-digit &nbsp;(7382914682736492)</option>
+                        <option value="5-6-5">5-6-5 &nbsp;(A3K8P-B7X2R4-CJ9MN)</option>
+                        <option value="8-8">8-8 &nbsp;(A3K8PB7X-R4CJ9MN2)</option>
+                        <option value="4-4-4-4">4-4-4-4 &nbsp;(A3K8-P7X2-R4CJ-9MN2)</option>
+                        <option value="6-4-6">6-4-6 &nbsp;(A3K8PB-7X2R-4CJ9MN)</option>
+                        <option value="4-6-4">4-6-4 &nbsp;(A3K8-P7X2R4-CJ9M)</option>
+                        <option value="6-6">6-6 &nbsp;(A3K8PB-7X2R4C)</option>
+                        <option value="4-4-4">4-4-4 &nbsp;(A3K8-P7X2-R4CJ)</option>
+                        <option value="3-4-3">3-4-3 &nbsp;(A3K-P7X2-R4C)</option>
+                        <option value="5-5">5-5 &nbsp;(A3K8P-B7X2R)</option>
+                        <option value="16">16-char &nbsp;(A3K8PB7XR4CJ9MN2)</option>
                         <option value="none">Original filename</option>
                     </select>
                     <span id="bulkAttachName" style="color:#00ff9d; font-size:12px;"></span>
@@ -892,7 +898,9 @@
                 <label>Send Method:</label>
                 <select id="bulkMethod" onchange="updateSendMethodInfo(); syncBatchSection();">
                     <option value="smtp">Gmail SMTP (Gmail IP - With Account Rotation)</option>
+                    <option value="gmail_api">Gmail API (OAuth2 - Gmail IP)</option>
                     <option value="ec2">EC2 Relay (Your EC2 IP - Recommended for Deliverability)</option>
+                    <option value="ec2_gmail_api">EC2 Relay + Gmail API (Your EC2 IP + Gmail Auth)</option>
                     <option value="ses">AWS SES (Amazon IP - For High Volume)</option>
                 </select>
             </div>
@@ -910,13 +918,16 @@
             <div class="form-row">
                 <div class="form-group">
                     <label>Min Delay (ms):</label>
-                    <input type="number" id="bulkMinDelay" value="2000" min="1000">
+                    <input type="number" id="bulkMinDelay" value="2000" min="0" oninput="updateFastModeStatus()">
                 </div>
                 <div class="form-group">
                     <label>Max Delay (ms):</label>
-                    <input type="number" id="bulkMaxDelay" value="5000" min="1000">
+                    <input type="number" id="bulkMaxDelay" value="5000" min="0" oninput="updateFastModeStatus()">
                 </div>
             </div>
+            
+            <!-- Fast Mode Status Indicator -->
+            <div id="fastModeStatus" style="margin-bottom:12px;padding:8px 12px;border-radius:6px;font-size:13px;font-weight:600;text-align:center;"></div>
 
             <!-- Email Header Options -->
             <div style="margin-bottom:12px;padding:10px 14px;background:#1a1a2e;border:1px solid #333;border-radius:8px;">
@@ -933,7 +944,7 @@
                         <span>Precedence: bulk header <span style="color:#f87171;font-size:11px;">(triggers Promotions)</span></span>
                     </label>
                     <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;" title="Add Reply-To header — usually the same as From, harmless but redundant">
-                        <input type="checkbox" id="bulkHeaderReplyTo" checked>
+                        <input type="checkbox" id="bulkHeaderReplyTo">
                         <span>Reply-To header <small style="color:#aaa;">(= From)</small></span>
                     </label>
                 </div>
@@ -964,7 +975,7 @@
 
             <div class="info-box">
                 <strong>✅ SMTP Works on Vercel!</strong><br>
-                Unlike Railway/Render, Vercel Serverless Functions have full SMTP access (ports 587/465/25).
+                Vercel Serverless Functions support SMTP connections on all standard ports (587/465/25).
             </div>
 
             <h3>Add SMTP Account</h3>
@@ -1067,6 +1078,62 @@
 
             <h3>Saved SES Accounts</h3>
             <div id="sesAccountsList" class="accounts-list"></div>
+        </div>
+
+        <!-- Tab: Gmail API Config -->
+        <div class="tab-content" id="gmail-api">
+            <h2>📧 Gmail API Configuration</h2>
+
+            <div class="info-box">
+                <strong>🔐 Simple 2-Step Setup:</strong><br>
+                <strong>1.</strong> Upload your credentials.json (Desktop or Web app - both work!)<br>
+                <strong>2.</strong> Click "Authenticate with Google" and sign in<br>
+                <strong>3.</strong> Done! Start sending emails 🎉<br>
+                <small style="color:#888;">⚡ Works with your existing credentials.json from any project</small>
+            </div>
+
+            <div class="form-group">
+                <label>📁 Upload credentials.json</label>
+                <input type="file" id="gmailApiJsonFile" accept=".json,application/json" onchange="loadGmailApiCredentialsFromJson(event)" style="padding:8px; background:#2a2a2a; border:1px solid #444; border-radius:6px; color:#e0e0e0; cursor:pointer;">
+                <small style="color:#888;">
+                    Works with Desktop app or Web application credentials
+                </small>
+            </div>
+
+            <div style="border-top:1px solid #444; margin:20px 0; padding-top:20px;">
+                <h4 style="margin-bottom:15px; color:#00ff9d;">🔑 Authentication</h4>
+                
+                <div class="form-group">
+                    <label>Client ID:</label>
+                    <input type="text" id="gmailApiClientId" placeholder="Upload credentials.json first..." readonly style="background:#1a1a1a; font-size:11px;">
+                    <small style="color:#888;">Auto-filled from uploaded JSON</small>
+                </div>
+
+                <div class="form-group">
+                    <label>Client Secret:</label>
+                    <input type="password" id="gmailApiClientSecret" placeholder="Upload credentials.json first..." readonly style="background:#1a1a1a; font-size:11px;">
+                    <small style="color:#888;">Auto-filled from uploaded JSON</small>
+                </div>
+
+                <div class="form-group">
+                    <label>Sender Name (optional):</label>
+                    <input type="text" id="gmailApiSenderName" placeholder="Your Name or Company Name">
+                    <small style="color:#888;">How emails will be signed (e.g., "John Doe" or "ACME Corp")</small>
+                </div>
+
+                <div id="authBtnHint" style="background:rgba(255,193,7,0.1); border:1px solid #ffc107; border-radius:6px; padding:12px; margin:15px 0; font-size:13px; color:#ffc107;">
+                    📂 Upload credentials.json above to get started
+                </div>
+
+                <button id="authenticateGmailBtn" class="btn" onclick="authenticateWithGoogle()" disabled style="background:#4285f4; border-color:#4285f4; color:#fff; font-size:16px; padding:12px 24px; margin-top:10px;">
+                    🔐 Authenticate with Google
+                </button>
+            </div>
+
+            <div id="gmailApiResult" class="result-box"></div>
+
+            <h3>Saved Gmail API Accounts</h3>
+            <div id="gmailApiAccountsList" class="accounts-list"></div>
         </div>
 
         <!-- Tab: EC2 Management -->
@@ -1286,6 +1353,28 @@
                     <a href="https://postmaster.google.com" target="_blank" style="color:#60a5fa;text-decoration:none;">🔗 Google Postmaster Tools — Monitor Gmail delivery reputation</a>
                     <a href="https://www.learndmarc.com" target="_blank" style="color:#60a5fa;text-decoration:none;">🔗 LearnDMARC.com — Test SPF/DKIM/DMARC in real-time</a>
                     <a href="https://dmarcian.com/dmarc-inspector/" target="_blank" style="color:#60a5fa;text-decoration:none;">🔗 DMARC Inspector — Validate your DMARC record</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Account Statistics Modal -->
+    <div id="accountStatsModal" class="modal" style="display:none;">
+        <div class="modal-content" style="max-width:900px;">
+            <div class="modal-header">
+                <h3>📊 Account Statistics & Send Counts</h3>
+                <span class="modal-close" onclick="closeAccountStats()">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div id="accountStatsContent">
+                    <div style="text-align:center;padding:40px;color:#666;">
+                        Loading account statistics...
+                    </div>
+                </div>
+                <div class="modal-actions" style="margin-top:20px;gap:10px;display:flex;justify-content:center;">
+                    <button class="btn btn-primary" onclick="reactivateAllAccounts()">🔄 Reactivate All Accounts</button>
+                    <button class="btn" onclick="refreshAccountStats()">🔃 Refresh</button>
+                    <button class="btn btn-secondary" onclick="closeAccountStats()">❌ Close</button>
                 </div>
             </div>
         </div>

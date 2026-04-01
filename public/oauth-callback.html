@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gmail Authentication - Processing...</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 40px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            color: #fff;
+        }
+        .container {
+            text-align: center;
+            background: rgba(255, 255, 255, 0.1);
+            padding: 40px;
+            border-radius: 12px;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+        }
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 4px solid rgba(255,255,255,0.3);
+            border-top-color: #fff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        h1 { margin: 0 0 10px; font-size: 24px; }
+        p { margin: 0; opacity: 0.9; font-size: 14px; }
+        .error { color: #ff6b6b; background: rgba(255,107,107,0.1); padding: 15px; border-radius: 8px; margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="spinner"></div>
+        <h1>🔐 Authenticating...</h1>
+        <p id="status">Processing your Google login...</p>
+    </div>
+
+    <script>
+        // Extract authorization code from URL
+        const urlParams = new URLSearchParams(window.location.search);
+        const code = urlParams.get('code');
+        const error = urlParams.get('error');
+        const statusEl = document.getElementById('status');
+
+        if (error) {
+            statusEl.innerHTML = `<div class="error">❌ Authentication cancelled or failed: ${error}</div>`;
+            setTimeout(() => window.close(), 3000);
+        } else if (code) {
+            // Send code to parent window (main app)
+            if (window.opener) {
+                window.opener.postMessage({
+                    type: 'GMAIL_OAUTH_CODE',
+                    code: code
+                }, '*');
+                statusEl.textContent = '✅ Success! Closing window...';
+                setTimeout(() => window.close(), 1500);
+            } else {
+                statusEl.innerHTML = '<div class="error">❌ Could not communicate with main window. Please try again.</div>';
+            }
+        } else {
+            statusEl.innerHTML = '<div class="error">❌ No authorization code received. Please try again.</div>';
+            setTimeout(() => window.close(), 3000);
+        }
+    </script>
+</body>
+</html>
