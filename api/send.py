@@ -1141,8 +1141,8 @@ class handler(BaseHTTPRequestHandler):
                     self.wfile.write(json.dumps({'success': False, 'error': 'SMTP config required'}).encode())
                     return
                 
-                # Check if SMTP account is active before attempting to send
-                account_id = smtp_config.get('username', smtp_config.get('server', 'unknown'))
+                # Check if SMTP account is active before attempting to send  
+                account_id = smtp_config.get('user', smtp_config.get('username', smtp_config.get('server', 'unknown')))
                 if not is_account_active(account_id, 'smtp'):
                     self.send_response(400)
                     self.send_header('Content-type', 'application/json')
@@ -1173,7 +1173,7 @@ class handler(BaseHTTPRequestHandler):
                     return
                 
                 # Check if SES account is active before attempting to send
-                account_id = f"{aws_config.get('region', 'unknown')}_{aws_config.get('access_key_id', 'unknown')[:8]}"
+                account_id = f"{aws_config.get('region', 'unknown')}_{aws_config.get('access_key', aws_config.get('access_key_id', 'unknown'))[:8]}"
                 if not is_account_active(account_id, 'ses'):
                     self.send_response(400)
                     self.send_header('Content-type', 'application/json')

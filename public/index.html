@@ -924,6 +924,13 @@
                     <label>Max Delay (ms):</label>
                     <input type="number" id="bulkMaxDelay" value="5000" min="0" oninput="updateFastModeStatus()">
                 </div>
+                <div class="form-group">
+                    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+                        <input type="checkbox" id="turboMode" onchange="toggleTurboMode()" style="accent-color:#f59e0b;">
+                        <span style="color:#f59e0b;font-weight:600;">🚀 TURBO MODE</span>
+                    </label>
+                    <small style="color:#aaa;display:block;margin-top:4px;">200 emails in 4 mins (no delay)</small>
+                </div>
             </div>
             
             <!-- Fast Mode Status Indicator -->

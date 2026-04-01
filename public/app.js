@@ -4041,6 +4041,36 @@ function updateFastModeStatus() {
 }
 
 /**
+ * Toggle turbo mode for bulk sending
+ */
+function toggleTurboMode() {
+    const turboMode = document.getElementById('turboMode');
+    const minDelayInput = document.getElementById('bulkMinDelay');
+    const maxDelayInput = document.getElementById('bulkMaxDelay');
+    
+    if (!turboMode || !minDelayInput || !maxDelayInput) return;
+    
+    if (turboMode.checked) {
+        // Enable turbo mode: 200 emails in 4 minutes = 0.2 seconds per email
+        minDelayInput.value = '200';
+        maxDelayInput.value = '200';
+        
+        // Show turbo mode notification
+        showResult('bulkResult', '🚀 TURBO MODE ACTIVATED: 200ms delay (200 emails in ~4 minutes)', 'info');
+    } else {
+        // Disable turbo mode: restore normal delays
+        minDelayInput.value = '2000';
+        maxDelayInput.value = '5000';
+        
+        // Show normal mode notification
+        showResult('bulkResult', '🐌 Normal mode restored: 2-5 second delays', 'info');
+    }
+    
+    // Update fast mode status display
+    updateFastModeStatus();
+}
+
+/**
  * Show account statistics modal
  */
 async function showAccountStatistics() {
