@@ -10,14 +10,34 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler
 
 def load_saved_accounts():
-    """Load saved accounts from accounts storage"""
+    """Load saved accounts from accounts storage - Fixed to use correct file location"""
     try:
+        # Try the main accounts file used by accounts.py
         accounts_file = '/tmp/kingmailer_accounts.json'
         if os.path.exists(accounts_file):
             with open(accounts_file, 'r') as f:
-                return json.load(f)
+                data = json.load(f)
+                print(f"[ACCOUNT-STATS] ✅ Loaded saved accounts: SMTP: {len(data.get('smtp_accounts', []))}, SES: {len(data.get('ses_accounts', []))}, Gmail API: {len(data.get('gmail_api_accounts', []))}")
+                return data
     except Exception as e:
-        print(f"Error loading saved accounts: {e}")
+        print(f"[ACCOUNT-STATS] ⚠️ Error loading saved accounts: {e}")
+        
+    # Fallback: Try to make HTTP request to accounts API to get current accounts
+    try:
+        import urllib.request
+        import urllib.parse
+        
+        req = urllib.request.Request('http://localhost:3000/api/accounts', method='GET')
+        with urllib.request.urlopen(req, timeout=5) as response:
+            data = json.loads(response.read().decode('utf-8'))
+            if data.get('success') and data.get('accounts'):
+                accounts = data['accounts']
+                print(f"[ACCOUNT-STATS] ✅ Loaded accounts via HTTP: SMTP: {len(accounts.get('smtp_accounts', []))}, SES: {len(accounts.get('ses_accounts', []))}, Gmail API: {len(accounts.get('gmail_api_accounts', []))}")
+                return accounts
+    except Exception as e:
+        print(f"[ACCOUNT-STATS] ⚠️ HTTP fallback failed: {e}")
+    
+    print("[ACCOUNT-STATS] ⚠️ No saved accounts found - using empty structure")
     return {
         'smtp_accounts': [],
         'ses_accounts': [],
@@ -117,25 +137,22 @@ def merge_accounts_with_stats():
         account_id = account.get('user', 'unknown')
         stats = tracking_stats.get('smtp', {}).get(account_id, {})
         
-        comprehensive_stats['smtp'][account_id] = {
-            'account_id': account_id,
-            'account_type': 'smtp',
-            'label': account.get('label', 'SMTP Account'),
-            'provider': account.get('provider', 'gmail'),
-            'created_at': account.get('created_at', datetime.now().isoformat()),
-            'emails_sent': stats.get('emails_sent', 0),
-            'failed_attempts': stats.get('failed_attempts', 0),
-            'total_failures': stats.get('total_failures', 0),
-            'is_active': stats.get('is_active', True),
-            'last_failure': stats.get('last_failure'),
-            'has_stats': bool(stats),
-            'is_placeholder': False
-        }
-    
-    # Add Gmail API accounts
-    for account in saved_accounts.get('gmail_api_accounts', []):
-        has_real_accounts = True
-        account_id = account.get('user', 'unknown')
+            print(f"[ACCOUNT-STATS] ✅ Processing real SMTP account: {account_id}")
+            
+            comprehensive_stats['smtp'][account_id] = {
+                'account_id': account_id,
+                'account_type': 'smtp',
+                'label': account.get('label', f'SMTP Account - {account_id}'),
+                'provider': account.get('provider', 'gmail'),
+                'created_at': account.get('created_at', datetime.now().isoformat()),
+                'emails_sent': stats.get('emails_sent', 0),
+                'failed_attempts': stats.get('failed_attempts', 0),
+                'total_failures': stats.get('total_failures', 0),
+                'is_active': stats.get('is_active', True),
+                'last_failure': stats.get('last_failure'),
+                'has_stats': bool(stats),
+                'is_placeholder': False,
+                'is_real_account': True
         stats = tracking_stats.get('gmail_api', {}).get(account_id, {})
         
         comprehensive_stats['gmail_api'][account_id] = {

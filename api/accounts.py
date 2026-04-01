@@ -27,13 +27,18 @@ def load_accounts():
     }
 
 def save_accounts(accounts):
-    """Save accounts to persistent file storage"""
+    """Save accounts to persistent file storage - Enhanced with debugging"""
     try:
+        # Ensure directory exists
+        os.makedirs(os.path.dirname(ACCOUNTS_FILE), exist_ok=True)
+        
         with open(ACCOUNTS_FILE, 'w') as f:
             json.dump(accounts, f, indent=2)
+        
+        print(f"[ACCOUNTS] ✅ Saved accounts: SMTP: {len(accounts.get('smtp_accounts', []))}, SES: {len(accounts.get('ses_accounts', []))}, Gmail API: {len(accounts.get('gmail_api_accounts', []))}, EC2: {len(accounts.get('ec2_relays', []))}")
         return True
     except Exception as e:
-        print(f"Failed to save accounts: {e}")
+        print(f"[ACCOUNTS] ❌ Failed to save accounts: {e}")
         return False
 
 

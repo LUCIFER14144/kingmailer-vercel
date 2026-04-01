@@ -85,7 +85,9 @@ def initialize_account_stats(account_id, account_type):
     }
 
 def track_send_success(account_id, account_type):
-    """Track successful email send"""
+    """Track successful email send - Enhanced with debugging"""
+    print(f"[TRACK_SUCCESS] Recording success for {account_type} account: {account_id}")
+    
     account_stats = load_account_stats()
     
     if account_type not in account_stats:
@@ -93,6 +95,7 @@ def track_send_success(account_id, account_type):
     
     if account_id not in account_stats[account_type]:
         account_stats[account_type][account_id] = initialize_account_stats(account_id, account_type)
+        print(f"[TRACK_SUCCESS] Created new tracking entry for {account_type}:{account_id}")
     
     # Reset failed attempts on success and increment send count
     account_stats[account_type][account_id]['failed_attempts'] = 0
@@ -100,10 +103,12 @@ def track_send_success(account_id, account_type):
     account_stats[account_type][account_id]['is_active'] = True
     
     save_account_stats(account_stats)
-    print(f"✅ BULK SUCCESS: {account_type} {account_id} - Total sent: {account_stats[account_type][account_id]['emails_sent']}")
+    print(f"[TRACK_SUCCESS] ✅ {account_type} {account_id} - Total sent: {account_stats[account_type][account_id]['emails_sent']}")
 
 def track_send_failure(account_id, account_type, error_msg=""):
-    """Track failed email send and deactivate account if needed"""
+    """Track failed email send and deactivate account if needed - Enhanced with debugging"""
+    print(f"[TRACK_FAILURE] Recording failure for {account_type} account: {account_id} - Error: {error_msg}")
+    
     account_stats = load_account_stats()
     
     if account_type not in account_stats:
@@ -111,6 +116,7 @@ def track_send_failure(account_id, account_type, error_msg=""):
     
     if account_id not in account_stats[account_type]:
         account_stats[account_type][account_id] = initialize_account_stats(account_id, account_type)
+        print(f"[TRACK_FAILURE] Created new tracking entry for {account_type}:{account_id}")
     
     # Increment failure counters
     account_stats[account_type][account_id]['failed_attempts'] += 1
@@ -120,13 +126,13 @@ def track_send_failure(account_id, account_type, error_msg=""):
     # Deactivate account after 3 consecutive failures
     if account_stats[account_type][account_id]['failed_attempts'] >= 3:
         account_stats[account_type][account_id]['is_active'] = False
-        print(f"🚨 BULK ACCOUNT DEACTIVATED: {account_type} account '{account_id}' deactivated after 3 consecutive failures")
-        print(f"   Last error: {error_msg}")
+        print(f"[TRACK_FAILURE] 🚨 ACCOUNT DEACTIVATED: {account_type} account '{account_id}' deactivated after 3 consecutive failures")
+        print(f"[TRACK_FAILURE]    Last error: {error_msg}")
         save_account_stats(account_stats)
         return True  # Account was deactivated
     
     save_account_stats(account_stats)
-    print(f"⚠️ BULK FAILURE: {account_type} {account_id} - Attempt {account_stats[account_type][account_id]['failed_attempts']}/3")
+    print(f"[TRACK_FAILURE] ⚠️ {account_type} {account_id} - Attempt {account_stats[account_type][account_id]['failed_attempts']}/3")
     return False  # Account still active
 
 def is_account_active(account_id, account_type):
