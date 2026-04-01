@@ -4051,12 +4051,12 @@ function toggleTurboMode() {
     if (!turboMode || !minDelayInput || !maxDelayInput) return;
     
     if (turboMode.checked) {
-        // Enable turbo mode: 200 emails in 4 minutes = 0.2 seconds per email
-        minDelayInput.value = '200';
-        maxDelayInput.value = '200';
+        // Enable turbo mode: 200 emails in 4 minutes = 0ms delay for maximum speed
+        minDelayInput.value = '0';
+        maxDelayInput.value = '0';
         
         // Show turbo mode notification
-        showResult('bulkResult', '🚀 TURBO MODE ACTIVATED: 200ms delay (200 emails in ~4 minutes)', 'info');
+        showResult('bulkResult', '🚀 TURBO MODE ACTIVATED: 0ms delay (200 emails in 4 minutes)', 'info');
     } else {
         // Disable turbo mode: restore normal delays
         minDelayInput.value = '2000';

@@ -134,16 +134,22 @@ def is_account_active(account_id, account_type):
     account_stats = load_account_stats()
     
     if account_type not in account_stats:
+        print(f"[ACCOUNT_CHECK] ✅ {account_type} account '{account_id}' - no stats found, assuming active")
         return True
     
     if account_id not in account_stats[account_type]:
+        print(f"[ACCOUNT_CHECK] ✅ {account_type} account '{account_id}' - not tracked yet, assuming active")
         return True
         
     is_active = account_stats[account_type][account_id].get('is_active', True)
-    if not is_active:
-        print(f"🚨 BULK BLOCKED: {account_type} account '{account_id}' is deactivated - skipping")
+    failed_attempts = account_stats[account_type][account_id].get('failed_attempts', 0)
     
-    return is_active
+    if not is_active:
+        print(f"[ACCOUNT_CHECK] 🚨 BLOCKED: {account_type} account '{account_id}' is DEACTIVATED (failed_attempts: {failed_attempts}) - SKIPPING")
+        return False
+    else:
+        print(f"[ACCOUNT_CHECK] ✅ {account_type} account '{account_id}' is ACTIVE (failed_attempts: {failed_attempts})")
+        return True
 
 
 # Spintax Processor
@@ -988,7 +994,10 @@ class SMTPPool:
 
     def get_next(self):
         if not self.accounts:
+            print(f"[POOL ERROR] No {self.account_type} accounts available")
             return None
+        
+        print(f"[POOL] Starting rotation for {len(self.accounts)} {self.account_type} accounts")
         
         # Try to find an active account, with a maximum number of attempts
         # to prevent infinite loops if all accounts are deactivated
@@ -1002,22 +1011,28 @@ class SMTPPool:
             # Generate account ID based on account type
             if self.account_type == 'smtp':
                 account_id = account.get('user', account.get('server', 'unknown'))
+                print(f"[POOL] Checking SMTP account - user: {account.get('user')}, server: {account.get('server')} → ID: {account_id}")
             elif self.account_type == 'ses':
-                account_id = f"{account.get('region', 'unknown')}_{account.get('access_key_id', 'unknown')[:8]}"
+                access_key = account.get('access_key_id', account.get('access_key', 'unknown'))
+                account_id = f"{account.get('region', 'unknown')}_{access_key[:8]}"
+                print(f"[POOL] Checking SES account - region: {account.get('region')}, access_key: {access_key[:8]} → ID: {account_id}")
             elif self.account_type == 'gmail_api':
                 account_id = account.get('user', account.get('client_id', 'unknown')[:8])
+                print(f"[POOL] Checking Gmail API account - user: {account.get('user')} → ID: {account_id}")
             else:
                 account_id = 'unknown'
+                print(f"[POOL] Unknown account type: {self.account_type}")
             
             # Check if account is active
             if is_account_active(account_id, self.account_type):
+                print(f"[POOL SUCCESS] ✅ Using {self.account_type} account: {account_id}")
                 return account
             else:
-                print(f'[POOL SKIP] {self.account_type} account {account_id} is deactivated, trying next account')
+                print(f"[POOL SKIP] ❌ {self.account_type} account {account_id} is deactivated, trying next account")
                 attempts += 1
         
         # If we reach here, all accounts are deactivated
-        print(f'[POOL WARNING] All {self.account_type} accounts are deactivated!')
+        print(f"[POOL CRITICAL] 🚨 ALL {self.account_type.upper()} ACCOUNTS ARE DEACTIVATED! Cannot send emails.")
         return None
 
 

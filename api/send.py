@@ -132,16 +132,22 @@ def is_account_active(account_id, account_type):
     account_stats = load_account_stats()
     
     if account_type not in account_stats:
+        print(f"[ACCOUNT_CHECK] ✅ {account_type} account '{account_id}' - no stats found, assuming active")
         return True
     
     if account_id not in account_stats[account_type]:
+        print(f"[ACCOUNT_CHECK] ✅ {account_type} account '{account_id}' - not tracked yet, assuming active")
         return True
         
     is_active = account_stats[account_type][account_id].get('is_active', True)
-    if not is_active:
-        print(f"🚨 BLOCKED: {account_type} account '{account_id}' is deactivated - skipping send attempt")
+    failed_attempts = account_stats[account_type][account_id].get('failed_attempts', 0)
     
-    return is_active
+    if not is_active:
+        print(f"[ACCOUNT_CHECK] 🚨 BLOCKED: {account_type} account '{account_id}' is DEACTIVATED (failed_attempts: {failed_attempts}) - REJECTING SEND")
+        return False
+    else:
+        print(f"[ACCOUNT_CHECK] ✅ {account_type} account '{account_id}' is ACTIVE (failed_attempts: {failed_attempts})")
+        return True
 
 
 # Spintax Processor
