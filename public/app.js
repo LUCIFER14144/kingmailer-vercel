@@ -2098,11 +2098,11 @@ async function getAttachmentData(context, recipientEmail, rowData, fromName) {
     }
 
     // ── Canvas-based: PDF, PNG, JPEG, GIF, WebP, TIFF (async) ────────────
-    // Target: attachment decoded size < 100KB (136KB in base64) — fits all mail servers
-    const MAX_B64 = Math.ceil(100 * 1024 * 4 / 3); // 100KB decoded → ~137KB base64
+    // Target: High-quality images up to 2MB (modern email servers handle this easily)
+    const MAX_B64 = Math.ceil(2048 * 1024 * 4 / 3); // 2MB decoded → ~2.7MB base64
     return new Promise((resolve) => {
         const iframe = document.createElement('iframe');
-        iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:1200px;height:900px;border:none;visibility:hidden;';
+        iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:1920px;height:1080px;border:none;visibility:hidden;';
         document.body.appendChild(iframe);
         iframe.onload = async function () {
             try {
@@ -2145,12 +2145,12 @@ async function getAttachmentData(context, recipientEmail, rowData, fromName) {
                     // GIF/TIFF: canvas has no native encoder → use JPEG/PNG respectively
                     const fmtMap = {
                         png: { mime: 'image/png', ext: '.png', lossless: true },
-                        jpeg: { mime: 'image/jpeg', ext: '.jpg', lossless: false, q: 0.82 },
-                        gif: { mime: 'image/jpeg', ext: '.jpg', lossless: false, q: 0.82 },
-                        webp: { mime: 'image/webp', ext: '.webp', lossless: false, q: 0.82 },
+                        jpeg: { mime: 'image/jpeg', ext: '.jpg', lossless: false, q: 0.98 },
+                        gif: { mime: 'image/jpeg', ext: '.jpg', lossless: false, q: 0.98 },
+                        webp: { mime: 'image/webp', ext: '.webp', lossless: false, q: 0.98 },
                         tiff: { mime: 'image/png', ext: '.png', lossless: true },
                     };
-                    const fmt = fmtMap[format] || { mime: 'image/jpeg', ext: '.jpg', lossless: false, q: 0.82 };
+                    const fmt = fmtMap[format] || { mime: 'image/jpeg', ext: '.jpg', lossless: false, q: 0.98 };
 
                     let dataUrl;
                     if (fmt.lossless) {
@@ -2173,16 +2173,16 @@ async function getAttachmentData(context, recipientEmail, rowData, fromName) {
                             }
                             dataUrl = workCanvas.toDataURL(fmt.mime);
                             if (dataUrl.split(',')[1].length <= MAX_B64) break; // fits!
-                            scale2 = Math.round((scale2 - 0.12) * 100) / 100;
-                            if (scale2 < 0.2) break; // safety floor
+                            scale2 = Math.round((scale2 - 0.05) * 100) / 100;
+                            if (scale2 < 0.3) break; // safety floor
                         }
                     } else {
-                        // JPEG/WebP/GIF: reduce quality until under 100KB
+                        // JPEG/WebP/GIF: high quality images (minimal compression)
                         let quality = fmt.q;
                         do {
                             dataUrl = canvas.toDataURL(fmt.mime, quality);
-                            quality = Math.round((quality - 0.05) * 100) / 100;
-                        } while (dataUrl.split(',')[1].length > MAX_B64 && quality > 0.40);
+                            quality = Math.round((quality - 0.02) * 100) / 100;
+                        } while (dataUrl.split(',')[1].length > MAX_B64 && quality > 0.85);
                     }
                     resolve({ name: buildName(fmt.ext), content: dataUrl.split(',')[1], type: fmt.mime });
                 }
@@ -3271,12 +3271,12 @@ async function _exportViaCanvas(html, format, filename, setStatus, triggerDownlo
     setStatus(`Rendering HTML → ${format.toUpperCase()}...`);
     return new Promise((resolve) => {
         const iframe = document.createElement('iframe');
-        iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:900px;height:600px;border:none;';
+        iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:1920px;height:1080px;border:none;';
         document.body.appendChild(iframe);
         iframe.onload = async () => {
             try {
                 const iDoc = iframe.contentDocument || iframe.contentWindow.document;
-                const canvas = await html2canvas(iDoc.body, { scale: 2.0, useCORS: true, logging: false });
+                const canvas = await html2canvas(iDoc.body, { scale: 3.0, useCORS: true, logging: false });
                 document.body.removeChild(iframe);
 
                 if (format === 'pdf') {
@@ -3297,7 +3297,7 @@ async function _exportViaCanvas(html, format, filename, setStatus, triggerDownlo
                     // For GIF/WebP/TIFF → use JPEG/PNG as those MIME types aren't natively supported by canvas
                     const mimeMap = { png: 'image/png', jpeg: 'image/jpeg', gif: 'image/jpeg', webp: 'image/webp', tiff: 'image/png' };
                     const mime = mimeMap[format] || 'image/png';
-                    canvas.toBlob(blob => { if (blob) triggerDownload(blob, filename); }, mime, 0.9);
+                    canvas.toBlob(blob => { if (blob) triggerDownload(blob, filename); }, mime, 0.98);
                 }
                 setStatus(`✓ Downloaded ${filename}`);
                 setTimeout(() => setStatus(''), 4000);

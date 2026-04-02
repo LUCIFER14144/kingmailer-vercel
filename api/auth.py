@@ -18,7 +18,7 @@ DEFAULT_DB = {
             "password": hashlib.sha256('admin123'.encode()).hexdigest(),
             "role": "admin",
             "created_at": "2026-02-25 00:00:00",
-            "max_devices": 1,
+            "max_devices": 10,
             "active_hwids": []
         },
         "demo": {
