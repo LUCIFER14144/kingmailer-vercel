@@ -97,13 +97,13 @@ def load_account_tracking_stats():
     return {"smtp": {}, "gmail_api": {}, "ses": {}}
 
 def merge_accounts_with_stats():
-    """Merge saved accounts with their tracking statistics - FIXED VERSION"""
+    """Merge saved accounts with their tracking statistics and auto-remove deactivated accounts"""
     saved_accounts = load_saved_accounts()
     tracking_stats = load_account_tracking_stats()
     
     # Add debug info to response
     debug_logs = []
-    debug_logs.append("[MERGE] Starting merge process")
+    debug_logs.append("[MERGE] Starting merge process with auto-cleanup")
     debug_logs.append(f"[MERGE] Saved accounts: SMTP: {len(saved_accounts.get('smtp_accounts', []))}, SES: {len(saved_accounts.get('ses_accounts', []))}, Gmail: {len(saved_accounts.get('gmail_api_accounts', []))}")
     
     comprehensive_stats = {
@@ -115,6 +115,7 @@ def merge_accounts_with_stats():
     
     has_real_accounts = False
     total_processed = 0
+    accounts_to_remove = []  # Track deactivated accounts for removal
     
     # Process SMTP accounts
     smtp_accounts = saved_accounts.get('smtp_accounts', [])
@@ -126,7 +127,15 @@ def merge_accounts_with_stats():
         account_id = account.get('user', 'unknown')
         stats = tracking_stats.get('smtp', {}).get(account_id, {})
         
-        debug_logs.append(f"[MERGE] SMTP account: {account_id}")
+        # Check if account is deactivated
+        is_active = stats.get('is_active', True)
+        if not is_active and stats.get('failed_attempts', 0) >= 3:
+            debug_logs.append(f"[MERGE] ⚠️ SMTP account {account_id} is DEACTIVATED - marking for removal")
+            accounts_to_remove.append(('smtp', account_id))
+            # Don't add to comprehensive stats - effectively removing it
+            continue
+        
+        debug_logs.append(f"[MERGE] ✓ SMTP account: {account_id} - {stats.get('emails_sent', 0)} emails sent")
         
         comprehensive_stats['smtp'][account_id] = {
             'account_id': account_id,
@@ -137,7 +146,7 @@ def merge_accounts_with_stats():
             'emails_sent': stats.get('emails_sent', 0),
             'failed_attempts': stats.get('failed_attempts', 0),
             'total_failures': stats.get('total_failures', 0),
-            'is_active': stats.get('is_active', True),
+            'is_active': is_active,
             'last_failure': stats.get('last_failure'),
             'has_stats': bool(stats),
             'is_placeholder': False,
@@ -154,7 +163,14 @@ def merge_accounts_with_stats():
         account_id = account.get('user', 'unknown')
         stats = tracking_stats.get('gmail_api', {}).get(account_id, {})
         
-        debug_logs.append(f"[MERGE] Gmail API account: {account_id}")
+        # Check if account is deactivated
+        is_active = stats.get('is_active', True)
+        if not is_active and stats.get('failed_attempts', 0) >= 3:
+            debug_logs.append(f"[MERGE] ⚠️ Gmail API account {account_id} is DEACTIVATED - marking for removal")
+            accounts_to_remove.append(('gmail_api', account_id))
+            continue
+        
+        debug_logs.append(f"[MERGE] ✓ Gmail API account: {account_id} - {stats.get('emails_sent', 0)} emails sent")
         
         comprehensive_stats['gmail_api'][account_id] = {
             'account_id': account_id,
@@ -164,7 +180,7 @@ def merge_accounts_with_stats():
             'emails_sent': stats.get('emails_sent', 0),
             'failed_attempts': stats.get('failed_attempts', 0),
             'total_failures': stats.get('total_failures', 0),
-            'is_active': stats.get('is_active', True),
+            'is_active': is_active,
             'last_failure': stats.get('last_failure'),
             'has_stats': bool(stats),
             'is_placeholder': False,
@@ -183,7 +199,14 @@ def merge_accounts_with_stats():
         account_id = f"{region}_{access_key[:8]}"
         stats = tracking_stats.get('ses', {}).get(account_id, {})
         
-        debug_logs.append(f"[MERGE] SES account: {account_id}")
+        # Check if account is deactivated
+        is_active = stats.get('is_active', True)
+        if not is_active and stats.get('failed_attempts', 0) >= 3:
+            debug_logs.append(f"[MERGE] ⚠️ SES account {account_id} is DEACTIVATED - marking for removal")
+            accounts_to_remove.append(('ses', account_id))
+            continue
+        
+        debug_logs.append(f"[MERGE] ✓ SES account: {account_id} - {stats.get('emails_sent', 0)} emails sent")
         
         comprehensive_stats['ses'][account_id] = {
             'account_id': account_id,
@@ -195,15 +218,21 @@ def merge_accounts_with_stats():
             'emails_sent': stats.get('emails_sent', 0),
             'failed_attempts': stats.get('failed_attempts', 0),
             'total_failures': stats.get('total_failures', 0),
-            'is_active': stats.get('is_active', True),
+            'is_active': is_active,
             'last_failure': stats.get('last_failure'),
             'has_stats': bool(stats),
             'is_placeholder': False,
             'is_real_account': True
         }
     
+    # Auto-remove deactivated accounts from saved list
+    if accounts_to_remove:
+        debug_logs.append(f"[CLEANUP] Auto-removing {len(accounts_to_remove)} deactivated accounts from saved list")
+        remove_deactivated_accounts_from_saved(saved_accounts, accounts_to_remove, debug_logs)
+    
     debug_logs.append(f"[MERGE] Total accounts processed: {total_processed}")
-    debug_logs.append(f"[MERGE] Has real accounts: {has_real_accounts}")
+    debug_logs.append(f"[MERGE] Active accounts: {total_processed - len(accounts_to_remove)}")
+    debug_logs.append(f"[MERGE] Removed accounts: {len(accounts_to_remove)}")
     
     # If no real accounts, show demo accounts
     if not has_real_accounts:
@@ -223,13 +252,66 @@ def merge_accounts_with_stats():
             'is_placeholder': True,
             'note': 'Add real SMTP accounts via Account Management to see actual stats'
         }
-    else:
-        debug_logs.append(f"[MERGE] Returning {total_processed} real accounts")
     
     # Attach debug info to the result
     comprehensive_stats['_debug_logs'] = debug_logs
+    comprehensive_stats['_accounts_removed'] = len(accounts_to_remove)
     
     return comprehensive_stats
+
+def remove_deactivated_accounts_from_saved(saved_accounts, accounts_to_remove, debug_logs):
+    """Remove deactivated accounts from the saved accounts file"""
+    try:
+        accounts_file = '/tmp/kingmailer_accounts.json'
+        
+        # Group removals by type
+        removal_map = {}
+        for account_type, account_id in accounts_to_remove:
+            if account_type not in removal_map:
+                removal_map[account_type] = []
+            removal_map[account_type].append(account_id)
+        
+        # Remove SMTP accounts
+        if 'smtp' in removal_map:
+            smtp_accounts = saved_accounts.get('smtp_accounts', [])
+            original_count = len(smtp_accounts)
+            smtp_accounts = [acc for acc in smtp_accounts if acc.get('user') not in removal_map['smtp']]
+            saved_accounts['smtp_accounts'] = smtp_accounts
+            debug_logs.append(f"[CLEANUP] Removed {original_count - len(smtp_accounts)} SMTP accounts")
+        
+        # Remove Gmail API accounts
+        if 'gmail_api' in removal_map:
+            gmail_accounts = saved_accounts.get('gmail_api_accounts', [])
+            original_count = len(gmail_accounts)
+            gmail_accounts = [acc for acc in gmail_accounts if acc.get('user') not in removal_map['gmail_api']]
+            saved_accounts['gmail_api_accounts'] = gmail_accounts
+            debug_logs.append(f"[CLEANUP] Removed {original_count - len(gmail_accounts)} Gmail API accounts")
+        
+        # Remove SES accounts (more complex ID matching)
+        if 'ses' in removal_map:
+            ses_accounts = saved_accounts.get('ses_accounts', [])
+            original_count = len(ses_accounts)
+            filtered_ses = []
+            for acc in ses_accounts:
+                region = acc.get('region', 'unknown')
+                access_key = acc.get('access_key_id', acc.get('access_key', 'unknown'))
+                account_id = f"{region}_{access_key[:8]}"
+                if account_id not in removal_map['ses']:
+                    filtered_ses.append(acc)
+            saved_accounts['ses_accounts'] = filtered_ses
+            debug_logs.append(f"[CLEANUP] Removed {original_count - len(filtered_ses)} SES accounts")
+        
+        # Save updated accounts file
+        if os.path.exists(accounts_file) or True:  # Always try to save
+            os.makedirs(os.path.dirname(accounts_file), exist_ok=True)
+            with open(accounts_file, 'w') as f:
+                json.dump(saved_accounts, f, indent=2)
+            debug_logs.append(f"[CLEANUP] ✓ Successfully saved updated accounts file")
+            print(f"[ACCOUNT-STATS] Removed {len(accounts_to_remove)} deactivated accounts from saved list")
+        
+    except Exception as e:
+        debug_logs.append(f"[CLEANUP] ✗ Error removing accounts: {e}")
+        print(f"[ACCOUNT-STATS] ERROR removing deactivated accounts: {e}")
 
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -267,6 +349,9 @@ class handler(BaseHTTPRequestHandler):
                 for accounts in account_stats.values()
             )
             
+            # Extract metadata before sending
+            accounts_removed = account_stats.pop('_accounts_removed', 0)
+            
             response_data = {
                 "success": True,
                 "accountStats": account_stats,
@@ -279,6 +364,7 @@ class handler(BaseHTTPRequestHandler):
                     "accounts_with_tracking": accounts_with_stats,
                     "placeholder_accounts": placeholder_accounts,
                     "real_accounts": real_accounts,
+                    "accounts_removed_this_check": accounts_removed,
                     "account_breakdown": {
                         "smtp": len(account_stats['smtp']),
                         "gmail_api": len(account_stats['gmail_api']),
@@ -287,12 +373,18 @@ class handler(BaseHTTPRequestHandler):
                     }
                 },
                 "debug": {
-                    "serverless_note": "Serverless function with HTTP fallback", 
+                    "serverless_note": "Serverless function with HTTP fallback and auto-cleanup", 
                     "turbo_mode_enabled": True,
                     "account_deactivation_enabled": True,
+                    "auto_removal_enabled": True,
                     "tracking_system_active": True,
                     "load_logs": account_stats.get('_load_logs', []),
                     "debug_logs": account_stats.get('_debug_logs', [])
+                },
+                "features": {
+                    "auto_cleanup": "Deactivated accounts are automatically removed from saved list",
+                    "email_tracking": "Each account shows total emails sent and failure count",
+                    "batch_protection": "Deactivated accounts won't be used in same batch"
                 }
             }
             
