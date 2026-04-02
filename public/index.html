@@ -16,10 +16,10 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PptxGenJS/3.12.0/pptxgen.bundle.js"></script>
     <script src="spamChecker.js"></script>
     <script>
-        // Login check - redirect if not authenticated
+        // Login check - redirect if not authenticated (tab-specific for multi-device support)
         window.addEventListener('DOMContentLoaded', () => {
-            const session = localStorage.getItem('kingmailer_session');
-            const user = localStorage.getItem('kingmailer_user');
+            const session = sessionStorage.getItem('kingmailer_session');
+            const user = sessionStorage.getItem('kingmailer_user');
             if (!session || !user) {
                 window.location.href = '/login.html';
             } else {
@@ -33,8 +33,9 @@
         });
 
         function logout() {
-            localStorage.removeItem('kingmailer_session');
-            localStorage.removeItem('kingmailer_user');
+            sessionStorage.removeItem('kingmailer_session');
+            sessionStorage.removeItem('kingmailer_user');
+            sessionStorage.removeItem('kingmailer_hwid');
             window.location.href = '/login.html';
         }
     </script>

@@ -176,11 +176,11 @@
                 return;
             }
 
-            // Generate or retrieve HWID
-            let hwid = localStorage.getItem('kingmailer_hwid');
+            // Generate or retrieve HWID (tab-specific for multi-login support)
+            let hwid = sessionStorage.getItem('kingmailer_hwid');
             if (!hwid) {
-                hwid = 'browser_' + Math.random().toString(36).substr(2, 9) + Date.now().toString(36);
-                localStorage.setItem('kingmailer_hwid', hwid);
+                hwid = 'tab_' + Math.random().toString(36).substr(2, 9) + Date.now().toString(36);
+                sessionStorage.setItem('kingmailer_hwid', hwid);
             }
 
             showStatus('Authenticating...', 'info');
@@ -197,9 +197,9 @@
                 if (data.success) {
                     showStatus('✅ Login successful! Redirecting...', 'success');
 
-                    // Store session
-                    localStorage.setItem('kingmailer_session', data.token || 'authenticated');
-                    localStorage.setItem('kingmailer_user', username);
+                    // Store session (tab-specific for multi-device support)
+                    sessionStorage.setItem('kingmailer_session', data.token || 'authenticated');
+                    sessionStorage.setItem('kingmailer_user', username);
 
                     // Redirect to dashboard
                     setTimeout(() => {
@@ -220,9 +220,9 @@
             statusDiv.classList.remove('hidden');
         }
 
-        // Check if already logged in
+        // Check if already logged in (tab-specific)
         window.addEventListener('DOMContentLoaded', () => {
-            const session = localStorage.getItem('kingmailer_session');
+            const session = sessionStorage.getItem('kingmailer_session');
             if (session) {
                 window.location.href = '/';
             }

@@ -76,9 +76,9 @@
         }
     </style>
     <script>
-        // Check if admin
+        // Check if admin (tab-specific for multi-device support)
         window.addEventListener('DOMContentLoaded', () => {
-            const user = localStorage.getItem('kingmailer_user');
+            const user = sessionStorage.getItem('kingmailer_user');
             if (user !== 'admin') {
                 alert('Access denied. Admin only.');
                 window.location.href = '/';
