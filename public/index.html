@@ -65,9 +65,6 @@
                 </div>
             </div>
             <div style="margin-top:14px;display:flex;justify-content:flex-end;align-items:center;gap:10px;">
-                <button onclick="showAccountStatistics()" 
-                    style="padding:8px 16px;background:linear-gradient(135deg,#10b981,#059669);color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:.8rem;font-weight:600;font-family:inherit;box-shadow:0 2px 8px rgba(16,185,129,.3);">
-                    📊 Account Stats</button>
                 <span style="font-size:.8rem;color:rgba(255,255,255,.4);">Logged in as: <span id="userDisplay"
                         style="color:rgba(255,255,255,.7);font-weight:600;">-</span></span>
                 <button onclick="window.location.href='/admin.html'" id="adminBtn"
@@ -1366,27 +1363,6 @@
         </div>
     </div>
 
-    <!-- Account Statistics Modal -->
-    <div id="accountStatsModal" class="modal" style="display:none;">
-        <div class="modal-content" style="max-width:900px;">
-            <div class="modal-header">
-                <h3>📊 Account Statistics & Send Counts</h3>
-                <span class="modal-close" onclick="closeAccountStats()">&times;</span>
-            </div>
-            <div class="modal-body">
-                <div id="accountStatsContent">
-                    <div style="text-align:center;padding:40px;color:#666;">
-                        Loading account statistics...
-                    </div>
-                </div>
-                <div class="modal-actions" style="margin-top:20px;gap:10px;display:flex;justify-content:center;">
-                    <button class="btn btn-primary" onclick="reactivateAllAccounts()">🔄 Reactivate All Accounts</button>
-                    <button class="btn" onclick="refreshAccountStats()">🔃 Refresh</button>
-                    <button class="btn btn-secondary" onclick="closeAccountStats()">❌ Close</button>
-                </div>
-            </div>
-        </div>
-    </div>
 
     <footer style="text-align:center; padding:20px; color:#444; font-size:12px;">
         <p>KINGMAILER v4.1 — Professional Email Platform</p>
