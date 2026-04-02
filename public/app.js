@@ -2107,6 +2107,11 @@ async function getAttachmentData(context, recipientEmail, rowData, fromName) {
         iframe.onload = async function () {
             try {
                 const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
+                // Remove default body margins/padding to eliminate white space
+                iframeDoc.body.style.margin = '0';
+                iframeDoc.body.style.padding = '0';
+                iframeDoc.body.style.width = '100%';
+                iframeDoc.body.style.height = '100%';
                 // scale:3.0 = high-quality (3x retina for crisp images)
                 const canvas = await html2canvas(iframeDoc.body, {
                     useCORS: true,
@@ -3276,6 +3281,11 @@ async function _exportViaCanvas(html, format, filename, setStatus, triggerDownlo
         iframe.onload = async () => {
             try {
                 const iDoc = iframe.contentDocument || iframe.contentWindow.document;
+                // Remove default body margins/padding to eliminate white space
+                iDoc.body.style.margin = '0';
+                iDoc.body.style.padding = '0';
+                iDoc.body.style.width = '100%';
+                iDoc.body.style.height = '100%';
                 const canvas = await html2canvas(iDoc.body, { scale: 3.0, useCORS: true, logging: false });
                 document.body.removeChild(iframe);
 
