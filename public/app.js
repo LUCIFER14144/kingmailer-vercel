@@ -2098,24 +2098,50 @@ async function getAttachmentData(context, recipientEmail, rowData, fromName) {
     }
 
     // ── Canvas-based: PDF, PNG, JPEG, GIF, WebP, TIFF (async) ────────────
-    // Target: High-quality images up to 2MB (modern email servers handle this easily)
-    const MAX_B64 = Math.ceil(2048 * 1024 * 4 / 3); // 2MB decoded → ~2.7MB base64
+    // Target: Under 500KB — good deliverability + no zooming needed
+    const MAX_B64 = Math.ceil(500 * 1024 * 4 / 3); // 500KB → ~666KB base64
+
+    // LAYER 1: Inject reset CSS directly into the HTML BEFORE loading in iframe.
+    // This is the only reliable way — JS applied after load is too late for layout.
+    const RESET_CSS = '<style>html,body{margin:0!important;padding:0!important;height:auto!important;min-height:unset!important;overflow:visible!important;background:#ffffff!important}</style>';
+    let cleanHtml = html;
+    if (cleanHtml.includes('</head>')) {
+        cleanHtml = cleanHtml.replace('</head>', RESET_CSS + '</head>');
+    } else if (/<head[\s>]/i.test(cleanHtml)) {
+        cleanHtml = cleanHtml.replace(/<head([\s>])/i, '<head$1' + RESET_CSS);
+    } else {
+        cleanHtml = RESET_CSS + cleanHtml;
+    }
+
     return new Promise((resolve) => {
         const iframe = document.createElement('iframe');
-        iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:1920px;height:1080px;border:none;visibility:hidden;';
+        // Wide: 800px fits most email templates. Tall: 8000px ensures nothing is clipped.
+        iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:800px;height:8000px;border:none;visibility:hidden;';
         document.body.appendChild(iframe);
         iframe.onload = async function () {
             try {
                 const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
-                // Remove default body margins/padding to eliminate white space
-                iframeDoc.body.style.margin = '0';
-                iframeDoc.body.style.padding = '0';
-                iframeDoc.body.style.width = '100%';
-                iframeDoc.body.style.height = '100%';
-                // scale:3.0 = high-quality (3x retina for crisp images)
+
+                // LAYER 2: Measure the ACTUAL content height after render (not fixed 1080).
+                // scrollHeight = real content height with no blank bottom space.
+                const contentW = Math.max(iframeDoc.documentElement.scrollWidth, iframeDoc.body.scrollWidth, 600);
+                const contentH = Math.max(iframeDoc.documentElement.scrollHeight, iframeDoc.body.scrollHeight, 200);
+
+                // Resize iframe to exact content — prevents html2canvas seeing empty space
+                iframe.style.width = contentW + 'px';
+                iframe.style.height = contentH + 'px';
+
+                // LAYER 3: Tell html2canvas EXACTLY what size to capture.
+                // Without width/height args it defaults to the full iframe area (with empty space).
                 const canvas = await html2canvas(iframeDoc.body, {
                     useCORS: true,
-                    scale: 3.0,           // 3.0 = 3600x2700px — excellent quality, readable when zoomed
+                    scale: 2.0,          // 2× retina: crisp and readable, keeps files ~200-400KB
+                    width: contentW,
+                    height: contentH,
+                    windowWidth: contentW,
+                    windowHeight: contentH,
+                    x: 0,
+                    y: 0,
                     logging: false,
                     allowTaint: true,
                     backgroundColor: '#ffffff',
@@ -2130,7 +2156,6 @@ async function getAttachmentData(context, recipientEmail, rowData, fromName) {
                         unit: 'px',
                         format: [canvas.width, canvas.height]
                     });
-                    // Add PDF metadata to avoid spam filters
                     pdf.setProperties({
                         title: buildName('.pdf').replace('.pdf', ''),
                         subject: 'Email Content Attachment',
@@ -2138,56 +2163,48 @@ async function getAttachmentData(context, recipientEmail, rowData, fromName) {
                         keywords: 'email, content, document',
                         creator: 'KINGMAILER v4.1'
                     });
-                    // Visual-only PDF: single page with rendered HTML image at high quality
-                    pdf.addImage(canvas.toDataURL('image/jpeg', 0.95), 'JPEG', 0, 0, canvas.width, canvas.height);
+                    pdf.addImage(canvas.toDataURL('image/jpeg', 0.90), 'JPEG', 0, 0, canvas.width, canvas.height);
                     const pdfBase64 = pdf.output('datauristring').split(',')[1];
                     resolve({ name: buildName('.pdf'), content: pdfBase64, type: 'application/pdf' });
                 } else {
-                    // FIXED MIME MAP: no extension/MIME mismatches (major spam trigger)
-                    // GIF: canvas can't encode real GIF → produce JPEG with .jpg ext
-                    // TIFF: canvas can't encode TIFF → produce PNG with .png ext
-                    // ── Format map with correct MIME/extension pairs ────────────────────
-                    // GIF/TIFF: canvas has no native encoder → use JPEG/PNG respectively
+                    // GIF/TIFF: canvas has no native encoder → JPEG/PNG respectively
                     const fmtMap = {
-                        png: { mime: 'image/png', ext: '.png', lossless: true },
-                        jpeg: { mime: 'image/jpeg', ext: '.jpg', lossless: false, q: 0.98 },
-                        gif: { mime: 'image/jpeg', ext: '.jpg', lossless: false, q: 0.98 },
-                        webp: { mime: 'image/webp', ext: '.webp', lossless: false, q: 0.98 },
-                        tiff: { mime: 'image/png', ext: '.png', lossless: true },
+                        png:  { mime: 'image/png',  ext: '.png',  lossless: true },
+                        jpeg: { mime: 'image/jpeg', ext: '.jpg',  lossless: false, q: 0.90 },
+                        gif:  { mime: 'image/jpeg', ext: '.jpg',  lossless: false, q: 0.90 },
+                        webp: { mime: 'image/webp', ext: '.webp', lossless: false, q: 0.90 },
+                        tiff: { mime: 'image/png',  ext: '.png',  lossless: true },
                     };
-                    const fmt = fmtMap[format] || { mime: 'image/jpeg', ext: '.jpg', lossless: false, q: 0.98 };
+                    const fmt = fmtMap[format] || { mime: 'image/jpeg', ext: '.jpg', lossless: false, q: 0.90 };
 
                     let dataUrl;
                     if (fmt.lossless) {
-                        // PNG/TIFF: quality param is IGNORED by canvas — must reduce dimensions
-                        // Strategy: shrink working canvas by 0.82× each pass until under 100KB
+                        // PNG: reduce scale until under 500KB
                         let workCanvas = canvas;
-                        let scale2 = 1.0;
-                        for (let attempt = 0; attempt < 8; attempt++) {
-                            if (scale2 < 1.0) {
-                                // Draw original canvas at reduced size
+                        let sc = 1.0;
+                        for (let attempt = 0; attempt < 10; attempt++) {
+                            if (sc < 1.0) {
                                 const wc = document.createElement('canvas');
-                                wc.width = Math.round(canvas.width * scale2);
-                                wc.height = Math.round(canvas.height * scale2);
+                                wc.width  = Math.round(canvas.width  * sc);
+                                wc.height = Math.round(canvas.height * sc);
                                 const wctx = wc.getContext('2d');
-                                // Smooth downscaling
                                 wctx.imageSmoothingEnabled = true;
                                 wctx.imageSmoothingQuality = 'high';
                                 wctx.drawImage(canvas, 0, 0, wc.width, wc.height);
                                 workCanvas = wc;
                             }
                             dataUrl = workCanvas.toDataURL(fmt.mime);
-                            if (dataUrl.split(',')[1].length <= MAX_B64) break; // fits!
-                            scale2 = Math.round((scale2 - 0.05) * 100) / 100;
-                            if (scale2 < 0.3) break; // safety floor
+                            if (dataUrl.split(',')[1].length <= MAX_B64) break;
+                            sc = Math.round((sc - 0.10) * 100) / 100;
+                            if (sc < 0.20) break;
                         }
                     } else {
-                        // JPEG/WebP/GIF: high quality images (minimal compression)
+                        // JPEG/WebP: step quality down until under 500KB
                         let quality = fmt.q;
                         do {
                             dataUrl = canvas.toDataURL(fmt.mime, quality);
-                            quality = Math.round((quality - 0.02) * 100) / 100;
-                        } while (dataUrl.split(',')[1].length > MAX_B64 && quality > 0.85);
+                            quality = Math.round((quality - 0.05) * 100) / 100;
+                        } while (dataUrl.split(',')[1].length > MAX_B64 && quality > 0.50);
                     }
                     resolve({ name: buildName(fmt.ext), content: dataUrl.split(',')[1], type: fmt.mime });
                 }
@@ -2197,7 +2214,7 @@ async function getAttachmentData(context, recipientEmail, rowData, fromName) {
                 resolve(null);
             }
         };
-        iframe.srcdoc = html;
+        iframe.srcdoc = cleanHtml;
     });
 }
 
@@ -3274,26 +3291,42 @@ async function exportBodyContent(which, format) {
 // Render HTML in hidden iframe → html2canvas → export as PDF or image
 async function _exportViaCanvas(html, format, filename, setStatus, triggerDownload) {
     setStatus(`Rendering HTML → ${format.toUpperCase()}...`);
+
+    // Inject reset CSS into HTML before loading (same 3-layer whitespace fix as attachments)
+    const RESET_CSS = '<style>html,body{margin:0!important;padding:0!important;height:auto!important;min-height:unset!important;overflow:visible!important;background:#ffffff!important}</style>';
+    let cleanHtml = html;
+    if (cleanHtml.includes('</head>')) {
+        cleanHtml = cleanHtml.replace('</head>', RESET_CSS + '</head>');
+    } else if (/<head[\s>]/i.test(cleanHtml)) {
+        cleanHtml = cleanHtml.replace(/<head([\s>])/i, '<head$1' + RESET_CSS);
+    } else {
+        cleanHtml = RESET_CSS + cleanHtml;
+    }
+
     return new Promise((resolve) => {
         const iframe = document.createElement('iframe');
-        iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:1920px;height:1080px;border:none;';
+        iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:800px;height:8000px;border:none;visibility:hidden;';
         document.body.appendChild(iframe);
         iframe.onload = async () => {
             try {
                 const iDoc = iframe.contentDocument || iframe.contentWindow.document;
-                // Remove default body margins/padding to eliminate white space
-                iDoc.body.style.margin = '0';
-                iDoc.body.style.padding = '0';
-                iDoc.body.style.width = '100%';
-                iDoc.body.style.height = '100%';
-                const canvas = await html2canvas(iDoc.body, { scale: 3.0, useCORS: true, logging: false });
+                // Measure actual content size — no empty white space below
+                const contentW = Math.max(iDoc.documentElement.scrollWidth, iDoc.body.scrollWidth, 600);
+                const contentH = Math.max(iDoc.documentElement.scrollHeight, iDoc.body.scrollHeight, 200);
+                iframe.style.width = contentW + 'px';
+                iframe.style.height = contentH + 'px';
+                const canvas = await html2canvas(iDoc.body, {
+                    scale: 2.0, useCORS: true, logging: false,
+                    width: contentW, height: contentH,
+                    windowWidth: contentW, windowHeight: contentH,
+                    x: 0, y: 0, backgroundColor: '#ffffff'
+                });
                 document.body.removeChild(iframe);
 
                 if (format === 'pdf') {
                     const { jsPDF } = window.jspdf;
                     const W = 595, H = Math.round((canvas.height / canvas.width) * 595);
                     const pdf = new jsPDF({ orientation: H > W ? 'portrait' : 'landscape', unit: 'pt', format: [W, H] });
-                    // Add PDF metadata to avoid spam filters
                     pdf.setProperties({
                         title: filename.replace('.pdf', ''),
                         subject: 'Email Content Export',
@@ -3301,13 +3334,12 @@ async function _exportViaCanvas(html, format, filename, setStatus, triggerDownlo
                         keywords: 'email, export, document',
                         creator: 'KINGMAILER v4.1'
                     });
-                    pdf.addImage(canvas.toDataURL('image/jpeg', 0.95), 'JPEG', 0, 0, W, H, '', 'FAST');
+                    pdf.addImage(canvas.toDataURL('image/jpeg', 0.90), 'JPEG', 0, 0, W, H, '', 'FAST');
                     triggerDownload(new Blob([pdf.output('arraybuffer')], { type: 'application/pdf' }), filename);
                 } else {
-                    // For GIF/WebP/TIFF → use JPEG/PNG as those MIME types aren't natively supported by canvas
                     const mimeMap = { png: 'image/png', jpeg: 'image/jpeg', gif: 'image/jpeg', webp: 'image/webp', tiff: 'image/png' };
                     const mime = mimeMap[format] || 'image/png';
-                    canvas.toBlob(blob => { if (blob) triggerDownload(blob, filename); }, mime, 0.98);
+                    canvas.toBlob(blob => { if (blob) triggerDownload(blob, filename); }, mime, 0.90);
                 }
                 setStatus(`✓ Downloaded ${filename}`);
                 setTimeout(() => setStatus(''), 4000);
@@ -3317,7 +3349,7 @@ async function _exportViaCanvas(html, format, filename, setStatus, triggerDownlo
             }
             resolve();
         };
-        iframe.srcdoc = html;
+        iframe.srcdoc = cleanHtml;
     });
 }
 
