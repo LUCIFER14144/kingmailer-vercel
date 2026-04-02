@@ -319,38 +319,39 @@ class handler(BaseHTTPRequestHandler):
         try:
             account_stats = merge_accounts_with_stats()
             
-            # Extract debug logs before calculating summaries
+            # Extract debug logs and metadata BEFORE calculating summaries
             load_logs = account_stats.pop('_load_logs', [])
             debug_logs = account_stats.pop('_debug_logs', [])
+            accounts_removed = account_stats.pop('_accounts_removed', 0)
             
-            total_accounts = sum(len(accounts) for accounts in account_stats.values())
+            # Calculate summaries (only iterate over actual account types, not metadata)
+            account_types = ['smtp', 'gmail_api', 'ses', 'ec2']
+            
+            total_accounts = sum(len(account_stats.get(acc_type, {})) for acc_type in account_types)
             total_emails_sent = sum(
-                sum(acc.get('emails_sent', 0) for acc in accounts.values()) 
-                for accounts in account_stats.values()
+                sum(acc.get('emails_sent', 0) for acc in account_stats.get(acc_type, {}).values()) 
+                for acc_type in account_types
             )
             active_accounts = sum(
-                sum(1 for acc in accounts.values() if acc.get('is_active', True)) 
-                for accounts in account_stats.values()
+                sum(1 for acc in account_stats.get(acc_type, {}).values() if acc.get('is_active', True)) 
+                for acc_type in account_types
             )
             deactivated_accounts = sum(
-                sum(1 for acc in accounts.values() if not acc.get('is_active', True)) 
-                for accounts in account_stats.values()
+                sum(1 for acc in account_stats.get(acc_type, {}).values() if not acc.get('is_active', True)) 
+                for acc_type in account_types
             )
             accounts_with_stats = sum(
-                sum(1 for acc in accounts.values() if acc.get('has_stats', False)) 
-                for accounts in account_stats.values()
+                sum(1 for acc in account_stats.get(acc_type, {}).values() if acc.get('has_stats', False)) 
+                for acc_type in account_types
             )
             placeholder_accounts = sum(
-                sum(1 for acc in accounts.values() if acc.get('is_placeholder', False)) 
-                for accounts in account_stats.values()
+                sum(1 for acc in account_stats.get(acc_type, {}).values() if acc.get('is_placeholder', False)) 
+                for acc_type in account_types
             )
             real_accounts = sum(
-                sum(1 for acc in accounts.values() if acc.get('is_real_account', False)) 
-                for accounts in account_stats.values()
+                sum(1 for acc in account_stats.get(acc_type, {}).values() if acc.get('is_real_account', False)) 
+                for acc_type in account_types
             )
-            
-            # Extract metadata before sending
-            accounts_removed = account_stats.pop('_accounts_removed', 0)
             
             response_data = {
                 "success": True,
@@ -366,10 +367,10 @@ class handler(BaseHTTPRequestHandler):
                     "real_accounts": real_accounts,
                     "accounts_removed_this_check": accounts_removed,
                     "account_breakdown": {
-                        "smtp": len(account_stats['smtp']),
-                        "gmail_api": len(account_stats['gmail_api']),
-                        "ses": len(account_stats['ses']),
-                        "ec2": len(account_stats['ec2'])
+                        "smtp": len(account_stats.get('smtp', {})),
+                        "gmail_api": len(account_stats.get('gmail_api', {})),
+                        "ses": len(account_stats.get('ses', {})),
+                        "ec2": len(account_stats.get('ec2', {}))
                     }
                 },
                 "debug": {
@@ -378,8 +379,8 @@ class handler(BaseHTTPRequestHandler):
                     "account_deactivation_enabled": True,
                     "auto_removal_enabled": True,
                     "tracking_system_active": True,
-                    "load_logs": account_stats.get('_load_logs', []),
-                    "debug_logs": account_stats.get('_debug_logs', [])
+                    "load_logs": load_logs,
+                    "debug_logs": debug_logs
                 },
                 "features": {
                     "auto_cleanup": "Deactivated accounts are automatically removed from saved list",
