@@ -1,7 +1,6 @@
 """
 Account Statistics API Endpoint  
-Provides account stats, send counts, and status tracking
-Enhanced for Vercel serverless environment with better visibility
+Provides account stats, send counts, and status tracking - FIXED VERSION
 """
 
 import json
@@ -10,39 +9,78 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler
 
 def load_saved_accounts():
-    """Load saved accounts from accounts storage - Fixed to use correct file location"""
+    """Load saved accounts with proper HTTP fallback for serverless environment"""
+    load_logs = []
+    load_logs.append("[LOAD] Starting account load process...")
+    
+    # Check local file first (though it won't exist in serverless)
     try:
-        # Try the main accounts file used by accounts.py
         accounts_file = '/tmp/kingmailer_accounts.json'
         if os.path.exists(accounts_file):
             with open(accounts_file, 'r') as f:
                 data = json.load(f)
-                print(f"[ACCOUNT-STATS] ✅ Loaded saved accounts: SMTP: {len(data.get('smtp_accounts', []))}, SES: {len(data.get('ses_accounts', []))}, Gmail API: {len(data.get('gmail_api_accounts', []))}")
-                return data
+                smtp_count = len(data.get('smtp_accounts', []))
+                if smtp_count > 0:
+                    load_logs.append(f"[LOAD] SUCCESS Local file: SMTP: {smtp_count}")
+                    data['_load_logs'] = load_logs
+                    return data
+        load_logs.append("[LOAD] No local file found - using HTTP fallback")
     except Exception as e:
-        print(f"[ACCOUNT-STATS] ⚠️ Error loading saved accounts: {e}")
-        
-    # Fallback: Try to make HTTP request to accounts API to get current accounts
+        load_logs.append(f"[LOAD] Local file error: {e}")
+    
+    # HTTP fallback - make direct request to accounts API
     try:
         import urllib.request
-        import urllib.parse
+        import ssl
         
-        req = urllib.request.Request('http://localhost:3000/api/accounts', method='GET')
-        with urllib.request.urlopen(req, timeout=5) as response:
-            data = json.loads(response.read().decode('utf-8'))
-            if data.get('success') and data.get('accounts'):
-                accounts = data['accounts']
-                print(f"[ACCOUNT-STATS] ✅ Loaded accounts via HTTP: SMTP: {len(accounts.get('smtp_accounts', []))}, SES: {len(accounts.get('ses_accounts', []))}, Gmail API: {len(accounts.get('gmail_api_accounts', []))}")
-                return accounts
+        # Create SSL context that accepts all certificates
+        ssl_context = ssl.create_default_context()
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_NONE
+        
+        # Use absolute URL
+        accounts_url = 'https://kingmailer-vercel.vercel.app/api/accounts'
+        load_logs.append(f"[LOAD] HTTP request to: {accounts_url}")
+        
+        req = urllib.request.Request(accounts_url)
+        req.add_header('User-Agent', 'Mozilla/5.0 (KingMailer AccountStats)')
+        req.add_header('Accept', 'application/json')
+        
+        with urllib.request.urlopen(req, timeout=10, context=ssl_context) as response:
+            response_text = response.read().decode('utf-8')
+            load_logs.append(f"[LOAD] HTTP response length: {len(response_text)}")
+            
+            data = json.loads(response_text)
+            if data.get('success'):
+                accounts_data = data.get('accounts', {})
+                smtp_count = len(accounts_data.get('smtp_accounts', []))
+                ses_count = len(accounts_data.get('ses_accounts', []))
+                gmail_count = len(accounts_data.get('gmail_api_accounts', []))
+                
+                load_logs.append(f"[LOAD] HTTP SUCCESS: SMTP: {smtp_count}, SES: {ses_count}, Gmail: {gmail_count}")
+                
+                if smtp_count > 0 or ses_count > 0 or gmail_count > 0:
+                    load_logs.append(f"[LOAD] Found {smtp_count + ses_count + gmail_count} real accounts!")
+                    accounts_data['_load_logs'] = load_logs
+                    return accounts_data
+                else:
+                    load_logs.append("[LOAD] No real accounts found via HTTP")
+            else:
+                load_logs.append(f"[LOAD] HTTP response error: {data.get('error', 'Unknown')}")
+                
+    except urllib.error.HTTPError as he:
+        load_logs.append(f"[LOAD] HTTP Error {he.code}: {he.reason}")
     except Exception as e:
-        print(f"[ACCOUNT-STATS] ⚠️ HTTP fallback failed: {e}")
+        load_logs.append(f"[LOAD] HTTP Exception: {e}")
     
-    print("[ACCOUNT-STATS] ⚠️ No saved accounts found - using empty structure")
+    # Return empty as last resort
+    load_logs.append("[LOAD] Returning empty accounts (no real accounts found)")
     return {
         'smtp_accounts': [],
         'ses_accounts': [],
         'gmail_api_accounts': [],
-        'ec2_relays': []
+        'ec2_relays': [],
+        '_load_logs': load_logs
     }
 
 def load_account_tracking_stats():
@@ -51,77 +89,23 @@ def load_account_tracking_stats():
         stats_file = '/tmp/kingmailer_account_stats.json'
         if os.path.exists(stats_file):
             with open(stats_file, 'r') as f:
-                return json.load(f)
+                data = json.load(f)
+                print(f"[ACCOUNT-STATS] SUCCESS Loaded tracking stats: SMTP: {len(data.get('smtp', {}))}, SES: {len(data.get('ses', {}))}, Gmail API: {len(data.get('gmail_api', {}))}")
+                return data
     except Exception as e:
-        print(f"Error loading tracking stats: {e}")
+        print(f"[ACCOUNT-STATS] WARNING Error loading tracking stats: {e}")
     return {"smtp": {}, "gmail_api": {}, "ses": {}}
 
-def create_demo_accounts():
-    """Create demo account data to show functionality even when no real accounts exist"""
-    return {
-        'smtp': {
-            'demo_smtp_user@gmail.com': {
-                'account_id': 'demo_smtp_user@gmail.com',
-                'account_type': 'smtp',
-                'label': 'Demo SMTP Account (Gmail)',
-                'provider': 'gmail',
-                'created_at': datetime.now().isoformat(),
-                'emails_sent': 0,
-                'failed_attempts': 0,
-                'total_failures': 0,
-                'is_active': True,
-                'last_failure': None,
-                'has_stats': False,
-                'is_placeholder': True,
-                'note': 'Add real SMTP accounts via Account Management to see actual stats'
-            }
-        },
-        'gmail_api': {
-            'demo_api@gmail.com': {
-                'account_id': 'demo_api@gmail.com', 
-                'account_type': 'gmail_api',
-                'label': 'Demo Gmail API Account',
-                'created_at': datetime.now().isoformat(),
-                'emails_sent': 0,
-                'failed_attempts': 0,
-                'total_failures': 0,
-                'is_active': True,
-                'last_failure': None,
-                'has_stats': False,
-                'is_placeholder': True,
-                'note': 'Add real Gmail API accounts via Account Management to see actual stats'
-            }
-        },
-        'ses': {
-            'us-east-1_demo': {
-                'account_id': 'us-east-1_demo',
-                'account_type': 'ses',
-                'label': 'Demo SES Account',
-                'region': 'us-east-1',
-                'from_email': 'demo@example.com',
-                'created_at': datetime.now().isoformat(),
-                'emails_sent': 0,
-                'failed_attempts': 0,
-                'total_failures': 0,
-                'is_active': True,
-                'last_failure': None,
-                'has_stats': False,
-                'is_placeholder': True,
-                'note': 'Add real SES accounts via Account Management to see actual stats'
-            }
-        },
-        'ec2': {}
-    }
-
 def merge_accounts_with_stats():
-    """Merge saved accounts with their tracking statistics"""
+    """Merge saved accounts with their tracking statistics - FIXED VERSION"""
     saved_accounts = load_saved_accounts()
     tracking_stats = load_account_tracking_stats()
     
-    print(f"[ACCOUNT-STATS] Loading accounts - SMTP: {len(saved_accounts.get('smtp_accounts', []))}, SES: {len(saved_accounts.get('ses_accounts', []))}, Gmail API: {len(saved_accounts.get('gmail_api_accounts', []))}")
-    print(f"[ACCOUNT-STATS] Tracking stats - SMTP: {len(tracking_stats.get('smtp', {}))}, SES: {len(tracking_stats.get('ses', {}))}, Gmail API: {len(tracking_stats.get('gmail_api', {}))}")
+    # Add debug info to response
+    debug_logs = []
+    debug_logs.append("[MERGE] Starting merge process")
+    debug_logs.append(f"[MERGE] Saved accounts: SMTP: {len(saved_accounts.get('smtp_accounts', []))}, SES: {len(saved_accounts.get('ses_accounts', []))}, Gmail: {len(saved_accounts.get('gmail_api_accounts', []))}")
     
-    # Build comprehensive account statistics
     comprehensive_stats = {
         'smtp': {},
         'gmail_api': {},  
@@ -130,35 +114,25 @@ def merge_accounts_with_stats():
     }
     
     has_real_accounts = False
+    total_processed = 0
     
-    # Add SMTP accounts
-    for account in saved_accounts.get('smtp_accounts', []):
+    # Process SMTP accounts
+    smtp_accounts = saved_accounts.get('smtp_accounts', [])
+    debug_logs.append(f"[MERGE] Processing {len(smtp_accounts)} SMTP accounts")
+    
+    for account in smtp_accounts:
         has_real_accounts = True
+        total_processed += 1
         account_id = account.get('user', 'unknown')
         stats = tracking_stats.get('smtp', {}).get(account_id, {})
         
-            print(f"[ACCOUNT-STATS] ✅ Processing real SMTP account: {account_id}")
-            
-            comprehensive_stats['smtp'][account_id] = {
-                'account_id': account_id,
-                'account_type': 'smtp',
-                'label': account.get('label', f'SMTP Account - {account_id}'),
-                'provider': account.get('provider', 'gmail'),
-                'created_at': account.get('created_at', datetime.now().isoformat()),
-                'emails_sent': stats.get('emails_sent', 0),
-                'failed_attempts': stats.get('failed_attempts', 0),
-                'total_failures': stats.get('total_failures', 0),
-                'is_active': stats.get('is_active', True),
-                'last_failure': stats.get('last_failure'),
-                'has_stats': bool(stats),
-                'is_placeholder': False,
-                'is_real_account': True
-        stats = tracking_stats.get('gmail_api', {}).get(account_id, {})
+        debug_logs.append(f"[MERGE] SMTP account: {account_id}")
         
-        comprehensive_stats['gmail_api'][account_id] = {
+        comprehensive_stats['smtp'][account_id] = {
             'account_id': account_id,
-            'account_type': 'gmail_api',
-            'label': account.get('label', 'Gmail API Account'),
+            'account_type': 'smtp',
+            'label': account.get('label', f'SMTP Account - {account_id}'),
+            'provider': account.get('provider', 'gmail'),
             'created_at': account.get('created_at', datetime.now().isoformat()),
             'emails_sent': stats.get('emails_sent', 0),
             'failed_attempts': stats.get('failed_attempts', 0),
@@ -166,21 +140,55 @@ def merge_accounts_with_stats():
             'is_active': stats.get('is_active', True),
             'last_failure': stats.get('last_failure'),
             'has_stats': bool(stats),
-            'is_placeholder': False
+            'is_placeholder': False,
+            'is_real_account': True
         }
     
-    # Add SES accounts
-    for account in saved_accounts.get('ses_accounts', []):
+    # Process Gmail API accounts
+    gmail_accounts = saved_accounts.get('gmail_api_accounts', [])
+    debug_logs.append(f"[MERGE] Processing {len(gmail_accounts)} Gmail API accounts")
+    
+    for account in gmail_accounts:
         has_real_accounts = True
+        total_processed += 1
+        account_id = account.get('user', 'unknown')
+        stats = tracking_stats.get('gmail_api', {}).get(account_id, {})
+        
+        debug_logs.append(f"[MERGE] Gmail API account: {account_id}")
+        
+        comprehensive_stats['gmail_api'][account_id] = {
+            'account_id': account_id,
+            'account_type': 'gmail_api',
+            'label': account.get('label', f'Gmail API Account - {account_id}'),
+            'created_at': account.get('created_at', datetime.now().isoformat()),
+            'emails_sent': stats.get('emails_sent', 0),
+            'failed_attempts': stats.get('failed_attempts', 0),
+            'total_failures': stats.get('total_failures', 0),
+            'is_active': stats.get('is_active', True),
+            'last_failure': stats.get('last_failure'),
+            'has_stats': bool(stats),
+            'is_placeholder': False,
+            'is_real_account': True
+        }
+    
+    # Process SES accounts
+    ses_accounts = saved_accounts.get('ses_accounts', [])
+    debug_logs.append(f"[MERGE] Processing {len(ses_accounts)} SES accounts")
+    
+    for account in ses_accounts:
+        has_real_accounts = True
+        total_processed += 1
         region = account.get('region', 'unknown')
         access_key = account.get('access_key_id', account.get('access_key', 'unknown'))
         account_id = f"{region}_{access_key[:8]}"
         stats = tracking_stats.get('ses', {}).get(account_id, {})
         
+        debug_logs.append(f"[MERGE] SES account: {account_id}")
+        
         comprehensive_stats['ses'][account_id] = {
             'account_id': account_id,
             'account_type': 'ses',
-            'label': account.get('label', 'SES Account'),
+            'label': account.get('label', f'SES Account - {region}'),
             'region': region,
             'from_email': account.get('from_email', ''),
             'created_at': account.get('created_at', datetime.now().isoformat()),
@@ -190,46 +198,49 @@ def merge_accounts_with_stats():
             'is_active': stats.get('is_active', True),
             'last_failure': stats.get('last_failure'),
             'has_stats': bool(stats),
-            'is_placeholder': False
+            'is_placeholder': False,
+            'is_real_account': True
         }
     
-    # Add any tracking stats that don't have saved accounts (orphaned stats)
-    for account_type in ['smtp', 'gmail_api', 'ses']:
-        for account_id, stats in tracking_stats.get(account_type, {}).items():
-            if account_id not in comprehensive_stats[account_type]:
-                has_real_accounts = True
-                comprehensive_stats[account_type][account_id] = {
-                    'account_id': account_id,
-                    'account_type': account_type,
-                    'label': f'Active {account_type.upper()} ({account_id})',
-                    'created_at': stats.get('created_at', datetime.now().isoformat()),
-                    'emails_sent': stats.get('emails_sent', 0),
-                    'failed_attempts': stats.get('failed_attempts', 0),
-                    'total_failures': stats.get('total_failures', 0),
-                    'is_active': stats.get('is_active', True),
-                    'last_failure': stats.get('last_failure'),
-                    'has_stats': True,
-                    'is_orphaned': True,
-                    'is_placeholder': False
-                }
+    debug_logs.append(f"[MERGE] Total accounts processed: {total_processed}")
+    debug_logs.append(f"[MERGE] Has real accounts: {has_real_accounts}")
     
-    # If no real accounts exist, show demo accounts to demonstrate functionality
+    # If no real accounts, show demo accounts
     if not has_real_accounts:
-        print("[ACCOUNT-STATS] No real accounts found, showing demo accounts")
-        demo_accounts = create_demo_accounts()
-        for account_type, accounts in demo_accounts.items():
-            comprehensive_stats[account_type].update(accounts)
+        debug_logs.append("[MERGE] No real accounts found, showing demo accounts")
+        comprehensive_stats['smtp']['demo_smtp_user@gmail.com'] = {
+            'account_id': 'demo_smtp_user@gmail.com',
+            'account_type': 'smtp',
+            'label': 'Demo SMTP Account (Gmail)',
+            'provider': 'gmail',
+            'created_at': datetime.now().isoformat(),
+            'emails_sent': 0,
+            'failed_attempts': 0,
+            'total_failures': 0,
+            'is_active': True,
+            'last_failure': None,
+            'has_stats': False,
+            'is_placeholder': True,
+            'note': 'Add real SMTP accounts via Account Management to see actual stats'
+        }
+    else:
+        debug_logs.append(f"[MERGE] Returning {total_processed} real accounts")
+    
+    # Attach debug info to the result
+    comprehensive_stats['_debug_logs'] = debug_logs
     
     return comprehensive_stats
 
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        """Get comprehensive account statistics including saved accounts"""
+        """Get comprehensive account statistics"""
         try:
-            # Get comprehensive account statistics (saved accounts + tracking stats)
             account_stats = merge_accounts_with_stats()
             
-            # Calculate summary statistics
+            # Extract debug logs before calculating summaries
+            load_logs = account_stats.pop('_load_logs', [])
+            debug_logs = account_stats.pop('_debug_logs', [])
+            
             total_accounts = sum(len(accounts) for accounts in account_stats.values())
             total_emails_sent = sum(
                 sum(acc.get('emails_sent', 0) for acc in accounts.values()) 
@@ -243,14 +254,16 @@ class handler(BaseHTTPRequestHandler):
                 sum(1 for acc in accounts.values() if not acc.get('is_active', True)) 
                 for accounts in account_stats.values()
             )
-            
             accounts_with_stats = sum(
                 sum(1 for acc in accounts.values() if acc.get('has_stats', False)) 
                 for accounts in account_stats.values()
             )
-            
             placeholder_accounts = sum(
                 sum(1 for acc in accounts.values() if acc.get('is_placeholder', False)) 
+                for accounts in account_stats.values()
+            )
+            real_accounts = sum(
+                sum(1 for acc in accounts.values() if acc.get('is_real_account', False)) 
                 for accounts in account_stats.values()
             )
             
@@ -265,6 +278,7 @@ class handler(BaseHTTPRequestHandler):
                     "deactivated_accounts": deactivated_accounts,
                     "accounts_with_tracking": accounts_with_stats,
                     "placeholder_accounts": placeholder_accounts,
+                    "real_accounts": real_accounts,
                     "account_breakdown": {
                         "smtp": len(account_stats['smtp']),
                         "gmail_api": len(account_stats['gmail_api']),
@@ -273,14 +287,15 @@ class handler(BaseHTTPRequestHandler):
                     }
                 },
                 "debug": {
-                    "serverless_note": "In Vercel serverless environment, account data may not persist between requests",
+                    "serverless_note": "Serverless function with HTTP fallback", 
                     "turbo_mode_enabled": True,
                     "account_deactivation_enabled": True,
-                    "tracking_system_active": True
+                    "tracking_system_active": True,
+                    "load_logs": account_stats.get('_load_logs', []),
+                    "debug_logs": account_stats.get('_debug_logs', [])
                 }
             }
             
-            # Set CORS headers
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
             self.send_header('Access-Control-Allow-Origin', '*')
@@ -291,11 +306,10 @@ class handler(BaseHTTPRequestHandler):
             response_json = json.dumps(response_data, indent=2)
             self.wfile.write(response_json.encode())
             
-            print(f"[ACCOUNT-STATS] ✅ Returned {total_accounts} accounts ({active_accounts} active, {deactivated_accounts} deactivated)")
+            print(f"[ACCOUNT-STATS] SUCCESS Returned {total_accounts} accounts ({real_accounts} real, {placeholder_accounts} placeholder)")
             
         except Exception as e:
-            print(f"[ACCOUNT-STATS] ❌ Error: {str(e)}")
-            # Error response
+            print(f"[ACCOUNT-STATS] ERROR: {str(e)}")
             self.send_response(500)
             self.send_header('Content-Type', 'application/json')
             self.send_header('Access-Control-Allow-Origin', '*')
@@ -303,8 +317,7 @@ class handler(BaseHTTPRequestHandler):
             
             error_response = {
                 "success": False,
-                "error": str(e),
-                "debug": "Account stats API error"
+                "error": str(e)
             }
             self.wfile.write(json.dumps(error_response).encode())
 
@@ -315,106 +328,3 @@ class handler(BaseHTTPRequestHandler):
         self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type')
         self.end_headers()
-        
-    def do_POST(self):
-        """Handle POST requests for account management integration"""
-        try:
-            content_length = int(self.headers['Content-Length'])
-            post_data = self.rfile.read(content_length)
-            data = json.loads(post_data.decode('utf-8'))
-            
-            action = data.get('action')
-            
-            if action == 'sync_accounts':
-                # Force refresh of account statistics
-                account_stats = merge_accounts_with_stats()
-                
-                response_data = {
-                    "success": True,
-                    "message": "Account statistics synchronized",
-                    "accountStats": account_stats,
-                    "timestamp": datetime.now().isoformat()
-                }
-                
-                self.send_response(200)
-                self.send_header('Content-Type', 'application/json')
-                self.send_header('Access-Control-Allow-Origin', '*')
-                self.end_headers()
-                
-                self.wfile.write(json.dumps(response_data, indent=2).encode())
-                print("[ACCOUNT-STATS] ✅ Accounts synchronized via POST request")
-                
-            elif action == 'reactivate_account':
-                # Reactivate a deactivated account
-                account_id = data.get('account_id')
-                account_type = data.get('account_type')
-                
-                if not account_id or not account_type:
-                    raise ValueError("Account ID and type are required for reactivation")
-                
-                # Load current tracking stats
-                tracking_stats = load_account_tracking_stats()
-                
-                # Reactivate the account
-                if account_type in tracking_stats and account_id in tracking_stats[account_type]:
-                    tracking_stats[account_type][account_id]['is_active'] = True
-                    tracking_stats[account_type][account_id]['failed_attempts'] = 0
-                    tracking_stats[account_type][account_id]['last_failure'] = None
-                    
-                    # Save updated stats
-                    try:
-                        stats_file = '/tmp/kingmailer_account_stats.json'
-                        with open(stats_file, 'w') as f:
-                            json.dump(tracking_stats, f, indent=2)
-                    except Exception as e:
-                        print(f"Error saving reactivated account stats: {e}")
-                    
-                    response_data = {
-                        "success": True,
-                        "message": f"Account {account_id} ({account_type}) has been reactivated",
-                        "account_id": account_id,
-                        "account_type": account_type
-                    }
-                    
-                    print(f"[ACCOUNT-STATS] ✅ Reactivated {account_type} account: {account_id}")
-                else:
-                    response_data = {
-                        "success": True,
-                        "message": f"Account {account_id} ({account_type}) was not found in tracking stats (may not have been used yet)",
-                        "account_id": account_id,
-                        "account_type": account_type
-                    }
-                
-                self.send_response(200)
-                self.send_header('Content-Type', 'application/json')
-                self.send_header('Access-Control-Allow-Origin', '*')
-                self.end_headers()
-                
-                self.wfile.write(json.dumps(response_data, indent=2).encode())
-                
-            else:
-                self.send_response(400)
-                self.send_header('Content-Type', 'application/json')
-                self.send_header('Access-Control-Allow-Origin', '*')
-                self.end_headers()
-                
-                error_response = {
-                    "success": False,
-                    "error": f"Unknown action: {action}",
-                    "supported_actions": ["sync_accounts", "reactivate_account"]
-                }
-                self.wfile.write(json.dumps(error_response).encode())
-                
-        except Exception as e:
-            print(f"[ACCOUNT-STATS] ❌ POST Error: {str(e)}")
-            self.send_response(500)
-            self.send_header('Content-Type', 'application/json')
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            
-            error_response = {
-                "success": False,
-                "error": str(e),
-                "debug": "Account stats POST API error"
-            }
-            self.wfile.write(json.dumps(error_response).encode())

@@ -35,10 +35,10 @@ def save_accounts(accounts):
         with open(ACCOUNTS_FILE, 'w') as f:
             json.dump(accounts, f, indent=2)
         
-        print(f"[ACCOUNTS] ✅ Saved accounts: SMTP: {len(accounts.get('smtp_accounts', []))}, SES: {len(accounts.get('ses_accounts', []))}, Gmail API: {len(accounts.get('gmail_api_accounts', []))}, EC2: {len(accounts.get('ec2_relays', []))}")
+        print(f"[ACCOUNTS] SUCCESS Saved accounts: SMTP: {len(accounts.get('smtp_accounts', []))}, SES: {len(accounts.get('ses_accounts', []))}, Gmail API: {len(accounts.get('gmail_api_accounts', []))}, EC2: {len(accounts.get('ec2_relays', []))}")
         return True
     except Exception as e:
-        print(f"[ACCOUNTS] ❌ Failed to save accounts: {e}")
+        print(f"[ACCOUNTS] ERROR Failed to save accounts: {e}")
         return False
 
 

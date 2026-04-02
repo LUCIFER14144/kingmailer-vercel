@@ -103,7 +103,7 @@ def track_send_success(account_id, account_type):
     account_stats[account_type][account_id]['is_active'] = True
     
     save_account_stats(account_stats)
-    print(f"[TRACK_SUCCESS] ✅ {account_type} {account_id} - Total sent: {account_stats[account_type][account_id]['emails_sent']}")
+    print(f"[TRACK_SUCCESS] SUCCESS {account_type} {account_id} - Total sent: {account_stats[account_type][account_id]['emails_sent']}")
 
 def track_send_failure(account_id, account_type, error_msg=""):
     """Track failed email send and deactivate account if needed - Enhanced with debugging"""
@@ -126,13 +126,13 @@ def track_send_failure(account_id, account_type, error_msg=""):
     # Deactivate account after 3 consecutive failures
     if account_stats[account_type][account_id]['failed_attempts'] >= 3:
         account_stats[account_type][account_id]['is_active'] = False
-        print(f"[TRACK_FAILURE] 🚨 ACCOUNT DEACTIVATED: {account_type} account '{account_id}' deactivated after 3 consecutive failures")
+        print(f"[TRACK_FAILURE] CRITICAL ACCOUNT DEACTIVATED: {account_type} account '{account_id}' deactivated after 3 consecutive failures")
         print(f"[TRACK_FAILURE]    Last error: {error_msg}")
         save_account_stats(account_stats)
         return True  # Account was deactivated
     
     save_account_stats(account_stats)
-    print(f"[TRACK_FAILURE] ⚠️ {account_type} {account_id} - Attempt {account_stats[account_type][account_id]['failed_attempts']}/3")
+    print(f"[TRACK_FAILURE] WARNING {account_type} {account_id} - Attempt {account_stats[account_type][account_id]['failed_attempts']}/3")
     return False  # Account still active
 
 def is_account_active(account_id, account_type):
@@ -140,21 +140,21 @@ def is_account_active(account_id, account_type):
     account_stats = load_account_stats()
     
     if account_type not in account_stats:
-        print(f"[ACCOUNT_CHECK] ✅ {account_type} account '{account_id}' - no stats found, assuming active")
+        print(f"[ACCOUNT_CHECK] SUCCESS {account_type} account '{account_id}' - no stats found, assuming active")
         return True
     
     if account_id not in account_stats[account_type]:
-        print(f"[ACCOUNT_CHECK] ✅ {account_type} account '{account_id}' - not tracked yet, assuming active")
+        print(f"[ACCOUNT_CHECK] SUCCESS {account_type} account '{account_id}' - not tracked yet, assuming active")
         return True
         
     is_active = account_stats[account_type][account_id].get('is_active', True)
     failed_attempts = account_stats[account_type][account_id].get('failed_attempts', 0)
     
     if not is_active:
-        print(f"[ACCOUNT_CHECK] 🚨 BLOCKED: {account_type} account '{account_id}' is DEACTIVATED (failed_attempts: {failed_attempts}) - SKIPPING")
+        print(f"[ACCOUNT_CHECK] CRITICAL BLOCKED: {account_type} account '{account_id}' is DEACTIVATED (failed_attempts: {failed_attempts}) - SKIPPING")
         return False
     else:
-        print(f"[ACCOUNT_CHECK] ✅ {account_type} account '{account_id}' is ACTIVE (failed_attempts: {failed_attempts})")
+        print(f"[ACCOUNT_CHECK] SUCCESS {account_type} account '{account_id}' is ACTIVE (failed_attempts: {failed_attempts})")
         return True
 
 
@@ -312,9 +312,19 @@ def _html_to_plain(html):
     return text.strip()
 
 
-# Image MIME types that can be embedded inline
-_IMAGE_TYPES = {'image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp', 'image/bmp', 'image/tiff'}
-_IMAGE_EXTS  = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tiff', '.tif'}
+# 📸 ENHANCED IMAGE FORMAT SUPPORT - Premium Quality Handling
+# Supports all major image formats with optimal MIME type detection
+_IMAGE_TYPES = {
+    'image/jpeg', 'image/jpg',           # Standard JPEG (best for photos) 
+    'image/png',                         # Lossless PNG (logos, transparency)
+    'image/gif',                         # GIF animations
+    'image/webp',                        # Modern WebP (25-35% smaller than JPEG)
+    'image/bmp',                         # Uncompressed bitmap
+    'image/tiff', 'image/tif',           # Professional/archival
+    'image/avif',                        # Next-gen format (better than WebP)
+    'image/svg+xml'                      # Vector graphics (scalable)
+}
+_IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tiff', '.tif', '.avif', '.svg'}
 
 def _is_image_attachment(attachment):
     """Return True if attachment is an embeddable image."""
@@ -1032,14 +1042,14 @@ class SMTPPool:
             
             # Check if account is active
             if is_account_active(account_id, self.account_type):
-                print(f"[POOL SUCCESS] ✅ Using {self.account_type} account: {account_id}")
+                print(f"[POOL SUCCESS] SUCCESS Using {self.account_type} account: {account_id}")
                 return account
             else:
-                print(f"[POOL SKIP] ❌ {self.account_type} account {account_id} is deactivated, trying next account")
+                print(f"[POOL SKIP] FAILED {self.account_type} account {account_id} is deactivated, trying next account")
                 attempts += 1
         
         # If we reach here, all accounts are deactivated
-        print(f"[POOL CRITICAL] 🚨 ALL {self.account_type.upper()} ACCOUNTS ARE DEACTIVATED! Cannot send emails.")
+        print(f"[POOL CRITICAL] CRITICAL ALL {self.account_type.upper()} ACCOUNTS ARE DEACTIVATED! Cannot send emails.")
         return None
 
 
@@ -1055,8 +1065,9 @@ class handler(BaseHTTPRequestHandler):
             subject_template = data.get('subject', 'No Subject')
             html_template = data.get('html', '')
             method = data.get('method', 'smtp')
-            min_delay = int(data.get('min_delay', 2000))
-            max_delay = int(data.get('max_delay', 5000))
+            # ⚡ TURBO MODE OPTIMIZED: 50+ emails/minute capability
+            min_delay = int(data.get('min_delay', 100))    # 100ms (0.1s)
+            max_delay = int(data.get('max_delay', 500))    # 500ms (0.5s)
             from_name = data.get('from_name', '') or ''
             from_email = data.get('from_email', '')
 
@@ -1310,9 +1321,21 @@ class handler(BaseHTTPRequestHandler):
                     fail_count += 1
                     results.append({'email': recipient, 'status': 'failed', 'error': result.get('error', 'Unknown')})
                 
-                # Random delay between emails (except for last one)
+                # ⚡ TURBO OPTIMIZED: Fast sending with minimal delays
                 if index < len(rows) - 1:
-                    delay = random.randint(min_delay, max_delay) / 1000.0
+                    # Calculate optimal delay for target rate
+                    target_emails_per_minute = 50  # Target rate
+                    optimal_delay = 60.0 / target_emails_per_minute  # 1.2 seconds for 50/min
+                    
+                    # Use optimal delay if within config bounds
+                    delay_ms = random.randint(min_delay, max_delay)
+                    if delay_ms <= (optimal_delay * 1000):  # If config allows target rate
+                        delay = delay_ms / 1000.0
+                        print(f"[TURBO] Fast mode: {delay:.2f}s delay ({60/delay:.0f} emails/min potential)")
+                    else:
+                        delay = optimal_delay
+                        print(f"[TURBO] Optimal rate: {delay:.2f}s delay (50 emails/min)")
+                    
                     time.sleep(delay)
             
             response_data = {
