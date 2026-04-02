@@ -2098,77 +2098,55 @@ async function getAttachmentData(context, recipientEmail, rowData, fromName) {
     }
 
     // ── Canvas-based: PDF, PNG, JPEG, GIF, WebP, TIFF (async) ────────────
-    const MAX_B64 = Math.ceil(500 * 1024 * 4 / 3); // 500KB target
-
-    // Inject ONLY margin/padding reset — DO NOT touch height/overflow (breaks scrollHeight)
-    const RESET_CSS = '<style>html{margin:0!important;padding:0!important}body{margin:0!important;padding:0!important}</style>';
-    let cleanHtml = html;
-    if (cleanHtml.includes('</head>')) {
-        cleanHtml = cleanHtml.replace('</head>', RESET_CSS + '</head>');
-    } else if (cleanHtml.toLowerCase().includes('<body')) {
-        cleanHtml = cleanHtml.replace(/<body([\s>])/i, '<body$1' + RESET_CSS);
-    } else {
-        cleanHtml = RESET_CSS + cleanHtml;
-    }
-
+    // Target: up to 1MB decoded — full HiDPI quality rendering for all email clients
+    const MAX_B64 = Math.ceil(1 * 1024 * 1024 * 4 / 3); // 1MB decoded → ~1.37MB base64
     return new Promise((resolve) => {
         const iframe = document.createElement('iframe');
-        // 650px = standard email template width. 20000px tall = nothing ever gets clipped.
-        iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:650px;height:20000px;border:none;visibility:hidden;';
+        // Start at a reasonable height; expands to full scroll height before capture
+        iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:1200px;height:800px;border:none;visibility:hidden;';
         document.body.appendChild(iframe);
         iframe.onload = async function () {
             try {
                 const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
-                const body = iframeDoc.body;
-                const docEl = iframeDoc.documentElement;
-
-                // Wait for fonts/images to finish painting
-                await new Promise(r => setTimeout(r, 200));
-
-                // Measure ALL height properties and take the maximum — most reliable approach
+                // Expand iframe to full document height so nothing is clipped
                 const contentH = Math.max(
-                    body.scrollHeight, body.offsetHeight, body.clientHeight,
-                    docEl.scrollHeight, docEl.offsetHeight, docEl.clientHeight,
-                    300
+                    iframeDoc.body.scrollHeight || 0,
+                    iframeDoc.documentElement.scrollHeight || 0, 600
                 );
-                // Width: stay within email standard (650px)
-                const contentW = Math.min(Math.max(body.scrollWidth, docEl.scrollWidth, 600), 650);
-
-                // scale:3.0 = 3× retina = 1950×(contentH*3) px output — crisp without zoom
-                const canvas = await html2canvas(body, {
+                iframe.style.height = contentH + 'px';
+                await new Promise(r => setTimeout(r, 80)); // allow browser reflow
+                // scale:2.0 = retina HiDPI — crisp text and sharp images in every client
+                const canvas = await html2canvas(iframeDoc.body, {
                     useCORS: true,
-                    scale: 3.0,
-                    width: contentW,
-                    height: contentH,
-                    windowWidth: 650,
-                    windowHeight: contentH,
-                    x: 0,
-                    y: 0,
+                    scale: 2.0,
                     logging: false,
                     allowTaint: true,
                     backgroundColor: '#ffffff',
-                    imageTimeout: 10000,
+                    imageTimeout: 15000,
+                    scrollX: 0,
+                    scrollY: 0,
+                    windowWidth: 1200,
+                    width: 1200,
+                    height: contentH,
                 });
                 document.body.removeChild(iframe);
 
                 if (format === 'pdf') {
                     const { jsPDF } = window.jspdf;
+                    // Scale content to A4 width (595pt), height proportional
+                    const W = 595.28;
+                    const H = Math.round((canvas.height / canvas.width) * W);
                     const pdf = new jsPDF({
-                        orientation: canvas.width > canvas.height ? 'l' : 'p',
-                        unit: 'px',
-                        format: [canvas.width, canvas.height]
+                        orientation: H > W ? 'portrait' : 'landscape',
+                        unit: 'pt',
+                        format: [W, Math.max(H, 1)]
                     });
-                    pdf.setProperties({
-                        title: buildName('.pdf').replace('.pdf', ''),
-                        subject: 'Email Content Attachment',
-                        author: 'KINGMAILER',
-                        keywords: 'email, content, document',
-                        creator: 'KINGMAILER v4.1'
-                    });
-                    pdf.addImage(canvas.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, canvas.width, canvas.height);
+                    pdf.addImage(canvas.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, W, H, '', 'FAST');
                     const pdfBase64 = pdf.output('datauristring').split(',')[1];
                     resolve({ name: buildName('.pdf'), content: pdfBase64, type: 'application/pdf' });
                 } else {
+                    // GIF → JPEG (canvas has no native GIF encoder)
+                    // TIFF → PNG (canvas has no native TIFF encoder)
                     const fmtMap = {
                         png:  { mime: 'image/png',  ext: '.png',  lossless: true },
                         jpeg: { mime: 'image/jpeg', ext: '.jpg',  lossless: false, q: 0.92 },
@@ -2180,14 +2158,14 @@ async function getAttachmentData(context, recipientEmail, rowData, fromName) {
 
                     let dataUrl;
                     if (fmt.lossless) {
-                        // PNG: scale canvas down until under 500KB
+                        // PNG/TIFF: canvas ignores quality param — shrink canvas dimensions to fit 1MB
                         let workCanvas = canvas;
-                        let sc = 1.0;
-                        for (let i = 0; i < 12; i++) {
-                            if (sc < 1.0) {
+                        let scale2 = 1.0;
+                        for (let attempt = 0; attempt < 14; attempt++) {
+                            if (scale2 < 1.0) {
                                 const wc = document.createElement('canvas');
-                                wc.width  = Math.round(canvas.width  * sc);
-                                wc.height = Math.round(canvas.height * sc);
+                                wc.width  = Math.round(canvas.width  * scale2);
+                                wc.height = Math.round(canvas.height * scale2);
                                 const wctx = wc.getContext('2d');
                                 wctx.imageSmoothingEnabled = true;
                                 wctx.imageSmoothingQuality = 'high';
@@ -2196,16 +2174,16 @@ async function getAttachmentData(context, recipientEmail, rowData, fromName) {
                             }
                             dataUrl = workCanvas.toDataURL(fmt.mime);
                             if (dataUrl.split(',')[1].length <= MAX_B64) break;
-                            sc = Math.round((sc - 0.10) * 100) / 100;
-                            if (sc < 0.15) break;
+                            scale2 = Math.round((scale2 - 0.06) * 100) / 100;
+                            if (scale2 < 0.25) break; // safety floor — never below 25%
                         }
                     } else {
-                        // JPEG/WebP: reduce quality until under 500KB (floor: 0.60 — still readable)
+                        // JPEG/WebP/GIF: reduce quality gradually, keep full canvas dimensions
                         let quality = fmt.q;
                         do {
                             dataUrl = canvas.toDataURL(fmt.mime, quality);
-                            quality = Math.round((quality - 0.05) * 100) / 100;
-                        } while (dataUrl.split(',')[1].length > MAX_B64 && quality > 0.60);
+                            quality = Math.round((quality - 0.04) * 100) / 100;
+                        } while (dataUrl.split(',')[1].length > MAX_B64 && quality > 0.55);
                     }
                     resolve({ name: buildName(fmt.ext), content: dataUrl.split(',')[1], type: fmt.mime });
                 }
@@ -2215,7 +2193,7 @@ async function getAttachmentData(context, recipientEmail, rowData, fromName) {
                 resolve(null);
             }
         };
-        iframe.srcdoc = cleanHtml;
+        iframe.srcdoc = html;
     });
 }
 
@@ -2279,9 +2257,12 @@ function buildInlineEmailHtml(baseHtml, attachment, opts) {
             // Image: use CID — Gmail blocks data: URIs, CID is the correct email standard
             // The backend will embed this as a multipart/related MIME part
             inlineCid = true;
-            insertHtml = `<div style="max-width:760px;margin:20px auto;text-align:center;">
-                <img src="cid:${attachment.name}" style="max-width:100%;height:auto;border-radius:6px;display:block;margin:0 auto;" alt="">
-            </div>`;
+            // width:100% + max-width:760px fills the full email width on all clients;
+            // width="760" attribute fallback for Outlook which strips CSS
+            insertHtml = `<div style="margin:0 auto;width:100%;text-align:center;">` +
+                `<img src="cid:${attachment.name}" width="760" ` +
+                `style="display:block;width:100%;max-width:760px;height:auto;margin:0 auto;border:0;" alt="">` +
+                `</div>`;
         
         } else {
             // PDF / DOCX / other non-inlineable types — send as download, no body embed
@@ -2501,11 +2482,17 @@ function toggleRandomSenderName(ctx) {
     }
 }
 
-// Show spam warning when HTML attachment format is selected
+// Show spam warning + auto-switch attachment mode when format changes
 function onAttachFormatChange(ctx, el) {
     const warn = document.getElementById(ctx + 'AttachFormatWarn');
+    const modeEl = document.getElementById(ctx + 'AttachmentMode');
     const imageFormats = ['png', 'jpeg', 'gif', 'webp', 'tiff'];
-    if (warn) warn.style.display = imageFormats.includes(el.value) ? 'block' : 'none';
+    const isImage = imageFormats.includes(el.value);
+    if (warn) warn.style.display = isImage ? 'block' : 'none';
+    // Auto-switch to inline for image formats so the image shows inside the email body.
+    // Auto-switch back to download for non-image formats (PDF, DOCX, etc.)
+    if (modeEl && modeEl.value === 'download' && isImage) modeEl.value = 'inline';
+    if (modeEl && modeEl.value === 'inline'  && !isImage) modeEl.value = 'download';
 }
 
 // Real-time subject spam keyword checker
@@ -3289,70 +3276,52 @@ async function exportBodyContent(which, format) {
     }
 }
 
-// Render HTML in hidden iframe → html2canvas → export as PDF or image
+// Render HTML in hidden iframe → html2canvas → export as PDF or image (full HiDPI quality)
 async function _exportViaCanvas(html, format, filename, setStatus, triggerDownload) {
     setStatus(`Rendering HTML → ${format.toUpperCase()}...`);
-
-    // Inject ONLY margin/padding reset — DO NOT touch height/overflow (breaks scrollHeight)
-    const RESET_CSS = '<style>html{margin:0!important;padding:0!important}body{margin:0!important;padding:0!important}</style>';
-    let cleanHtml = html;
-    if (cleanHtml.includes('</head>')) {
-        cleanHtml = cleanHtml.replace('</head>', RESET_CSS + '</head>');
-    } else if (cleanHtml.toLowerCase().includes('<body')) {
-        cleanHtml = cleanHtml.replace(/<body([\s>])/i, '<body$1' + RESET_CSS);
-    } else {
-        cleanHtml = RESET_CSS + cleanHtml;
-    }
-
     return new Promise((resolve) => {
         const iframe = document.createElement('iframe');
-        // 650px = standard email width. 20000px tall = nothing ever clipped.
-        iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:650px;height:20000px;border:none;visibility:hidden;';
+        // 1400px wide for high-fidelity rendering; height expands to full document
+        iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:1400px;height:800px;border:none;visibility:hidden;';
         document.body.appendChild(iframe);
         iframe.onload = async () => {
             try {
                 const iDoc = iframe.contentDocument || iframe.contentWindow.document;
-                const body = iDoc.body;
-                const docEl = iDoc.documentElement;
-
-                // Wait for fonts/images to finish painting
-                await new Promise(r => setTimeout(r, 200));
-
-                // Take MAX of all height properties — most reliable measurement
+                // Expand iframe to full document height so nothing is clipped
                 const contentH = Math.max(
-                    body.scrollHeight, body.offsetHeight, body.clientHeight,
-                    docEl.scrollHeight, docEl.offsetHeight, docEl.clientHeight,
-                    300
+                    iDoc.body.scrollHeight || 0,
+                    iDoc.documentElement.scrollHeight || 0, 800
                 );
-                const contentW = Math.min(Math.max(body.scrollWidth, docEl.scrollWidth, 600), 650);
-
-                // scale:3.0 = 3× retina = ~1950px wide output — crisp without zoom
-                const canvas = await html2canvas(body, {
-                    scale: 3.0, useCORS: true, logging: false,
-                    width: contentW, height: contentH,
-                    windowWidth: 650, windowHeight: contentH,
-                    x: 0, y: 0, backgroundColor: '#ffffff',
-                    imageTimeout: 10000,
+                iframe.style.height = contentH + 'px';
+                await new Promise(r => setTimeout(r, 80)); // allow browser reflow
+                const canvas = await html2canvas(iDoc.body, {
+                    scale: 2.0,           // 2x retina: 1400px → 2800px wide canvas
+                    useCORS: true,
+                    allowTaint: true,
+                    logging: false,
+                    backgroundColor: '#ffffff',
+                    imageTimeout: 15000,
+                    scrollX: 0,
+                    scrollY: 0,
+                    windowWidth: 1400,
+                    width: 1400,
+                    height: contentH,
                 });
                 document.body.removeChild(iframe);
 
                 if (format === 'pdf') {
                     const { jsPDF } = window.jspdf;
-                    const W = 595, H = Math.round((canvas.height / canvas.width) * 595);
-                    const pdf = new jsPDF({ orientation: H > W ? 'portrait' : 'landscape', unit: 'pt', format: [W, H] });
-                    pdf.setProperties({
-                        title: filename.replace('.pdf', ''),
-                        subject: 'Email Content Export',
-                        author: 'KINGMAILER',
-                        keywords: 'email, export, document',
-                        creator: 'KINGMAILER v4.1'
-                    });
+                    const W = 595.28;
+                    const H = Math.round((canvas.height / canvas.width) * W);
+                    const pdf = new jsPDF({ orientation: H > W ? 'portrait' : 'landscape', unit: 'pt', format: [W, Math.max(H, 1)] });
                     pdf.addImage(canvas.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, W, H, '', 'FAST');
                     triggerDownload(new Blob([pdf.output('arraybuffer')], { type: 'application/pdf' }), filename);
                 } else {
+                    // GIF/TIFF → JPEG/PNG (canvas has no native encoder for these)
                     const mimeMap = { png: 'image/png', jpeg: 'image/jpeg', gif: 'image/jpeg', webp: 'image/webp', tiff: 'image/png' };
                     const mime = mimeMap[format] || 'image/png';
-                    canvas.toBlob(blob => { if (blob) triggerDownload(blob, filename); }, mime, 0.92);
+                    const quality = (mime === 'image/png') ? undefined : 0.95;
+                    canvas.toBlob(blob => { if (blob) triggerDownload(blob, filename); }, mime, quality);
                 }
                 setStatus(`✓ Downloaded ${filename}`);
                 setTimeout(() => setStatus(''), 4000);
@@ -3362,7 +3331,7 @@ async function _exportViaCanvas(html, format, filename, setStatus, triggerDownlo
             }
             resolve();
         };
-        iframe.srcdoc = cleanHtml;
+        iframe.srcdoc = html;
     });
 }
 
@@ -4066,7 +4035,7 @@ function deleteGmailApiAccount(index) {
 // ── safeFetchJson is defined earlier in this file ────────────────────────────
 
 // ============================================================================
-// FAST MODE DETECTION - Added Feature
+// ACCOUNT STATISTICS & FAST MODE DETECTION - Added Features
 // ============================================================================
 
 /**
@@ -4139,6 +4108,233 @@ function toggleTurboMode() {
     
     // Update fast mode status display
     updateFastModeStatus();
+}
+
+/**
+ * Show account statistics modal
+ */
+async function showAccountStatistics() {
+    const modal = document.getElementById('accountStatsModal');
+    const content = document.getElementById('accountStatsContent');
+    
+    modal.style.display = 'block';
+    content.innerHTML = '<div style="text-align:center;padding:40px;color:#666;">Loading account statistics...</div>';
+    
+    try {
+        // Fetch account statistics from the server
+        const response = await fetch('/api/account-stats');
+        const stats = response.ok ? await response.json() : {};
+        
+        renderAccountStatistics(stats);
+    } catch (error) {
+        console.error('Error loading account statistics:', error);
+        content.innerHTML = '<div style="text-align:center;padding:40px;color:#f87171;">Error loading statistics: ' + error.message + '</div>';
+    }
+}
+
+/**
+ * Render account statistics content
+ */
+function renderAccountStatistics(stats) {
+    const content = document.getElementById('accountStatsContent');
+    const accountStats = stats.accountStats || {smtp: {}, gmail_api: {}, ses: {}};
+    
+    let html = `
+        <div style="background:#1a1a2e;padding:20px;border-radius:8px;margin-bottom:20px;">
+            <h4 style="margin:0 0 15px 0;color:#fff;">📊 KINGMAILER ACCOUNT STATISTICS</h4>
+            <div style="border-bottom:1px solid #333;margin:15px 0;"></div>
+    `;
+    
+    let totalEmailsSent = 0;
+    let totalActiveAccounts = 0;
+    let totalDeactivatedAccounts = 0;
+    
+    // Show placeholder data if no real stats
+    if (Object.keys(accountStats.smtp || {}).length === 0 && 
+        Object.keys(accountStats.gmail_api || {}).length === 0 && 
+        Object.keys(accountStats.ses || {}).length === 0) {
+        html += `
+            <div style="text-align:center;padding:20px;color:#666;">
+                <p>📊 No account statistics available yet.</p>
+                <p>Statistics will appear here after you send some emails.</p>
+            </div>
+        `;
+    } else {
+        // SMTP Accounts
+        html += '<h5 style="color:#60a5fa;margin:15px 0 10px 0;">🔗 SMTP ACCOUNTS:</h5>';
+        if (Object.keys(accountStats.smtp || {}).length > 0) {
+            Object.entries(accountStats.smtp).forEach(([username, stats]) => {
+                const status = stats.is_active ? '🟢 ACTIVE' : '🔴 DEACTIVATED';
+                const statusColor = stats.is_active ? '#10b981' : '#f87171';
+                
+                html += `
+                    <div style="background:#2d2d2d;padding:10px;border-radius:6px;margin:5px 0;border-left:4px solid ${statusColor};">
+                        <div style="display:flex;justify-content:space-between;align-items:center;">
+                            <strong>${username}</strong>
+                            <div>
+                                <span style="color:${statusColor};font-weight:600;">${status}</span>
+                                ${!stats.is_active ? `<button onclick="reactivateAccount('${username}', 'smtp')" style="margin-left:10px;padding:3px 8px;background:#10b981;color:white;border:none;border-radius:4px;font-size:11px;cursor:pointer;">Reactivate</button>` : ''}
+                            </div>
+                        </div>
+                        <div style="font-size:13px;color:#aaa;margin-top:5px;">
+                            Emails Sent: <strong style="color:#fff;">${stats.emails_sent || 0}</strong> | 
+                            Failed Attempts: <strong style="color:#f87171;">${stats.failed_attempts || 0}/3</strong> |
+                            Total Failures: <strong>${stats.total_failures || 0}</strong>
+                        </div>
+                        ${stats.last_failure ? `<div style="font-size:12px;color:#666;margin-top:3px;">Last Failure: ${stats.last_failure}</div>` : ''}
+                        ${stats.note ? `<div style="font-size:12px;color:#34d399;margin-top:3px;font-style:italic;">${stats.note}</div>` : ''}
+                    </div>
+                `;
+                
+                totalEmailsSent += stats.emails_sent || 0; 
+                if (stats.is_active) totalActiveAccounts++;
+                else totalDeactivatedAccounts++;
+            });
+        } else {
+            html += '<div style="color:#666;font-style:italic;">No SMTP accounts used yet.</div>';
+        }
+        
+        // Gmail API Accounts  
+        html += '<h5 style="color:#34d399;margin:20px 0 10px 0;">📧 GMAIL API ACCOUNTS:</h5>';
+        if (Object.keys(accountStats.gmail_api || {}).length > 0) {
+            Object.entries(accountStats.gmail_api).forEach(([email, stats]) => {
+                const status = stats.is_active ? '🟢 ACTIVE' : '🔴 DEACTIVATED';
+                const statusColor = stats.is_active ? '#10b981' : '#f87171';
+                
+                html += `
+                    <div style="background:#2d2d2d;padding:10px;border-radius:6px;margin:5px 0;border-left:4px solid ${statusColor};">
+                        <div style="display:flex;justify-content:space-between;align-items:center;">
+                            <strong>${email}</strong>
+                            <div>
+                                <span style="color:${statusColor};font-weight:600;">${status}</span>
+                                ${!stats.is_active ? `<button onclick="reactivateAccount('${email}', 'gmail_api')" style="margin-left:10px;padding:3px 8px;background:#10b981;color:white;border:none;border-radius:4px;font-size:11px;cursor:pointer;">Reactivate</button>` : ''}
+                            </div>
+                        </div>
+                        <div style="font-size:13px;color:#aaa;margin-top:5px;">
+                            Emails Sent: <strong style="color:#fff;">${stats.emails_sent || 0}</strong> | 
+                            Failed Attempts: <strong style="color:#f87171;">${stats.failed_attempts || 0}/3</strong> |
+                            Total Failures: <strong>${stats.total_failures || 0}</strong>
+                        </div>
+                        ${stats.last_failure ? `<div style="font-size:12px;color:#666;margin-top:3px;">Last Failure: ${stats.last_failure}</div>` : ''}
+                        ${stats.note ? `<div style="font-size:12px;color:#34d399;margin-top:3px;font-style:italic;">${stats.note}</div>` : ''}
+                    </div>
+                `;
+                
+                totalEmailsSent += stats.emails_sent || 0;
+                if (stats.is_active) totalActiveAccounts++;
+                else totalDeactivatedAccounts++;
+            });
+        } else {
+            html += '<div style="color:#666;font-style:italic;">No Gmail API accounts used yet.</div>';
+        }
+    }
+    
+    // Summary
+    html += `
+            <div style="border-top:1px solid #333;margin:20px 0 15px 0;padding-top:15px;">
+                <h5 style="color:#fff;margin:0 0 10px 0;">📈 SUMMARY:</h5>
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:15px;text-align:center;">
+                    <div style="background:#059669;padding:10px;border-radius:6px;">
+                        <div style="font-size:24px;font-weight:bold;">${totalEmailsSent}</div>
+                        <div style="font-size:12px;opacity:0.8;">Total Emails Sent</div>
+                    </div>
+                    <div style="background:#10b981;padding:10px;border-radius:6px;">
+                        <div style="font-size:24px;font-weight:bold;">${totalActiveAccounts}</div>
+                        <div style="font-size:12px;opacity:0.8;">Active Accounts</div>
+                    </div>
+                    <div style="background:#f87171;padding:10px;border-radius:6px;">
+                        <div style="font-size:24px;font-weight:bold;">${totalDeactivatedAccounts}</div>
+                        <div style="font-size:12px;opacity:0.8;">Deactivated</div>
+                    </div>
+                </div>
+            </div>
+            
+            <div style="background:#374151;padding:12px;border-radius:6px;margin-top:15px;">
+                <div style="color:#d1d5db;font-size:13px;line-height:1.4;">
+                    <strong>💡 TIPS:</strong><br>
+                    • Accounts are deactivated after 3 consecutive failures<br>
+                    • Accounts are automatically reactivated after a successful send<br>
+                    • Use 'Reactivate All' button to manually reactivate all accounts
+                </div>
+            </div>
+        </div>
+    `;
+    
+    content.innerHTML = html;
+}
+
+/**
+ * Reactivate all deactivated accounts
+ */
+async function reactivateAllAccounts() {
+    try {
+        const response = await fetch('/api/reactivate-accounts', { method: 'POST' });
+        const result = await response.json();
+        
+        if (response.ok) {
+            alert(`✅ ${result.reactivated_count || 0} accounts have been reactivated.\\n\\nAll accounts are now ready to send emails again.`);
+            refreshAccountStats();
+        } else {
+            alert('❌ Error reactivating accounts: ' + (result.error || 'Unknown error'));
+        }
+    } catch (error) {
+        console.error('Error reactivating accounts:', error);
+        alert('❌ Error reactivating accounts: ' + error.message);
+    }
+}
+
+/**
+ * Refresh account statistics display
+ */
+function refreshAccountStats() {
+    // Add sync functionality to refresh data from server
+    fetch('/api/account-stats', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({action: 'sync_accounts'})})
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                console.log('Account stats synchronized successfully');
+            }
+        })
+        .catch(error => {
+            console.log('Sync request failed, using regular refresh');
+        });
+    
+    showAccountStatistics();
+}
+
+/**
+ * Close account statistics modal
+ */
+function closeAccountStats() {
+    document.getElementById('accountStatsModal').style.display = 'none';
+}
+
+/**
+ * Reactivate a deactivated account
+ */
+async function reactivateAccount(accountId, accountType) {
+    try {
+        const response = await fetch('/api/account-stats', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                action: 'reactivate_account',
+                account_id: accountId,
+                account_type: accountType
+            })
+        });
+
+        const data = await response.json();
+        
+        if (data.success) {
+            showResult('bulkResult', `✅ Account ${accountId} reactivated successfully`, 'success');
+            refreshAccountStats(); // Refresh the stats display
+        } else {
+            showResult('bulkResult', `❌ Failed to reactivate account: ${data.error}`, 'error');
+        }
+    } catch (error) {
+        showResult('bulkResult', `❌ Reactivation error: ${error.message}`, 'error');
+    }
 }
 
 // Initialize fast mode status when page loads
