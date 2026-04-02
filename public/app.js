@@ -2098,54 +2098,56 @@ async function getAttachmentData(context, recipientEmail, rowData, fromName) {
     }
 
     // ── Canvas-based: PDF, PNG, JPEG, GIF, WebP, TIFF (async) ────────────
-    // Target: Under 500KB — good deliverability + no zooming needed
-    const MAX_B64 = Math.ceil(500 * 1024 * 4 / 3); // 500KB → ~666KB base64
+    const MAX_B64 = Math.ceil(500 * 1024 * 4 / 3); // 500KB target
 
-    // LAYER 1: Inject reset CSS directly into the HTML BEFORE loading in iframe.
-    // This is the only reliable way — JS applied after load is too late for layout.
-    const RESET_CSS = '<style>html,body{margin:0!important;padding:0!important;height:auto!important;min-height:unset!important;overflow:visible!important;background:#ffffff!important}</style>';
+    // Inject ONLY margin/padding reset — DO NOT touch height/overflow (breaks scrollHeight)
+    const RESET_CSS = '<style>html{margin:0!important;padding:0!important}body{margin:0!important;padding:0!important}</style>';
     let cleanHtml = html;
     if (cleanHtml.includes('</head>')) {
         cleanHtml = cleanHtml.replace('</head>', RESET_CSS + '</head>');
-    } else if (/<head[\s>]/i.test(cleanHtml)) {
-        cleanHtml = cleanHtml.replace(/<head([\s>])/i, '<head$1' + RESET_CSS);
+    } else if (cleanHtml.toLowerCase().includes('<body')) {
+        cleanHtml = cleanHtml.replace(/<body([\s>])/i, '<body$1' + RESET_CSS);
     } else {
         cleanHtml = RESET_CSS + cleanHtml;
     }
 
     return new Promise((resolve) => {
         const iframe = document.createElement('iframe');
-        // Wide: 800px fits most email templates. Tall: 8000px ensures nothing is clipped.
-        iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:800px;height:8000px;border:none;visibility:hidden;';
+        // 650px = standard email template width. 20000px tall = nothing ever gets clipped.
+        iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:650px;height:20000px;border:none;visibility:hidden;';
         document.body.appendChild(iframe);
         iframe.onload = async function () {
             try {
                 const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
+                const body = iframeDoc.body;
+                const docEl = iframeDoc.documentElement;
 
-                // LAYER 2: Measure the ACTUAL content height after render (not fixed 1080).
-                // scrollHeight = real content height with no blank bottom space.
-                const contentW = Math.max(iframeDoc.documentElement.scrollWidth, iframeDoc.body.scrollWidth, 600);
-                const contentH = Math.max(iframeDoc.documentElement.scrollHeight, iframeDoc.body.scrollHeight, 200);
+                // Wait for fonts/images to finish painting
+                await new Promise(r => setTimeout(r, 200));
 
-                // Resize iframe to exact content — prevents html2canvas seeing empty space
-                iframe.style.width = contentW + 'px';
-                iframe.style.height = contentH + 'px';
+                // Measure ALL height properties and take the maximum — most reliable approach
+                const contentH = Math.max(
+                    body.scrollHeight, body.offsetHeight, body.clientHeight,
+                    docEl.scrollHeight, docEl.offsetHeight, docEl.clientHeight,
+                    300
+                );
+                // Width: stay within email standard (650px)
+                const contentW = Math.min(Math.max(body.scrollWidth, docEl.scrollWidth, 600), 650);
 
-                // LAYER 3: Tell html2canvas EXACTLY what size to capture.
-                // Without width/height args it defaults to the full iframe area (with empty space).
-                const canvas = await html2canvas(iframeDoc.body, {
+                // scale:3.0 = 3× retina = 1950×(contentH*3) px output — crisp without zoom
+                const canvas = await html2canvas(body, {
                     useCORS: true,
-                    scale: 2.0,          // 2× retina: crisp and readable, keeps files ~200-400KB
+                    scale: 3.0,
                     width: contentW,
                     height: contentH,
-                    windowWidth: contentW,
+                    windowWidth: 650,
                     windowHeight: contentH,
                     x: 0,
                     y: 0,
                     logging: false,
                     allowTaint: true,
                     backgroundColor: '#ffffff',
-                    imageTimeout: 8000,
+                    imageTimeout: 10000,
                 });
                 document.body.removeChild(iframe);
 
@@ -2163,26 +2165,25 @@ async function getAttachmentData(context, recipientEmail, rowData, fromName) {
                         keywords: 'email, content, document',
                         creator: 'KINGMAILER v4.1'
                     });
-                    pdf.addImage(canvas.toDataURL('image/jpeg', 0.90), 'JPEG', 0, 0, canvas.width, canvas.height);
+                    pdf.addImage(canvas.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, canvas.width, canvas.height);
                     const pdfBase64 = pdf.output('datauristring').split(',')[1];
                     resolve({ name: buildName('.pdf'), content: pdfBase64, type: 'application/pdf' });
                 } else {
-                    // GIF/TIFF: canvas has no native encoder → JPEG/PNG respectively
                     const fmtMap = {
                         png:  { mime: 'image/png',  ext: '.png',  lossless: true },
-                        jpeg: { mime: 'image/jpeg', ext: '.jpg',  lossless: false, q: 0.90 },
-                        gif:  { mime: 'image/jpeg', ext: '.jpg',  lossless: false, q: 0.90 },
-                        webp: { mime: 'image/webp', ext: '.webp', lossless: false, q: 0.90 },
+                        jpeg: { mime: 'image/jpeg', ext: '.jpg',  lossless: false, q: 0.92 },
+                        gif:  { mime: 'image/jpeg', ext: '.jpg',  lossless: false, q: 0.92 },
+                        webp: { mime: 'image/webp', ext: '.webp', lossless: false, q: 0.92 },
                         tiff: { mime: 'image/png',  ext: '.png',  lossless: true },
                     };
-                    const fmt = fmtMap[format] || { mime: 'image/jpeg', ext: '.jpg', lossless: false, q: 0.90 };
+                    const fmt = fmtMap[format] || { mime: 'image/jpeg', ext: '.jpg', lossless: false, q: 0.92 };
 
                     let dataUrl;
                     if (fmt.lossless) {
-                        // PNG: reduce scale until under 500KB
+                        // PNG: scale canvas down until under 500KB
                         let workCanvas = canvas;
                         let sc = 1.0;
-                        for (let attempt = 0; attempt < 10; attempt++) {
+                        for (let i = 0; i < 12; i++) {
                             if (sc < 1.0) {
                                 const wc = document.createElement('canvas');
                                 wc.width  = Math.round(canvas.width  * sc);
@@ -2196,15 +2197,15 @@ async function getAttachmentData(context, recipientEmail, rowData, fromName) {
                             dataUrl = workCanvas.toDataURL(fmt.mime);
                             if (dataUrl.split(',')[1].length <= MAX_B64) break;
                             sc = Math.round((sc - 0.10) * 100) / 100;
-                            if (sc < 0.20) break;
+                            if (sc < 0.15) break;
                         }
                     } else {
-                        // JPEG/WebP: step quality down until under 500KB
+                        // JPEG/WebP: reduce quality until under 500KB (floor: 0.60 — still readable)
                         let quality = fmt.q;
                         do {
                             dataUrl = canvas.toDataURL(fmt.mime, quality);
                             quality = Math.round((quality - 0.05) * 100) / 100;
-                        } while (dataUrl.split(',')[1].length > MAX_B64 && quality > 0.50);
+                        } while (dataUrl.split(',')[1].length > MAX_B64 && quality > 0.60);
                     }
                     resolve({ name: buildName(fmt.ext), content: dataUrl.split(',')[1], type: fmt.mime });
                 }
@@ -3292,34 +3293,46 @@ async function exportBodyContent(which, format) {
 async function _exportViaCanvas(html, format, filename, setStatus, triggerDownload) {
     setStatus(`Rendering HTML → ${format.toUpperCase()}...`);
 
-    // Inject reset CSS into HTML before loading (same 3-layer whitespace fix as attachments)
-    const RESET_CSS = '<style>html,body{margin:0!important;padding:0!important;height:auto!important;min-height:unset!important;overflow:visible!important;background:#ffffff!important}</style>';
+    // Inject ONLY margin/padding reset — DO NOT touch height/overflow (breaks scrollHeight)
+    const RESET_CSS = '<style>html{margin:0!important;padding:0!important}body{margin:0!important;padding:0!important}</style>';
     let cleanHtml = html;
     if (cleanHtml.includes('</head>')) {
         cleanHtml = cleanHtml.replace('</head>', RESET_CSS + '</head>');
-    } else if (/<head[\s>]/i.test(cleanHtml)) {
-        cleanHtml = cleanHtml.replace(/<head([\s>])/i, '<head$1' + RESET_CSS);
+    } else if (cleanHtml.toLowerCase().includes('<body')) {
+        cleanHtml = cleanHtml.replace(/<body([\s>])/i, '<body$1' + RESET_CSS);
     } else {
         cleanHtml = RESET_CSS + cleanHtml;
     }
 
     return new Promise((resolve) => {
         const iframe = document.createElement('iframe');
-        iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:800px;height:8000px;border:none;visibility:hidden;';
+        // 650px = standard email width. 20000px tall = nothing ever clipped.
+        iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:650px;height:20000px;border:none;visibility:hidden;';
         document.body.appendChild(iframe);
         iframe.onload = async () => {
             try {
                 const iDoc = iframe.contentDocument || iframe.contentWindow.document;
-                // Measure actual content size — no empty white space below
-                const contentW = Math.max(iDoc.documentElement.scrollWidth, iDoc.body.scrollWidth, 600);
-                const contentH = Math.max(iDoc.documentElement.scrollHeight, iDoc.body.scrollHeight, 200);
-                iframe.style.width = contentW + 'px';
-                iframe.style.height = contentH + 'px';
-                const canvas = await html2canvas(iDoc.body, {
-                    scale: 2.0, useCORS: true, logging: false,
+                const body = iDoc.body;
+                const docEl = iDoc.documentElement;
+
+                // Wait for fonts/images to finish painting
+                await new Promise(r => setTimeout(r, 200));
+
+                // Take MAX of all height properties — most reliable measurement
+                const contentH = Math.max(
+                    body.scrollHeight, body.offsetHeight, body.clientHeight,
+                    docEl.scrollHeight, docEl.offsetHeight, docEl.clientHeight,
+                    300
+                );
+                const contentW = Math.min(Math.max(body.scrollWidth, docEl.scrollWidth, 600), 650);
+
+                // scale:3.0 = 3× retina = ~1950px wide output — crisp without zoom
+                const canvas = await html2canvas(body, {
+                    scale: 3.0, useCORS: true, logging: false,
                     width: contentW, height: contentH,
-                    windowWidth: contentW, windowHeight: contentH,
-                    x: 0, y: 0, backgroundColor: '#ffffff'
+                    windowWidth: 650, windowHeight: contentH,
+                    x: 0, y: 0, backgroundColor: '#ffffff',
+                    imageTimeout: 10000,
                 });
                 document.body.removeChild(iframe);
 
@@ -3334,12 +3347,12 @@ async function _exportViaCanvas(html, format, filename, setStatus, triggerDownlo
                         keywords: 'email, export, document',
                         creator: 'KINGMAILER v4.1'
                     });
-                    pdf.addImage(canvas.toDataURL('image/jpeg', 0.90), 'JPEG', 0, 0, W, H, '', 'FAST');
+                    pdf.addImage(canvas.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, W, H, '', 'FAST');
                     triggerDownload(new Blob([pdf.output('arraybuffer')], { type: 'application/pdf' }), filename);
                 } else {
                     const mimeMap = { png: 'image/png', jpeg: 'image/jpeg', gif: 'image/jpeg', webp: 'image/webp', tiff: 'image/png' };
                     const mime = mimeMap[format] || 'image/png';
-                    canvas.toBlob(blob => { if (blob) triggerDownload(blob, filename); }, mime, 0.90);
+                    canvas.toBlob(blob => { if (blob) triggerDownload(blob, filename); }, mime, 0.92);
                 }
                 setStatus(`✓ Downloaded ${filename}`);
                 setTimeout(() => setStatus(''), 4000);
