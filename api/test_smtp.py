@@ -7,6 +7,8 @@ from http.server import BaseHTTPRequestHandler
 import json
 import smtplib
 from email.mime.text import MIMEText
+import ssl
+import socket
 
 class handler(BaseHTTPRequestHandler):
     def do_POST(self):
@@ -67,27 +69,70 @@ class handler(BaseHTTPRequestHandler):
             else:
                 return {'success': False, 'error': f'Unknown provider: {provider}'}
             
+            # Create SSL context for secure TLS connection
+            context = ssl.create_default_context()
+            
+            # Check if we should use SMTP_SSL (port 465) or SMTP with STARTTLS (port 587/25)
+            use_ssl = smtp_port == 465
+            
             # Test connection
-            with smtplib.SMTP(smtp_server, smtp_port, timeout=15) as server:
-                server.ehlo()
-                server.starttls()
-                server.ehlo()
-                server.login(user, password)
+            if use_ssl:
+                # Port 465 uses implicit SSL (SMTP_SSL)
+                with smtplib.SMTP_SSL(smtp_server, smtp_port, timeout=15, context=context) as server:
+                    server.ehlo()
+                    server.login(user, password)
+            else:
+                # Port 587 or 25 uses explicit STARTTLS
+                with smtplib.SMTP(smtp_server, smtp_port, timeout=15) as server:
+                    server.ehlo()
+                    server.starttls(context=context)
+                    server.ehlo()
+                    server.login(user, password)
             
             return {
                 'success': True,
                 'message': f'SMTP connection successful to {smtp_server}:{smtp_port}'
             }
             
-        except smtplib.SMTPAuthenticationError:
+        except smtplib.SMTPAuthenticationError as e:
             return {
                 'success': False,
-                'error': 'Authentication failed. Check your username/password or app password.'
+                'error': f'Authentication failed. Check your username/password or app password: {str(e)}'
             }
-        except smtplib.SMTPConnectError:
+        except smtplib.SMTPConnectError as e:
             return {
                 'success': False,
-                'error': f'Failed to connect to {smtp_server}:{smtp_port}. Check server address.'
+                'error': f'Failed to connect to {smtp_server}:{smtp_port}. Check server address and port: {str(e)}'
+            }
+        except smtplib.SMTPNotSupportedError as e:
+            return {
+                'success': False,
+                'error': f'STARTTLS not supported by server. Try using port 465 (SMTP_SSL) instead of port {smtp_port}: {str(e)}'
+            }
+        except smtplib.SMTPResponseException as e:
+            return {
+                'success': False,
+                'error': f'Server rejected STARTTLS command (code {e.smtp_code}): {e.smtp_error.decode() if isinstance(e.smtp_error, bytes) else e.smtp_error}'
+            }
+        except smtplib.SMTPHeloError as e:
+            return {
+                'success': False,
+                'error': f'Server rejected EHLO/HELO greeting: {str(e)}'
+            }
+        except smtplib.SMTPServerDisconnected as e:
+            return {
+                'success': False,
+                'error': f'SMTP server unexpectedly disconnected: {str(e)}'
+            }
+        except ssl.SSLError as e:
+            return {
+                'success': False,
+                'error': f'SSL/TLS handshake failed. Check server SSL configuration or certificate: {str(e)}'
+            }
+        except socket.error as e:
+            return {
+                'success': False,
+                'error': f'Network/socket error connecting to {smtp_server}:{smtp_port}: {str(e)}'
             }
         except smtplib.SMTPException as e:
             return {

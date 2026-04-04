@@ -35,6 +35,8 @@ import base64
 import uuid
 import quopri
 import os
+import ssl
+import socket
 
 # DKIM signing support (optional - install dkimpy for email authentication)
 try:
@@ -936,12 +938,21 @@ def _build_msg(from_header, to_email, subject, html_body, attachment=None, heade
 def send_via_smtp(smtp_config, from_name, to_email, subject, html_body, attachment=None, header_opts=None):
     """Send email via SMTP (Gmail or custom server)"""
     try:
+        # Validate required SMTP configuration
+        smtp_user = smtp_config.get('user')
+        smtp_pass = smtp_config.get('pass')
+        
+        if not smtp_user or not smtp_pass:
+            return {'success': False, 'error': 'SMTP username and password are required'}
+        
         is_gmail = smtp_config.get('provider') == 'gmail'
         smtp_server = 'smtp.gmail.com' if is_gmail else smtp_config.get('host', 'smtp.gmail.com')
         smtp_port   = 587             if is_gmail else int(smtp_config.get('port', 587))
+        
+        # Validate custom SMTP server has a host
+        if not is_gmail and not smtp_config.get('host'):
+            return {'success': False, 'error': 'Custom SMTP server host is required'}
 
-        smtp_user = smtp_config.get('user')
-        smtp_pass = smtp_config.get('pass')
         # Sanitize: treat 'KINGMAILER' as empty (legacy default, not a real name)
         _cfg_sn = smtp_config.get('sender_name') or ''
         if _cfg_sn == 'KINGMAILER': _cfg_sn = ''
@@ -954,22 +965,55 @@ def send_via_smtp(smtp_config, from_name, to_email, subject, html_body, attachme
         # EHLO hostname: When using Gmail SMTP, let Gmail handle the hostname
         # Using custom domain for EHLO when connecting to Gmail causes SPF mismatch
         _ehlo_host = None if smtp_server == 'smtp.gmail.com' else _extract_domain(smtp_user or '')
-        with smtplib.SMTP(smtp_server, smtp_port, timeout=30,
-                           local_hostname=_ehlo_host if _ehlo_host != 'mail.local' else None) as server:
-            server.ehlo()
-            server.starttls()
-            server.ehlo()
-            server.login(smtp_user, smtp_pass)
-            server.send_message(msg)
+        
+        # Create SSL context for secure TLS connection
+        context = ssl.create_default_context()
+        
+        # Check if we should use SMTP_SSL (port 465) or SMTP with STARTTLS (port 587/25)
+        use_ssl = smtp_port == 465
+        
+        if use_ssl:
+            # Port 465 uses implicit SSL (SMTP_SSL)
+            with smtplib.SMTP_SSL(smtp_server, smtp_port, timeout=30,
+                                  local_hostname=_ehlo_host if _ehlo_host != 'mail.local' else None,
+                                  context=context) as server:
+                server.ehlo()
+                server.login(smtp_user, smtp_pass)
+                server.send_message(msg)
+        else:
+            # Port 587 or 25 uses explicit STARTTLS
+            with smtplib.SMTP(smtp_server, smtp_port, timeout=30,
+                              local_hostname=_ehlo_host if _ehlo_host != 'mail.local' else None) as server:
+                server.ehlo()
+                server.starttls(context=context)
+                server.ehlo()
+                server.login(smtp_user, smtp_pass)
+                server.send_message(msg)
 
         return {'success': True, 'message': f'Email sent via SMTP to {to_email}', 'from_name': sender_name or smtp_user}
 
-    except smtplib.SMTPAuthenticationError:
-        return {'success': False, 'error': 'SMTP authentication failed — check your Gmail app password'}
-    except smtplib.SMTPRecipientsRefused:
+    except smtplib.SMTPAuthenticationError as e:
+        return {'success': False, 'error': f'SMTP authentication failed — check your username/password or app password: {str(e)}'}
+    except smtplib.SMTPRecipientsRefused as e:
         return {'success': False, 'error': f'Recipient address rejected: {to_email}'}
-    except Exception as e:
+    except smtplib.SMTPNotSupportedError as e:
+        return {'success': False, 'error': f'STARTTLS not supported by server. Try using port 465 (SMTP_SSL) instead of port {smtp_port}: {str(e)}'}
+    except smtplib.SMTPResponseException as e:
+        return {'success': False, 'error': f'Server rejected STARTTLS command (code {e.smtp_code}): {e.smtp_error.decode() if isinstance(e.smtp_error, bytes) else e.smtp_error}'}
+    except smtplib.SMTPHeloError as e:
+        return {'success': False, 'error': f'Server rejected EHLO/HELO greeting: {str(e)}'}
+    except smtplib.SMTPConnectError as e:
+        return {'success': False, 'error': f'Failed to connect to SMTP server {smtp_server}:{smtp_port}: {str(e)}'}
+    except smtplib.SMTPServerDisconnected as e:
+        return {'success': False, 'error': f'SMTP server unexpectedly disconnected: {str(e)}'}
+    except ssl.SSLError as e:
+        return {'success': False, 'error': f'SSL/TLS handshake failed. Check server SSL configuration or certificate: {str(e)}'}
+    except socket.error as e:
+        return {'success': False, 'error': f'Network/socket error connecting to {smtp_server}:{smtp_port}: {str(e)}'}
+    except smtplib.SMTPException as e:
         return {'success': False, 'error': f'SMTP error: {str(e)}'}
+    except Exception as e:
+        return {'success': False, 'error': f'Unexpected error: {str(e)}'}
 
 
 def refresh_gmail_access_token(refresh_token, client_id, client_secret):
