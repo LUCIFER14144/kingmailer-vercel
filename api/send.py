@@ -995,11 +995,11 @@ def send_via_smtp(smtp_config, from_name, to_email, subject, html_body, attachme
     except smtplib.SMTPAuthenticationError as e:
         return {'success': False, 'error': f'SMTP authentication failed — check your username/password or app password: {str(e)}'}
     except smtplib.SMTPRecipientsRefused as e:
-        return {'success': False, 'error': f'Recipient address rejected: {to_email}'}
+        return {'success': False, 'error': f'Recipient address rejected: {to_email} - {str(e)}'}
     except smtplib.SMTPNotSupportedError as e:
         return {'success': False, 'error': f'STARTTLS not supported by server. Try using port 465 (SMTP_SSL) instead of port {smtp_port}: {str(e)}'}
     except smtplib.SMTPResponseException as e:
-        return {'success': False, 'error': f'Server rejected STARTTLS command (code {e.smtp_code}): {e.smtp_error.decode() if isinstance(e.smtp_error, bytes) else e.smtp_error}'}
+        return {'success': False, 'error': f'SMTP server error (code {e.smtp_code}): {e.smtp_error.decode() if isinstance(e.smtp_error, bytes) else e.smtp_error}'}
     except smtplib.SMTPHeloError as e:
         return {'success': False, 'error': f'Server rejected EHLO/HELO greeting: {str(e)}'}
     except smtplib.SMTPConnectError as e:

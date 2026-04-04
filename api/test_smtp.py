@@ -112,7 +112,7 @@ class handler(BaseHTTPRequestHandler):
         except smtplib.SMTPResponseException as e:
             return {
                 'success': False,
-                'error': f'Server rejected STARTTLS command (code {e.smtp_code}): {e.smtp_error.decode() if isinstance(e.smtp_error, bytes) else e.smtp_error}'
+                'error': f'SMTP server error (code {e.smtp_code}): {e.smtp_error.decode() if isinstance(e.smtp_error, bytes) else e.smtp_error}'
             }
         except smtplib.SMTPHeloError as e:
             return {
