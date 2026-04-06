@@ -33,6 +33,29 @@ function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+function getSessionUser() {
+    return sessionStorage.getItem('kingmailer_user') || '';
+}
+
+function getSessionHwid() {
+    return sessionStorage.getItem('kingmailer_hwid') || '';
+}
+
+function getAuthHeaders(extraHeaders = {}) {
+    const headers = { ...extraHeaders };
+    const user = getSessionUser();
+    const hwid = getSessionHwid();
+    if (user) headers['X-Kingmailer-User'] = user;
+    if (hwid) headers['X-Kingmailer-Hwid'] = hwid;
+    return headers;
+}
+
+function getScopedStorageKey(baseKey) {
+    const user = getSessionUser() || 'anonymous';
+    const hwid = getSessionHwid() || 'unknown';
+    return `${baseKey}:${user}:${hwid}`;
+}
+
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', function () {
     initTabs();
@@ -95,7 +118,9 @@ function initTabs() {
 // Load saved accounts from API
 async function loadAccounts() {
     try {
-        const response = await fetch('/api/accounts');
+        const response = await fetch('/api/accounts', {
+            headers: getAuthHeaders()
+        });
         const data = await response.json();
 
         if (data.success) {
@@ -113,7 +138,7 @@ async function loadAccounts() {
 async function loadEc2Instances() {
     try {
         // Get saved credentials from localStorage
-        const savedCreds = localStorage.getItem('aws_credentials');
+        const savedCreds = localStorage.getItem(getScopedStorageKey('aws_credentials'));
         if (!savedCreds) {
             console.log('No AWS credentials found in localStorage');
             ec2Instances = [];
@@ -126,7 +151,7 @@ async function loadEc2Instances() {
         // First, send credentials to backend
         await fetch('/api/ec2_management', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
             body: JSON.stringify({
                 action: 'save_credentials',
                 ...creds
@@ -134,7 +159,9 @@ async function loadEc2Instances() {
         });
 
         // Then fetch instances
-        const response = await fetch('/api/ec2_management');
+        const response = await fetch('/api/ec2_management', {
+            headers: getAuthHeaders()
+        });
         const data = await response.json();
 
         if (data.success) {
@@ -151,7 +178,7 @@ async function loadEc2Instances() {
 // Load AWS credentials from localStorage
 function loadEc2Credentials() {
     try {
-        const savedCreds = localStorage.getItem('aws_credentials');
+        const savedCreds = localStorage.getItem(getScopedStorageKey('aws_credentials'));
         if (savedCreds) {
             const creds = JSON.parse(savedCreds);
             document.getElementById('ec2AccessKey').value = creds.access_key || '';
@@ -192,7 +219,7 @@ async function testSmtpConnection() {
     try {
         const response = await fetch('/api/test_smtp', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
             body: JSON.stringify({
                 type: 'smtp',
                 smtp_config: smtpConfig
@@ -240,7 +267,7 @@ async function addSmtpAccount() {
     try {
         const response = await fetch('/api/accounts', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
             body: JSON.stringify(account)
         });
 
@@ -299,7 +326,7 @@ async function testSesConnection() {
     try {
         const response = await fetch('/api/test_smtp', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
             body: JSON.stringify({
                 type: 'ses',
                 aws_config: {
@@ -336,7 +363,7 @@ async function addSesAccount() {
     try {
         const response = await fetch('/api/accounts', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
             body: JSON.stringify({
                 type: 'ses',
                 access_key: accessKey,
@@ -477,7 +504,7 @@ async function saveAwsCredentials() {
                 keypair: keypair,
                 security_group: securityGroup || ''
             };
-            localStorage.setItem('aws_credentials', JSON.stringify(credentials));
+            localStorage.setItem(getScopedStorageKey('aws_credentials'), JSON.stringify(credentials));
             renderSavedAwsCredentials();
             showResult('ec2Result', '✅ AWS credentials saved successfully!', 'success');
             setTimeout(() => loadEc2Instances(), 1000);
@@ -514,7 +541,7 @@ async function fixSecurityGroup() {
 
 // Render the saved AWS credentials card
 function renderSavedAwsCredentials() {
-    const savedCreds = localStorage.getItem('aws_credentials');
+    const savedCreds = localStorage.getItem(getScopedStorageKey('aws_credentials'));
     const card = document.getElementById('awsCredentialsSaved');
     const info = document.getElementById('awsCredentialsInfo');
     if (!card || !info) return;
@@ -534,7 +561,7 @@ function renderSavedAwsCredentials() {
 // Delete saved AWS credentials
 function deleteAwsCredentials() {
     if (!confirm('Remove saved AWS credentials? You will need to re-enter them.')) return;
-    localStorage.removeItem('aws_credentials');
+    localStorage.removeItem(getScopedStorageKey('aws_credentials'));
     renderSavedAwsCredentials();
     // Clear form fields
     ['ec2AccessKey', 'ec2SecretKey', 'ec2Keypair', 'ec2SecurityGroup'].forEach(id => {
@@ -924,7 +951,7 @@ async function deleteAccount(type, id) {
     try {
         const response = await fetch('/api/accounts', {
             method: 'DELETE',
-            headers: { 'Content-Type': 'application/json' },
+            headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
             body: JSON.stringify({ type, id })
         });
 
@@ -3883,13 +3910,13 @@ function fallbackCopyToClipboard(text, label) {
 }
 
 function loadGmailApiAccounts() {
-    const stored = localStorage.getItem(GMAIL_API_ACCOUNTS_KEY);
+    const stored = localStorage.getItem(getScopedStorageKey(GMAIL_API_ACCOUNTS_KEY));
     gmailApiAccounts = stored ? JSON.parse(stored) : [];
     updateGmailApiAccountsList();
 }
 
 function saveGmailApiAccounts() {
-    localStorage.setItem(GMAIL_API_ACCOUNTS_KEY, JSON.stringify(gmailApiAccounts));
+    localStorage.setItem(getScopedStorageKey(GMAIL_API_ACCOUNTS_KEY), JSON.stringify(gmailApiAccounts));
 }
 
 function updateGmailAccessToken(gmailUser, newAccessToken) {
